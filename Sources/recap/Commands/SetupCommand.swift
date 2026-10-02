@@ -19,7 +19,7 @@ struct SetupCommand: ParsableCommand {
         abstract: "Check dependencies and request the recording permissions."
     )
 
-    @Flag(name: .customLong("skip-permissions"), help: "Do not launch Recap.app to request permissions.")
+    @Flag(name: .customLong("skip-permissions"), help: "Only report the permissions; never show a permission dialog.")
     var skipPermissions = false
 
     @Flag(name: .customLong("skip-models"), help: "Do not download the transcription models.")
@@ -74,11 +74,13 @@ struct SetupCommand: ParsableCommand {
                 checks.append(Self.registerBitaHook(bita: bita, config: config))
             }
 
-            if let app, !skipPermissions {
-                let report = try Self.requestPermissions(app: app)
-                checks.append(Check(name: "microphone", ok: report.microphone == "granted", detail: report.microphone))
+            if let app {
+                let report = try Self.requestPermissions(app: app, prompt: !skipPermissions)
+                let rerun = skipPermissions ? "; run `recap setup` in a terminal to grant it" : ""
+                checks.append(Check(name: "microphone", ok: report.microphone == "granted",
+                                    detail: report.microphone == "granted" ? "granted" : "\(report.microphone)\(rerun)"))
                 checks.append(Check(name: "screen", ok: report.screen == "granted",
-                                    detail: report.screen == "granted" ? "granted" : "\(report.screen): enable Recap in System Settings > Privacy & Security > Screen & System Audio Recording (only needed for --remote)"))
+                                    detail: report.screen == "granted" ? "granted" : "\(report.screen): enable Recap in System Settings > Privacy & Security > Screen & System Audio Recording (only needed for --remote)\(rerun)"))
             }
             let text = checks.map { "\($0.ok ? "ok " : "!! ") \($0.name.padding(toLength: 14, withPad: " ", startingAt: 0)) \($0.detail)" }
                 .joined(separator: "\n")
@@ -136,11 +138,12 @@ struct SetupCommand: ParsableCommand {
         try FileManager.default.moveItem(at: partial, to: target)
     }
 
-    static func requestPermissions(app: URL) throws -> PermissionReport {
+    static func requestPermissions(app: URL, prompt: Bool) throws -> PermissionReport {
         let out = FileManager.default.temporaryDirectory.appending(path: "recap-permissions-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: out) }
         let result = try Shell.run(URL(fileURLWithPath: "/usr/bin/open"),
-                                   ["-W", "-g", "-n", "-a", app.path, "--args", "permissions", "--out", out.path])
+                                   ["-W", "-g", "-n", "-a", app.path, "--args", "permissions", "--out", out.path]
+                                       + (prompt ? [] : ["--check"]))
         guard result.ok, let data = try? Data(contentsOf: out),
               let report = try? JSONDecoder().decode(PermissionReport.self, from: data) else {
             throw RecapError("PERMISSIONS_UNKNOWN", "Recap.app did not report its permissions. \(result.stderr)")
@@ -159,13 +162,18 @@ struct PermissionsCommand: ParsableCommand {
     @Option(help: "File where the permission report is written.")
     var out: String
 
+    @Flag(help: "Report the current permissions without asking for them.")
+    var check = false
+
     func run() throws {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let target = URL(fileURLWithPath: out)
         Task { @MainActor in
-            try? await Permissions.requestMicrophone()
-            try? Permissions.requestScreen()
+            if !check {
+                try? await Permissions.requestMicrophone()
+                try? Permissions.requestScreen()
+            }
             let report = PermissionReport(microphone: Permissions.microphoneStatus, screen: Permissions.screenStatus)
             try? JSONEncoder().encode(report).write(to: target, options: .atomic)
             Darwin.exit(0)
