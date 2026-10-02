@@ -28,6 +28,9 @@ struct SetupCommand: ParsableCommand {
     @Flag(name: .customLong("skip-bita"), help: "Do not register the recap hook in bita.")
     var skipBita = false
 
+    @Flag(name: .customLong("install-deps"), help: "Install a missing ffmpeg or whisper-cpp with Homebrew.")
+    var installDeps = false
+
     @OptionGroup var output: OutputOptions
 
     func run() throws {
@@ -37,6 +40,9 @@ struct SetupCommand: ParsableCommand {
             checks.append(Check(name: "macos", ok: os.majorVersion >= 15,
                                 detail: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"))
             var config = try Config.load()
+            if installDeps {
+                try Self.installMissingFormulae(config: config, quiet: output.json)
+            }
             var tools = config.tools ?? [:]
             for tool in Tool.allCases {
                 let url = tool.locate(config)
@@ -51,7 +57,7 @@ struct SetupCommand: ParsableCommand {
             }
             let app = Paths.appBundle
             checks.append(Check(name: "app", ok: app != nil,
-                                detail: app?.path ?? "not running from Recap.app; run `make install`"))
+                                detail: app?.path ?? "not running from Recap.app; install it with `bita setup` or `make install`"))
             checks.append(Check(name: "root", ok: true, detail: config.rootURL.path))
             for (name, model, target) in [("whisper", Models.whisper, config.whisperModelURL),
                                           ("vad", Models.vad, config.vadModelURL)] {
@@ -77,6 +83,25 @@ struct SetupCommand: ParsableCommand {
             let text = checks.map { "\($0.ok ? "ok " : "!! ") \($0.name.padding(toLength: 14, withPad: " ", startingAt: 0)) \($0.detail)" }
                 .joined(separator: "\n")
             return (checks, text)
+        }
+    }
+
+    static let brewCandidates = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+
+    static func installMissingFormulae(config: Config, quiet: Bool) throws {
+        let formulae = [(Tool.ffmpeg, "ffmpeg"), (Tool.whisper, "whisper-cpp")]
+            .filter { tool, _ in tool.locate(config) == nil }
+            .map(\.1)
+        guard !formulae.isEmpty else { return }
+        guard let brew = brewCandidates.first(where: FileManager.default.isExecutableFile(atPath:)) else {
+            throw RecapError("BREW_MISSING", "Install Homebrew, or install \(formulae.joined(separator: " and ")) by hand")
+        }
+        if !quiet { FileHandle.standardError.write(Data("Installing \(formulae.joined(separator: ", ")) with Homebrew...\n".utf8)) }
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+        let result = try Shell.run(URL(fileURLWithPath: brew), ["install"] + formulae, environment: environment)
+        guard result.ok else {
+            throw RecapError("BREW_FAILED", "brew install \(formulae.joined(separator: " ")) failed: \(result.stderr.trimmed.suffix(400))")
         }
     }
 

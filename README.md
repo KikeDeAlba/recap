@@ -14,7 +14,18 @@ Record meetings on macOS and turn them into a transcript, a summary, agreements 
 - `brew install ffmpeg whisper-cpp`
 - [Claude Code](https://claude.com/claude-code) for summaries
 
-## Install
+## Install with bita
+
+If you use [bita](https://github.com/KikeDeAlba/bita-cli), its setup installs everything:
+
+```sh
+bita setup
+```
+
+It downloads the latest `Recap.app` release to `~/Applications`, links `recap` into a directory on your `PATH`, installs the Claude Code plugin, and runs `recap setup --install-deps`, which installs ffmpeg and whisper-cpp with Homebrew, downloads the models, registers the bita hook and asks for the permissions. `bita setup --no-recap` skips all of it.
+
+## Install from source
+
 
 ```sh
 make install
@@ -25,7 +36,7 @@ This builds `Recap.app`, signs it with your first `Apple Development` identity (
 Then check the dependencies and grant the permissions:
 
 ```sh
-recap setup
+recap setup                 # add --install-deps to brew install a missing ffmpeg or whisper-cpp
 ```
 
 ### Why an app bundle
@@ -169,6 +180,15 @@ Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`.
 make build
 make test
 ```
+
+## Releases
+
+```sh
+make release                      # dist/Recap-<version>-macos-arm64.zip and its .sha256
+./scripts/release.sh --publish    # from main: create or update the v<version> GitHub release
+```
+
+The version comes from `Recap.version` in `Sources/recap/Recap.swift`. Releases are built and signed locally with an Apple Development identity, so macOS keeps the permissions across updates; they are not notarized. `bita setup` downloads the `*-macos-arm64.zip` asset of the latest release.
 
 ## License
 
