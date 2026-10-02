@@ -24,7 +24,7 @@ Tabla con las columnas `#`, `Pendiente`, `Responsable`, `Fecha` y `Minuto`. Resp
 Lista de dudas, riesgos o temas que quedaron sin resolver. Si no hay, escribe «Ninguna».
 
 ## Capturas
-Solo si hay capturas de pantalla: lista de las que aportan contexto (diapositivas, demos, documentos), con el nombre del archivo, el minuto y qué muestran. Omite la sección si no hay capturas.
+Lista de las capturas que aportan contexto (diapositivas, demos, documentos), con el nombre del archivo, el minuto y qué muestran. Omite la sección completa, encabezado incluido, si no hay capturas o si ninguna tiene relación con la reunión.
 
 Reglas:
 - No inventes nada que no esté en la transcripción o en las capturas. Si un nombre, cifra o fecha no se entiende, márcalo como «(inaudible)» o «(por confirmar)».

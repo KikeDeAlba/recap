@@ -6,10 +6,12 @@ enum Stage: String, CaseIterable {
     case transcribe
     case frames
     case summarize
+    case bita
 
-    func applies(to mode: MeetingMode) -> Bool {
+    func applies(to meeting: Meeting) -> Bool {
         switch self {
-        case .frames: mode == .remote
+        case .frames: meeting.mode == .remote
+        case .bita: meeting.bitaEntryId != nil
         default: true
         }
     }
@@ -46,7 +48,7 @@ final class Pipeline {
 
         meeting = try MeetingFile.update(dir) { $0.status = .processing }
         var forced = false
-        for stage in Stage.allCases where stage.applies(to: meeting.mode) {
+        for stage in Stage.allCases where stage.applies(to: meeting) {
             if let only, stage != only { continue }
             if stage == start { forced = true }
             let done = meeting.stages[stage.rawValue]?.status == "done"
@@ -72,7 +74,7 @@ final class Pipeline {
                 throw RecapError("STAGE_FAILED", "\(stage.rawValue) failed: \(message)")
             }
         }
-        let allDone = Stage.allCases.filter { $0.applies(to: meeting.mode) }
+        let allDone = Stage.allCases.filter { $0.applies(to: meeting) }
             .allSatisfy { meeting.stages[$0.rawValue]?.status == "done" }
         return try MeetingFile.update(dir) { $0.status = allDone ? .processed : .recorded }
     }
@@ -83,6 +85,7 @@ final class Pipeline {
         case .transcribe: try transcribe(meeting)
         case .frames: try extractFrames()
         case .summarize: try summarize(meeting)
+        case .bita: try BitaBridge(config: config).saveMinutes(meeting: meeting, dir: dir)
         }
     }
 
@@ -165,21 +168,17 @@ final class Pipeline {
 
     private func summarize(_ meeting: Meeting) throws {
         let claude = try Tool.claude.require(config)
-        let transcript = try String(contentsOf: file("transcript.md"), encoding: .utf8)
-        let frames = (try? JSONDecoder().decode([FrameInfo].self, from: Data(contentsOf: file("frames.json")))) ?? []
-        let prompt = try SummaryPrompt.render(meeting: meeting, transcript: transcript, frames: frames)
+        let prompt = try SummaryPrompt.render(meeting: meeting, dir: dir)
         var arguments = ["-p", "--output-format", "json", "--setting-sources", "project",
                          "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
                          "--allowedTools", "Read", "--add-dir", dir.path]
         if let model = config.summaryModel { arguments += ["--model", model] }
         let result = try Shell.run(claude, arguments, stdin: Data(prompt.utf8),
-                                   environment: Tool.environment(for: claude), cwd: dir)
+                                   environment: Tool.environment(for: claude, config: config), cwd: dir)
         guard result.ok else {
             throw RecapError("CLAUDE_FAILED", (result.stderr.isEmpty ? result.stdout : result.stderr).trimmed)
         }
-        let summary = try SummaryPrompt.extractResult(result.stdout)
-        let document = "# \(meeting.title)\n\n\(TranscriptRenderer.header(meeting))\n\n\(summary.trimmed)\n"
-        try document.write(to: file("summary.md"), atomically: true, encoding: .utf8)
+        try SummaryPrompt.save(try SummaryPrompt.extractResult(result.stdout), meeting: meeting, dir: dir)
     }
 
     static var threads: Int {
@@ -212,6 +211,22 @@ enum SummaryPrompt {
             if let text = try? String(contentsOf: candidate, encoding: .utf8) { return text }
         }
         throw RecapError("PROMPT_MISSING", "summary-prompt.md not found; reinstall with `make install`")
+    }
+
+    static func render(meeting: Meeting, dir: URL) throws -> String {
+        guard let transcript = try? String(contentsOf: dir.appending(path: "transcript.md"), encoding: .utf8) else {
+            throw RecapError("NO_TRANSCRIPT", "\"\(meeting.title)\" has no transcript yet; run `recap process \(meeting.id)`")
+        }
+        let frames = (try? JSONDecoder().decode([FrameInfo].self, from: Data(contentsOf: dir.appending(path: "frames.json")))) ?? []
+        return try render(meeting: meeting, transcript: transcript, frames: frames)
+    }
+
+    static func save(_ body: String, meeting: Meeting, dir: URL) throws {
+        var content = body.trimmed
+        if let start = content.range(of: "## Resumen") { content = String(content[start.lowerBound...]) }
+        guard !content.isEmpty else { throw RecapError("EMPTY_SUMMARY", "The summary is empty") }
+        let document = "# \(meeting.title)\n\n\(TranscriptRenderer.header(meeting))\n\n\(content)\n"
+        try document.write(to: dir.appending(path: "summary.md"), atomically: true, encoding: .utf8)
     }
 
     static func render(meeting: Meeting, transcript: String, frames: [FrameInfo]) throws -> String {
