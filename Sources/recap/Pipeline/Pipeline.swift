@@ -6,10 +6,12 @@ enum Stage: String, CaseIterable {
     case transcribe
     case frames
     case summarize
+    case bita
 
-    func applies(to mode: MeetingMode) -> Bool {
+    func applies(to meeting: Meeting) -> Bool {
         switch self {
-        case .frames: mode == .remote
+        case .frames: meeting.mode == .remote
+        case .bita: meeting.bitaEntryId != nil
         default: true
         }
     }
@@ -46,7 +48,7 @@ final class Pipeline {
 
         meeting = try MeetingFile.update(dir) { $0.status = .processing }
         var forced = false
-        for stage in Stage.allCases where stage.applies(to: meeting.mode) {
+        for stage in Stage.allCases where stage.applies(to: meeting) {
             if let only, stage != only { continue }
             if stage == start { forced = true }
             let done = meeting.stages[stage.rawValue]?.status == "done"
@@ -72,7 +74,7 @@ final class Pipeline {
                 throw RecapError("STAGE_FAILED", "\(stage.rawValue) failed: \(message)")
             }
         }
-        let allDone = Stage.allCases.filter { $0.applies(to: meeting.mode) }
+        let allDone = Stage.allCases.filter { $0.applies(to: meeting) }
             .allSatisfy { meeting.stages[$0.rawValue]?.status == "done" }
         return try MeetingFile.update(dir) { $0.status = allDone ? .processed : .recorded }
     }
@@ -83,6 +85,7 @@ final class Pipeline {
         case .transcribe: try transcribe(meeting)
         case .frames: try extractFrames()
         case .summarize: try summarize(meeting)
+        case .bita: try BitaBridge(config: config).saveMinutes(meeting: meeting, dir: dir)
         }
     }
 
@@ -171,7 +174,7 @@ final class Pipeline {
                          "--allowedTools", "Read", "--add-dir", dir.path]
         if let model = config.summaryModel { arguments += ["--model", model] }
         let result = try Shell.run(claude, arguments, stdin: Data(prompt.utf8),
-                                   environment: Tool.environment(for: claude), cwd: dir)
+                                   environment: Tool.environment(for: claude, config: config), cwd: dir)
         guard result.ok else {
             throw RecapError("CLAUDE_FAILED", (result.stderr.isEmpty ? result.stdout : result.stderr).trimmed)
         }

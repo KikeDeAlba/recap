@@ -34,10 +34,11 @@ enum Tool: String, CaseIterable {
         return url
     }
 
-    static func environment(for executable: URL) -> [String: String] {
+    static func environment(for executable: URL, config: Config) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let current = environment["PATH"] ?? ""
-        let extra = [executable.deletingLastPathComponent().path] + Shell.searchPaths
+        let toolDirs = (config.tools ?? [:]).values.map { Paths.expandTilde($0).deletingLastPathComponent().path }
+        let extra = [executable.deletingLastPathComponent().path] + toolDirs + Shell.searchPaths
         environment["PATH"] = (extra + [current]).filter { !$0.isEmpty }.joined(separator: ":")
         if environment["HOME"] == nil { environment["HOME"] = Paths.home.path }
         return environment
