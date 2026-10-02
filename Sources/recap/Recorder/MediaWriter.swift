@@ -14,6 +14,7 @@ final class MediaWriter {
     private var sessionStart: CMTime?
     private var lastEnd: CMTime = .invalid
     private var failed = false
+    private var trackEnds: [Int: CMTime] = [:]
 
     init(url: URL, fileType: AVFileType, tracks: [Track]) throws {
         try? FileManager.default.removeItem(at: url)
@@ -44,14 +45,35 @@ final class MediaWriter {
         guard let sessionStart, pts >= sessionStart else { return }
         let input = inputs[index]
         guard input.isReadyForMoreMediaData else { return }
-        if input.append(sampleBuffer) {
-            let duration = sampleBuffer.duration
-            let end = duration.isValid ? pts + duration : pts
+        guard let buffer = contiguous(sampleBuffer, track: index, isAudio: input.mediaType == .audio) else { return }
+        if input.append(buffer) {
+            let start = buffer.presentationTimeStamp
+            let duration = buffer.duration
+            let end = duration.isValid ? start + duration : start
+            trackEnds[index] = end
             if !lastEnd.isValid || end > lastEnd { lastEnd = end }
         } else if writer.status == .failed {
             failed = true
             onFailure?(writer.error ?? RecapError("WRITER_FAILED", "The media writer stopped"))
         }
+    }
+
+    private func contiguous(_ sampleBuffer: CMSampleBuffer, track index: Int, isAudio: Bool) -> CMSampleBuffer? {
+        let pts = sampleBuffer.presentationTimeStamp
+        guard let previousEnd = trackEnds[index], pts < previousEnd else { return sampleBuffer }
+        guard isAudio else { return nil }
+        let duration = sampleBuffer.duration
+        guard duration.isValid, previousEnd - pts < duration else { return nil }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(48_000)),
+                                        presentationTimeStamp: previousEnd, decodeTimeStamp: .invalid)
+        if let rate = sampleBuffer.formatDescription?.audioStreamBasicDescription?.mSampleRate, rate > 0 {
+            timing.duration = CMTime(value: 1, timescale: CMTimeScale(rate))
+        }
+        var retimed: CMSampleBuffer?
+        let status = CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: sampleBuffer,
+                                                           sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                                                           sampleBufferOut: &retimed)
+        return status == noErr ? retimed : nil
     }
 
     func finish() async {

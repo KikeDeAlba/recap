@@ -1,7 +1,7 @@
 PREFIX_APP ?= $(HOME)/Applications
 PREFIX_BIN ?= $(HOME)/.local/bin
 
-.PHONY: build test bundle install uninstall clean
+.PHONY: build test bundle release install uninstall clean
 
 build:
 	swift build
@@ -11,6 +11,9 @@ test:
 
 bundle:
 	./scripts/bundle.sh
+
+release:
+	./scripts/release.sh
 
 install: bundle
 	mkdir -p "$(PREFIX_APP)" "$(PREFIX_BIN)"

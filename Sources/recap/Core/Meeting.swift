@@ -7,7 +7,7 @@ enum MeetingMode: String, Codable, CaseIterable, ExpressibleByArgument {
 
     var recordingFileName: String {
         switch self {
-        case .remote: "recording.mp4"
+        case .remote: "recording.mov"
         case .inPerson: "recording.m4a"
         }
     }
@@ -40,6 +40,8 @@ struct Meeting: Codable {
     var recorderPid: Int32?
     var display: UInt32?
     var bitaEntryId: Int?
+    var bitaDatabasePath: String?
+    var bitaDocsRoot: String?
     var error: String?
     var stages: [String: StageState] = [:]
 
@@ -143,7 +145,8 @@ struct MeetingStore {
         root = config.rootURL
     }
 
-    func create(title: String, mode: MeetingMode, display: UInt32?, bitaEntryId: Int?, now: Date = Date()) throws -> (Meeting, URL) {
+    func create(title: String, mode: MeetingMode, display: UInt32?, bitaEntryId: Int?,
+                bita: BitaTarget? = nil, now: Date = Date()) throws -> (Meeting, URL) {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -158,7 +161,8 @@ struct MeetingStore {
         let dir = root.appending(path: id)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let meeting = Meeting(id: id, title: title, mode: mode, status: .starting, createdAt: now,
-                              display: display, bitaEntryId: bitaEntryId)
+                              display: display, bitaEntryId: bitaEntryId,
+                              bitaDatabasePath: bita?.databasePath, bitaDocsRoot: bita?.docsRoot)
         try MeetingFile.save(meeting, to: dir)
         return (meeting, dir)
     }

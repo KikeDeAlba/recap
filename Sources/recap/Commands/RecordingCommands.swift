@@ -65,13 +65,21 @@ struct StopCommand: ParsableCommand {
     @Option(help: "Seconds to wait for the recorder to close the file.")
     var timeout: Double = 60
 
+    @Flag(name: .customLong("no-process"), help: "Do not transcribe and summarize after stopping.")
+    var noProcess = false
+
     @OptionGroup var output: OutputOptions
 
     func run() throws {
         try Output.run("stop", json: output.json) {
             let record = try Recording.stop(timeout: timeout)
             let duration = Duration.format(record.meeting.durationSeconds)
-            return (record, "Stopped \"\(record.meeting.title)\" after \(duration)\n\(record.dir.path)")
+            var text = "Stopped \"\(record.meeting.title)\" after \(duration)\n\(record.dir.path)"
+            if !noProcess && record.meeting.status == .recorded {
+                try Background.process(meetingId: record.meeting.id, dir: record.dir)
+                text += "\nProcessing in the background; follow it with `recap status` or \(record.dir.appending(path: "process.log").path)"
+            }
+            return (record, text)
         }
     }
 }
@@ -99,14 +107,16 @@ struct DiscardCommand: ParsableCommand {
 }
 
 enum Recording {
-    static func start(title: String, mode: MeetingMode, display: UInt32?, bitaEntryId: Int?, timeout: Double) throws -> MeetingRecord {
+    static func start(title: String, mode: MeetingMode, display: UInt32?, bitaEntryId: Int?,
+                      bita: BitaTarget? = nil, timeout: Double) throws -> MeetingRecord {
         if let (_, meeting) = ActiveRecording.current() {
             throw RecapError("ALREADY_RECORDING", "\"\(meeting.title)\" is already being recorded. Stop it first.")
         }
         let config = try Config.load()
         let store = MeetingStore(config: config)
         let resolvedTitle = title.isEmpty ? defaultTitle(mode) : title
-        let (meeting, dir) = try store.create(title: resolvedTitle, mode: mode, display: display, bitaEntryId: bitaEntryId)
+        let (meeting, dir) = try store.create(title: resolvedTitle, mode: mode, display: display,
+                                              bitaEntryId: bitaEntryId, bita: bita)
         try RecorderLauncher.launch(dir: dir)
 
         var current = meeting

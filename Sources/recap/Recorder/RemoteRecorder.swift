@@ -44,7 +44,7 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
         configuration.excludesCurrentProcessAudio = true
         configuration.captureMicrophone = true
 
-        let writer = try MediaWriter(url: url, fileType: .mp4, tracks: [
+        let writer = try MediaWriter(url: url, fileType: .mov, tracks: [
             .video(width: width, height: height),
             .audio(channels: 1, bitRate: 64_000),
             .audio(channels: 2, bitRate: 96_000),
