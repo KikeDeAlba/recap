@@ -15,6 +15,7 @@ struct Recap: ParsableCommand {
             StatusCommand.self,
             ListCommand.self,
             ShowCommand.self,
+            ProcessCommand.self,
             SetupCommand.self,
             RecordCommand.self,
             PermissionsCommand.self,

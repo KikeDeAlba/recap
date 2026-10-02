@@ -65,13 +65,21 @@ struct StopCommand: ParsableCommand {
     @Option(help: "Seconds to wait for the recorder to close the file.")
     var timeout: Double = 60
 
+    @Flag(name: .customLong("no-process"), help: "Do not transcribe and summarize after stopping.")
+    var noProcess = false
+
     @OptionGroup var output: OutputOptions
 
     func run() throws {
         try Output.run("stop", json: output.json) {
             let record = try Recording.stop(timeout: timeout)
             let duration = Duration.format(record.meeting.durationSeconds)
-            return (record, "Stopped \"\(record.meeting.title)\" after \(duration)\n\(record.dir.path)")
+            var text = "Stopped \"\(record.meeting.title)\" after \(duration)\n\(record.dir.path)"
+            if !noProcess && record.meeting.status == .recorded {
+                try Background.process(meetingId: record.meeting.id, dir: record.dir)
+                text += "\nProcessing in the background; follow it with `recap status` or \(record.dir.appending(path: "process.log").path)"
+            }
+            return (record, text)
         }
     }
 }

@@ -7,7 +7,7 @@ enum MeetingMode: String, Codable, CaseIterable, ExpressibleByArgument {
 
     var recordingFileName: String {
         switch self {
-        case .remote: "recording.mp4"
+        case .remote: "recording.mov"
         case .inPerson: "recording.m4a"
         }
     }

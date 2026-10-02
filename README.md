@@ -47,6 +47,27 @@ recap show last
 recap discard <meeting>
 ```
 
+`recap stop` processes the meeting in the background (`--no-process` to skip). Re-run the pipeline at any time:
+
+```sh
+recap process last                     # resume from the first stage that is not done
+recap process <meeting> --from summarize   # regenerate the summary only
+recap process <meeting> --only frames
+```
+
+## Pipeline
+
+| Stage | Remote | In-person | Output |
+|---|---|---|---|
+| `audio` | mic and system tracks | mic track | `mic.wav`, `system.wav` (16 kHz mono) |
+| `transcribe` | per channel, then merged | mic | `transcript.json`, `transcript.md` |
+| `frames` | scene changes, at least 20 s apart, at most 40 | skipped | `frames/hh-mm-ss.jpg`, `frames.json` |
+| `summarize` | `claude -p` with transcript and frames | `claude -p` with transcript | `summary.md` |
+
+- Transcription runs locally with `whisper-cli`, `large-v3-turbo` and Silero VAD. Known whisper hallucinations on silence are dropped.
+- In remote meetings the microphone is labelled **Sala** and the call audio **Remotos**. When the microphone picks up the speakers, segments that repeat the call audio within a few seconds are removed as echo; headphones avoid the problem entirely.
+- The summary is written by Claude Code in headless mode, without user hooks, MCP servers or slash commands, and may open the key frames with the Read tool. It contains: Resumen, Temas, Acuerdos, Pendientes (owner, date, minute), Preguntas abiertas and Capturas. Customize it by copying `Resources/summary-prompt.md` to `~/.config/recap/summary-prompt.md`.
+
 Every command accepts `--json` and prints an envelope:
 
 ```json
@@ -62,12 +83,17 @@ Each meeting gets a folder under `~/Recap` (configurable):
 ```
 ~/Recap/2026-10-02-1530-sprint-planning/
 ├── meeting.json      metadata, status and pipeline stages
-├── recording.mp4     remote: video + mic track + system track
+├── recording.mov     remote: video + mic track + system track
 ├── recording.m4a     in-person: mic track
-└── recorder.log
+├── mic.wav, system.wav
+├── transcript.md     merged transcript with timestamps
+├── frames/           remote only
+├── summary.md        minutes
+├── recorder.log
+└── process.log
 ```
 
-Recordings are written as fragmented MP4, so a crash or a forced quit keeps everything up to the last few seconds.
+Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a crash or a forced quit keeps everything up to the last few seconds.
 
 ## Configuration
 
@@ -77,10 +103,19 @@ Recordings are written as fragmented MP4, so a crash or a forced quit keeps ever
 {
   "root": "~/Recap",
   "language": "es",
+  "vocabulary": ["CoDi", "webhook", "PostgreSQL"],
+  "summaryModel": "sonnet",
   "whisperModel": "~/.local/share/recap/models/ggml-large-v3-turbo.bin",
-  "bitaPath": "/Users/me/Library/pnpm/bin/bita"
+  "tools": {
+    "claude": "/Users/me/.nvm/versions/node/v24.19.0/bin/claude",
+    "ffmpeg": "/opt/homebrew/bin/ffmpeg"
+  }
 }
 ```
+
+- `vocabulary` is passed to whisper as a glossary and fixes most misheard product names.
+- `tools` holds absolute paths to the external commands. `recap setup` fills it in, so the pipeline also works when it is started with a minimal `PATH` (for example from a menu bar app).
+- `recap setup` downloads the whisper and VAD models to `~/.local/share/recap/models`.
 
 Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`.
 
