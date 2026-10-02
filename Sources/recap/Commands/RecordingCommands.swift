@@ -107,14 +107,16 @@ struct DiscardCommand: ParsableCommand {
 }
 
 enum Recording {
-    static func start(title: String, mode: MeetingMode, display: UInt32?, bitaEntryId: Int?, timeout: Double) throws -> MeetingRecord {
+    static func start(title: String, mode: MeetingMode, display: UInt32?, bitaEntryId: Int?,
+                      bita: BitaTarget? = nil, timeout: Double) throws -> MeetingRecord {
         if let (_, meeting) = ActiveRecording.current() {
             throw RecapError("ALREADY_RECORDING", "\"\(meeting.title)\" is already being recorded. Stop it first.")
         }
         let config = try Config.load()
         let store = MeetingStore(config: config)
         let resolvedTitle = title.isEmpty ? defaultTitle(mode) : title
-        let (meeting, dir) = try store.create(title: resolvedTitle, mode: mode, display: display, bitaEntryId: bitaEntryId)
+        let (meeting, dir) = try store.create(title: resolvedTitle, mode: mode, display: display,
+                                              bitaEntryId: bitaEntryId, bita: bita)
         try RecorderLauncher.launch(dir: dir)
 
         var current = meeting

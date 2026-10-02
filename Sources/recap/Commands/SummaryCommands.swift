@@ -42,10 +42,21 @@ struct SaveSummaryCommand: ParsableCommand {
                 body = try String(contentsOf: URL(fileURLWithPath: file), encoding: .utf8)
             }
             try SummaryPrompt.save(body, meeting: found, dir: dir)
+            var bitaState: StageState?
+            if found.bitaEntryId != nil {
+                do {
+                    try BitaBridge(config: try Config.load()).saveMinutes(meeting: found, dir: dir)
+                    bitaState = StageState(status: "done", updatedAt: Date())
+                } catch {
+                    bitaState = StageState(status: "failed", updatedAt: Date(),
+                                           error: (error as? RecapError)?.message ?? String(describing: error))
+                }
+            }
             let updated = try MeetingFile.update(dir) {
+                if let bitaState { $0.stages[Stage.bita.rawValue] = bitaState }
                 $0.stages[Stage.summarize.rawValue] = StageState(status: "done", updatedAt: Date())
                 let stages = $0.stages
-                let complete = Stage.allCases.filter { $0.applies(to: found.mode) }
+                let complete = Stage.allCases.filter { $0.applies(to: found) }
                     .allSatisfy { stages[$0.rawValue]?.status == "done" }
                 if complete { $0.status = .processed }
             }

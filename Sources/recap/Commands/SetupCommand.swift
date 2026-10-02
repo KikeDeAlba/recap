@@ -25,6 +25,9 @@ struct SetupCommand: ParsableCommand {
     @Flag(name: .customLong("skip-models"), help: "Do not download the transcription models.")
     var skipModels = false
 
+    @Flag(name: .customLong("skip-bita"), help: "Do not register the recap hook in bita.")
+    var skipBita = false
+
     @OptionGroup var output: OutputOptions
 
     func run() throws {
@@ -61,6 +64,10 @@ struct SetupCommand: ParsableCommand {
                                     detail: present ? target.path : "missing: run `recap setup` without --skip-models"))
             }
 
+            if !skipBita, let bita = Tool.bita.locate(config) {
+                checks.append(Self.registerBitaHook(bita: bita, config: config))
+            }
+
             if let app, !skipPermissions {
                 let report = try Self.requestPermissions(app: app)
                 checks.append(Check(name: "microphone", ok: report.microphone == "granted", detail: report.microphone))
@@ -71,6 +78,28 @@ struct SetupCommand: ParsableCommand {
                 .joined(separator: "\n")
             return (checks, text)
         }
+    }
+
+    static func registerBitaHook(bita: URL, config: Config) -> Check {
+        guard let recap = Paths.executable else {
+            return Check(name: "bita-hook", ok: false, detail: "cannot locate the recap executable")
+        }
+        let environment = Tool.environment(for: bita, config: config)
+        guard let listed = try? Shell.run(bita, ["hooks", "--json"], environment: environment), listed.ok,
+              let data = listed.stdout.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(BitaHooksEnvelope.self, from: data) else {
+            return Check(name: "bita-hook", ok: false, detail: "this bita has no hooks; update it to 0.12 or later")
+        }
+        if envelope.data.contains(where: { $0.command.last == "bita-hook" }) {
+            return Check(name: "bita-hook", ok: true, detail: "already registered")
+        }
+        let kinds = BitaBridge.kinds.keys.sorted().joined(separator: ",")
+        let added = try? Shell.run(bita, ["hooks", "add", "--on", "start,stop,cancel,amend", "--kind", kinds,
+                                          "--", recap.path, "bita-hook"], environment: environment)
+        guard let added, added.ok else {
+            return Check(name: "bita-hook", ok: false, detail: "bita hooks add failed: \(added?.stderr.trimmed ?? "")")
+        }
+        return Check(name: "bita-hook", ok: true, detail: "registered for \(kinds)")
     }
 
     static func download(_ source: URL, to target: URL) throws {
@@ -118,4 +147,11 @@ struct PermissionsCommand: ParsableCommand {
         }
         app.run()
     }
+}
+
+struct BitaHooksEnvelope: Decodable {
+    struct Hook: Decodable {
+        let command: [String]
+    }
+    let data: [Hook]
 }

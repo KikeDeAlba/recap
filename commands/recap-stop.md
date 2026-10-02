@@ -1,10 +1,22 @@
 ---
 description: Termina la grabación y genera la minuta
 argument-hint: [--wait para esperar la minuta y mostrarla]
-allowed-tools: Bash(recap stop:*), Bash(recap status:*), Bash(recap process:*), Bash(recap show:*)
+allowed-tools: Bash(recap stop:*), Bash(recap status:*), Bash(recap process:*), Bash(recap show:*), Bash(bita stop:*), Bash(bita ls:*)
 ---
 
 Detén la grabación activa.
+
+Grabación actual:
+
+!`recap status --json`
+
+**Si `data.active.bitaEntryId` trae un id**, la grabación sigue a un contador de
+bita: para el contador y no recap, con `bita stop <id>`. El hook de bita detiene
+la grabación y procesa la minuta, que llega al documento de la entrada. Con
+`--wait`, espera a que `recap status` deje de mostrar `processing` en la última
+reunión antes de mostrar la minuta con `recap show last`.
+
+Si no trae id, sigue con recap:
 
 **Sin `--wait` en `$ARGUMENTS`**, para y deja el procesamiento en segundo plano:
 

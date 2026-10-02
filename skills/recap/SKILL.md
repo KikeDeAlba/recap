@@ -51,6 +51,22 @@ Errores típicos y qué hacer:
 | `RECORDER_TIMEOUT` | Un diálogo de permisos quedó esperando | `recap setup` |
 | `DEPENDENCY_MISSING`, `MODEL_MISSING` | Falta ffmpeg, whisper-cli, claude o el modelo | `recap setup` |
 
+## Con bita
+
+Si bita está instalado con el hook de recap (`bita hooks` lo lista), **arranca
+las reuniones desde bita**, no desde recap: así el tiempo queda registrado y la
+grabación sigue al contador.
+
+```sh
+bita start "<título>" --kind remote-meeting
+bita start "<título>" --kind in-person-meeting
+bita stop <id>
+```
+
+Al parar, la minuta llega sola a la sección «Reunión» del documento de la
+entrada. `meta.hooksFired` en la salida JSON de bita dice si el hook se lanzó; si
+es 0 en una reunión, no se está grabando y hay que decirlo.
+
 ## Consultar reuniones
 
 ```sh
