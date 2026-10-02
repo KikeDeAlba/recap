@@ -53,7 +53,28 @@ recap discard <meeting>
 recap process last                     # resume from the first stage that is not done
 recap process <meeting> --from summarize   # regenerate the summary only
 recap process <meeting> --only frames
+recap prompt <meeting>                 # print the summary prompt with transcript and frames
+recap save-summary <meeting> file.md   # store minutes written elsewhere
 ```
+
+## Claude Code plugin
+
+The repository is also a Claude Code plugin marketplace:
+
+```
+/plugin marketplace add KikeDeAlba/recap
+/plugin install recap@recap
+```
+
+| Command | What it does |
+|---|---|
+| `/recap-start [remota\|presencial] [título]` | Starts a recording; infers the mode from the arguments or the conversation and asks when it cannot |
+| `/recap-stop [--wait]` | Stops the recording; with `--wait` it processes in the foreground and shows agreements and action items |
+| `/recap-status` | Shows whether a recording is running and how far processing got |
+| `/recap-list [meeting]` | Lists meetings or shows one meeting's minutes |
+| `/recap-summarize [meeting] [instructions]` | Rewrites the minutes inside the session, following extra instructions, and stores them with `recap save-summary` |
+
+The `recap` skill lets Claude answer questions such as "¿qué acordamos en la reunión de ayer?" from the stored minutes and transcripts. The commands call `recap`, so it must be on the `PATH` of the shell Claude Code runs.
 
 ## Pipeline
 
