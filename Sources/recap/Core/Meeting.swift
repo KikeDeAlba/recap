@@ -77,6 +77,7 @@ struct MeetingRecord: Encodable {
     enum CodingKeys: String, CodingKey {
         case id, title, mode, status, createdAt, startedAt, endedAt, durationSeconds
         case bitaEntryId, bitaEntry, wrapup, error, stages, dir, recording, summary, transcript
+        case transcriptSegments, frames
     }
 
     func encode(to encoder: Encoder) throws {
@@ -98,6 +99,8 @@ struct MeetingRecord: Encodable {
         try container.encodeIfPresent(existing(meeting.mode.recordingFileName), forKey: .recording)
         try container.encodeIfPresent(existing("transcript.md"), forKey: .transcript)
         try container.encodeIfPresent(existing("summary.md"), forKey: .summary)
+        try container.encodeIfPresent(existing("transcript.json"), forKey: .transcriptSegments)
+        try container.encodeIfPresent(existing("frames.json"), forKey: .frames)
     }
 
     private func existing(_ name: String) -> String? {
