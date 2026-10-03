@@ -6,12 +6,12 @@ enum Stage: String, CaseIterable {
     case transcribe
     case frames
     case summarize
-    case bita
+    case wrapup
 
     func applies(to meeting: Meeting) -> Bool {
         switch self {
         case .frames: meeting.mode == .remote
-        case .bita: meeting.bitaEntryId != nil
+        case .wrapup: meeting.bitaEntryId != nil
         default: true
         }
     }
@@ -85,7 +85,7 @@ final class Pipeline {
         case .transcribe: try transcribe(meeting)
         case .frames: try extractFrames()
         case .summarize: try summarize(meeting)
-        case .bita: try BitaBridge(config: config).saveMinutes(meeting: meeting, dir: dir)
+        case .wrapup: try MeetingWrapup(config: config).run(meeting: meeting, dir: dir)
         }
     }
 
@@ -167,18 +167,9 @@ final class Pipeline {
     }
 
     private func summarize(_ meeting: Meeting) throws {
-        let claude = try Tool.claude.require(config)
         let prompt = try SummaryPrompt.render(meeting: meeting, dir: dir)
-        var arguments = ["-p", "--output-format", "json", "--setting-sources", "project",
-                         "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
-                         "--allowedTools", "Read", "--add-dir", dir.path]
-        if let model = config.summaryModel { arguments += ["--model", model] }
-        let result = try Shell.run(claude, arguments, stdin: Data(prompt.utf8),
-                                   environment: Tool.environment(for: claude, config: config), cwd: dir)
-        guard result.ok else {
-            throw RecapError("CLAUDE_FAILED", (result.stderr.isEmpty ? result.stdout : result.stderr).trimmed)
-        }
-        try SummaryPrompt.save(try SummaryPrompt.extractResult(result.stdout), meeting: meeting, dir: dir)
+        let output = try ClaudeRunner.run(prompt: prompt, dir: dir, config: config)
+        try SummaryPrompt.save(try SummaryPrompt.extractResult(output), meeting: meeting, dir: dir)
     }
 
     static var threads: Int {
@@ -201,16 +192,7 @@ final class Pipeline {
 
 enum SummaryPrompt {
     static func template() throws -> String {
-        let candidates = [
-            Paths.configFile.deletingLastPathComponent().appending(path: "summary-prompt.md"),
-            Paths.appBundle?.appending(path: "Contents/Resources/summary-prompt.md"),
-            URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-                .deletingLastPathComponent().deletingLastPathComponent().appending(path: "Resources/summary-prompt.md"),
-        ].compactMap { $0 }
-        for candidate in candidates {
-            if let text = try? String(contentsOf: candidate, encoding: .utf8) { return text }
-        }
-        throw RecapError("PROMPT_MISSING", "summary-prompt.md not found; reinstall with `make install`")
+        try ResourceText.load("summary-prompt.md")
     }
 
     static func render(meeting: Meeting, dir: URL) throws -> String {
@@ -251,17 +233,7 @@ enum SummaryPrompt {
     }
 
     static func extractResult(_ output: String) throws -> String {
-        struct Result: Decodable {
-            let result: String?
-            let is_error: Bool?
-        }
-        guard let data = output.data(using: .utf8),
-              let parsed = try? JSONDecoder().decode(Result.self, from: data) else {
-            throw RecapError("CLAUDE_OUTPUT", "Unexpected output from claude: \(output.prefix(300))")
-        }
-        guard parsed.is_error != true, let result = parsed.result, !result.trimmed.isEmpty else {
-            throw RecapError("CLAUDE_FAILED", parsed.result ?? "claude returned an empty summary")
-        }
+        let result = try ClaudeRunner.resultText(output)
         guard let start = result.range(of: "## Resumen") else { return result }
         return String(result[start.lowerBound...])
     }

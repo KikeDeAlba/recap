@@ -2,7 +2,7 @@ import ArgumentParser
 
 @main
 struct Recap: ParsableCommand {
-    static let version = "0.1.1"
+    static let version = "0.2.0"
 
     static let configuration = CommandConfiguration(
         commandName: "recap",
@@ -19,6 +19,7 @@ struct Recap: ParsableCommand {
             PromptCommand.self,
             SaveSummaryCommand.self,
             BitaHookCommand.self,
+            WaitCommand.self,
             SetupCommand.self,
             RecordCommand.self,
             PermissionsCommand.self,
