@@ -55,6 +55,7 @@ recap stop
 
 recap list
 recap show last
+recap show --bita-entry 812 --json    # the meeting behind a bita entry, with paths to every file
 recap discard <meeting>
 ```
 

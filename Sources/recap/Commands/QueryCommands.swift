@@ -71,6 +71,9 @@ struct ShowCommand: ParsableCommand {
     @Argument(help: "Meeting id, a unique part of it, or \"last\".")
     var meeting: String = "last"
 
+    @Option(name: .customLong("bita-entry"), help: "Show the meeting linked to this bita entry.")
+    var bitaEntry: Int?
+
     @Flag(help: "Print only the meeting directory.")
     var path = false
 
@@ -79,7 +82,15 @@ struct ShowCommand: ParsableCommand {
     func run() throws {
         try Output.run("show", json: output.json) {
             let store = MeetingStore(config: try Config.load())
-            let (meeting, dir) = try store.resolve(meeting)
+            let (meeting, dir): (Meeting, URL)
+            if let bitaEntry {
+                guard let found = store.find(bitaEntryId: bitaEntry) else {
+                    throw RecapError("MEETING_NOT_FOUND", "No meeting is linked to bita entry \(bitaEntry)")
+                }
+                (meeting, dir) = found
+            } else {
+                (meeting, dir) = try store.resolve(self.meeting)
+            }
             let record = MeetingRecord(meeting: meeting, dir: dir)
             if path { return (record, dir.path) }
             if let summary = try? String(contentsOf: dir.appending(path: "summary.md"), encoding: .utf8) {
