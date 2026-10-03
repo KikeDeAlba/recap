@@ -102,10 +102,22 @@ bita stop                                                   # recap stops, proce
 | bita event | recap |
 |---|---|
 | `start` of a meeting kind | starts recording in the matching mode, linked to the entry |
-| `stop` | stops, processes in the background and adds a `## Reunión` section with the minutes to the entry document (`bita note save`) |
+| `stop` | stops, processes in the background and wraps the meeting up in bita (see below) |
 | `cancel` | discards the recording |
 | `amend --kind <meeting kind>` on a running entry | starts recording |
 | `amend --kind none` while recording | stops without processing; the recording is kept |
+
+### Wrap-up
+
+After the summary, the `wrapup` stage asks Claude Code (headless, `Resources/wrapup-prompt.md`) for a title, a project, a documentation page and backlog items, and applies them through the bita CLI:
+
+- the timer gets the meeting's real topic as its title when the current one is generic ("Reunión presencial", "Junta", …);
+- if the timer has no project, it gets one only when the conversation makes it clear and the name exists in `bita projects`; otherwise `wrapup.projectResolved` is false and `/bita-stop` asks;
+- a page is created with `bita docs page new --from-entry` in that project and written as formal documentation (no pending sections); if the timer already had a page, a `## Reunión <date>` section is added to it instead;
+- action items and open questions become `bita backlog` items on that page;
+- the minutes still land in the `## Reunión` section of the entry document.
+
+`recap wait --bita-entry <id>` blocks until all of that is done and prints the result (`data.wrapup` with `--json`).
 
 The hook output goes to `hooks.log` beside the bita database. Minutes regenerated with `/recap-summarize` or `recap save-summary` are sent to bita again.
 
@@ -117,7 +129,7 @@ The hook output goes to `hooks.log` beside the bita database. Minutes regenerate
 | `transcribe` | per channel, then merged | mic | `transcript.json`, `transcript.md` |
 | `frames` | scene changes, at least 20 s apart, at most 40 | skipped | `frames/hh-mm-ss.jpg`, `frames.json` |
 | `summarize` | `claude -p` with transcript and frames | `claude -p` with transcript | `summary.md` |
-| `bita` | only when linked to a bita entry | same | `## Reunión` section in the entry document |
+| `wrapup` | only when linked to a bita entry | same | entry title and project, a bita page, backlog items and the `## Reunión` section of the entry document |
 
 - Transcription runs locally with `whisper-cli`, `large-v3-turbo` and Silero VAD. Known whisper hallucinations on silence are dropped.
 - In remote meetings the microphone is labelled **Sala** and the call audio **Remotos**. When the microphone picks up the speakers, segments that repeat the call audio within a few seconds are removed as echo; headphones avoid the problem entirely.

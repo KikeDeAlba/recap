@@ -22,6 +22,23 @@ enum MeetingStatus: String, Codable {
     case processed
 }
 
+struct BitaEntrySnapshot: Codable, Equatable {
+    var title: String
+    var projectName: String?
+    var kind: String?
+    var pageIds: [Int]
+}
+
+struct Wrapup: Codable, Equatable {
+    var title: String?
+    var titleChanged = false
+    var project: String?
+    var projectResolved = false
+    var pageId: Int?
+    var pageCreated = false
+    var backlogKeys: [String: String] = [:]
+}
+
 struct StageState: Codable {
     var status: String
     var updatedAt: Date
@@ -42,6 +59,8 @@ struct Meeting: Codable {
     var bitaEntryId: Int?
     var bitaDatabasePath: String?
     var bitaDocsRoot: String?
+    var bitaEntry: BitaEntrySnapshot?
+    var wrapup: Wrapup?
     var error: String?
     var stages: [String: StageState] = [:]
 
@@ -57,7 +76,7 @@ struct MeetingRecord: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case id, title, mode, status, createdAt, startedAt, endedAt, durationSeconds
-        case bitaEntryId, error, stages, dir, recording, summary, transcript
+        case bitaEntryId, bitaEntry, wrapup, error, stages, dir, recording, summary, transcript
     }
 
     func encode(to encoder: Encoder) throws {
@@ -71,6 +90,8 @@ struct MeetingRecord: Encodable {
         try container.encodeIfPresent(meeting.endedAt, forKey: .endedAt)
         try container.encodeIfPresent(meeting.durationSeconds, forKey: .durationSeconds)
         try container.encodeIfPresent(meeting.bitaEntryId, forKey: .bitaEntryId)
+        try container.encodeIfPresent(meeting.bitaEntry, forKey: .bitaEntry)
+        try container.encodeIfPresent(meeting.wrapup, forKey: .wrapup)
         try container.encodeIfPresent(meeting.error, forKey: .error)
         try container.encode(meeting.stages, forKey: .stages)
         try container.encode(dir.path, forKey: .dir)
