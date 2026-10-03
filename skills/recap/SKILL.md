@@ -54,18 +54,28 @@ Errores típicos y qué hacer:
 ## Con bita
 
 Si bita está instalado con el hook de recap (`bita hooks` lo lista), **arranca
-las reuniones desde bita**, no desde recap: así el tiempo queda registrado y la
-grabación sigue al contador.
+y para las reuniones desde bita**, no desde recap: así el tiempo queda medido y
+la grabación sigue al contador.
 
 ```sh
 bita start "<título>" --kind remote-meeting
 bita start "<título>" --kind in-person-meeting
-bita stop <id>
+bita stop <id> --json                 # sin --did y sin escribir la página
+recap wait --bita-entry <id> --json   # espera a que todo quede listo
 ```
 
-Al parar, la minuta llega sola a la sección «Reunión» del documento de la
-entrada. `meta.hooksFired` en la salida JSON de bita dice si el hook se lanzó; si
-es 0 en una reunión, no se está grabando y hay que decirlo.
+Al parar, recap hace todo lo demás sin que nadie lo pida:
+
+- transcribe y escribe la minuta;
+- le pone al contador un título real, si el que tenía era genérico;
+- le asigna el proyecto si no tenía y la conversación lo deja claro;
+- crea la página en ese proyecto, o agrega una sección a la que ya tenía, y la escribe;
+- pasa pendientes y preguntas abiertas al backlog;
+- deja la minuta en la sección «Reunión» de la entrada.
+
+El resultado está en `data.wrapup` de `recap wait`. Si `wrapup.projectResolved`
+es false, pregunta el proyecto y aplícalo con `bita amend`,
+`bita docs page move --project` y `bita backlog edit --project`.
 
 ## Consultar reuniones
 

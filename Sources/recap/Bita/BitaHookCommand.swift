@@ -7,6 +7,7 @@ struct BitaHookEvent: Decodable {
         let description: String
         let kind: String?
         let running: Bool?
+        let projectName: String?
     }
 
     let event: String
@@ -14,6 +15,11 @@ struct BitaHookEvent: Decodable {
     let previousKind: String?
     let databasePath: String?
     let docsRoot: String?
+    let pageIds: [Int]?
+
+    var snapshot: BitaEntrySnapshot {
+        BitaEntrySnapshot(title: entry.description, projectName: entry.projectName, kind: entry.kind, pageIds: pageIds ?? [])
+    }
 
     var mode: MeetingMode? { entry.kind.flatMap { BitaBridge.kinds[$0] } }
     var previousMode: MeetingMode? { previousKind.flatMap { BitaBridge.kinds[$0] } }
@@ -77,9 +83,11 @@ struct BitaHookCommand: ParsableCommand {
             case let .start(mode):
                 let record = try Recording.start(title: event.entry.description, mode: mode, display: nil,
                                                  bitaEntryId: event.entry.id, bita: event.target, timeout: 90)
+                _ = try MeetingFile.update(record.dir) { $0.bitaEntry = event.snapshot }
                 log("recording \(record.dir.path)")
             case .stopAndProcess:
                 let record = try Recording.stop(timeout: 60)
+                _ = try MeetingFile.update(record.dir) { $0.bitaEntry = event.snapshot }
                 if record.meeting.status == .recorded {
                     try Background.process(meetingId: record.meeting.id, dir: record.dir)
                     log("processing \(record.dir.path)")
@@ -94,6 +102,7 @@ struct BitaHookCommand: ParsableCommand {
                     log("nothing to do: \(meeting.id) is \(meeting.status.rawValue)")
                     return
                 }
+                _ = try MeetingFile.update(dir) { $0.bitaEntry = event.snapshot }
                 try Background.process(meetingId: meeting.id, dir: dir)
                 log("processing \(dir.path)")
             case .stopWithoutProcessing:
