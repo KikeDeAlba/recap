@@ -35,6 +35,7 @@ struct MediaOperations {
         let original = try MediaProbe.inspect(source)
         let originalBytes = MeetingMedia.size(source)
         try transcode(source: source, temporary: temporary, original: original, expectVideo: true,
+                      tolerance: preset.durationTolerance,
                       arguments: ["-map", "0:v:0", "-map", "0:a"] + preset.ffmpegVideoArguments
                           + ["-c:a", "copy"] + Self.enableAudio(original) + ["-f", "mov"])
         let compressedBytes = MeetingMedia.size(temporary)
@@ -96,7 +97,7 @@ struct MediaOperations {
         }
     }
 
-    private func transcode(source: URL, temporary: URL, original: MediaInfo, expectVideo: Bool, arguments: [String]) throws {
+    private func transcode(source: URL, temporary: URL, original: MediaInfo, expectVideo: Bool, tolerance: Double = 1, arguments: [String]) throws {
         let ffmpeg = try Tool.ffmpeg.require(config)
         try? FileManager.default.removeItem(at: temporary)
         do {
@@ -105,7 +106,7 @@ struct MediaOperations {
             guard result.ok else {
                 throw RecapError("FFMPEG_FAILED", String(result.stderr.trimmed.suffix(500)))
             }
-            try MediaProbe.verify(original: original, output: try MediaProbe.inspect(temporary), expectVideo: expectVideo)
+            try MediaProbe.verify(original: original, output: try MediaProbe.inspect(temporary), expectVideo: expectVideo, tolerance: tolerance)
         } catch {
             try? FileManager.default.removeItem(at: temporary)
             throw error
