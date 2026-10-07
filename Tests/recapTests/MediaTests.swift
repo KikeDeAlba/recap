@@ -145,6 +145,15 @@ private func write(_ bytes: Int, to url: URL) throws {
 }
 
 @Suite struct VideoPresetTests {
+    @Test func toleratesOneFrameIntervalOfDrift() throws {
+        #expect(VideoPreset.light.durationTolerance == 1.5)
+        #expect(VideoPreset.medium.durationTolerance == 2)
+        #expect(VideoPreset.max.durationTolerance == 3)
+        let original = MediaInfo(duration: 2390.8, audioTracks: 2, enabledAudioTracks: 2, videoTracks: 1)
+        let output = MediaInfo(duration: 2392.0, audioTracks: 2, enabledAudioTracks: 2, videoTracks: 1)
+        try MediaProbe.verify(original: original, output: output, expectVideo: true, tolerance: VideoPreset.medium.durationTolerance)
+    }
+
     @Test func presetParameters() {
         #expect(VideoPreset.light.width == 1280)
         #expect(VideoPreset.light.frameRate == "2")
