@@ -189,7 +189,7 @@ enum Recording {
         }
         if current.status == .recording || current.status == .starting {
             current = try MeetingFile.update(dir) {
-                $0.status = FileManager.default.fileExists(atPath: dir.appending(path: $0.mode.recordingFileName).path) ? .recorded : .failed
+                $0.status = FileManager.default.fileExists(atPath: MeetingMedia.recordingURL(dir: dir, mode: $0.mode).path) ? .recorded : .failed
                 $0.endedAt = Date()
                 $0.recorderPid = nil
                 $0.error = "The recorder exited without closing the file cleanly"
