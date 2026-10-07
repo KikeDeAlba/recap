@@ -39,6 +39,12 @@ struct Wrapup: Codable, Equatable {
     var backlogKeys: [String: String] = [:]
 }
 
+struct VideoCompression: Codable, Equatable {
+    var compressedAt: Date
+    var preset: String
+    var originalBytes: Int64
+}
+
 struct StageState: Codable {
     var status: String
     var updatedAt: Date
@@ -63,6 +69,8 @@ struct Meeting: Codable {
     var wrapup: Wrapup?
     var error: String?
     var stages: [String: StageState] = [:]
+    var video: VideoCompression?
+    var videoRemovedAt: Date?
 
     var durationSeconds: Int? {
         guard let startedAt else { return nil }
@@ -77,7 +85,7 @@ struct MeetingRecord: Encodable {
     enum CodingKeys: String, CodingKey {
         case id, title, mode, status, createdAt, startedAt, endedAt, durationSeconds
         case bitaEntryId, bitaEntry, wrapup, error, stages, dir, recording, summary, transcript
-        case transcriptSegments, frames
+        case transcriptSegments, frames, hasVideo, storage, video, videoRemovedAt
     }
 
     func encode(to encoder: Encoder) throws {
@@ -96,7 +104,12 @@ struct MeetingRecord: Encodable {
         try container.encodeIfPresent(meeting.error, forKey: .error)
         try container.encode(meeting.stages, forKey: .stages)
         try container.encode(dir.path, forKey: .dir)
-        try container.encodeIfPresent(existing(meeting.mode.recordingFileName), forKey: .recording)
+        let recording = MeetingMedia.recordingURL(dir: dir, mode: meeting.mode)
+        try container.encodeIfPresent(existing(recording.lastPathComponent), forKey: .recording)
+        try container.encode(MeetingMedia.hasVideo(dir: dir, mode: meeting.mode), forKey: .hasVideo)
+        try container.encode(MeetingStorage.measure(dir, mode: meeting.mode), forKey: .storage)
+        try container.encodeIfPresent(meeting.video, forKey: .video)
+        try container.encodeIfPresent(meeting.videoRemovedAt, forKey: .videoRemovedAt)
         try container.encodeIfPresent(existing("transcript.md"), forKey: .transcript)
         try container.encodeIfPresent(existing("summary.md"), forKey: .summary)
         try container.encodeIfPresent(existing("transcript.json"), forKey: .transcriptSegments)
@@ -150,7 +163,7 @@ enum MeetingFile {
         if let pid = meeting.recorderPid, ProcessCheck.isAlive(pid) { return meeting }
         if meeting.recorderPid == nil, meeting.status == .starting,
            Date().timeIntervalSince(meeting.createdAt) < 300 { return meeting }
-        let recording = dir.appending(path: meeting.mode.recordingFileName)
+        let recording = MeetingMedia.recordingURL(dir: dir, mode: meeting.mode)
         let attributes = try? FileManager.default.attributesOfItem(atPath: recording.path)
         let hasRecording = ((attributes?[.size] as? Int) ?? 0) > 0
         return (try? update(dir) {

@@ -41,7 +41,7 @@ struct ListCommand: ParsableCommand {
         abstract: "List recorded meetings, newest first."
     )
 
-    @Option(help: "Maximum number of meetings to show.")
+    @Option(help: "Maximum number of meetings to show; 0 shows them all.")
     var limit: Int = 20
 
     @OptionGroup var output: OutputOptions
@@ -49,7 +49,7 @@ struct ListCommand: ParsableCommand {
     func run() throws {
         try Output.run("list", json: output.json) {
             let store = MeetingStore(config: try Config.load())
-            let records = store.all().prefix(limit).map { MeetingRecord(meeting: $0.0, dir: $0.1) }
+            let records = store.all().prefix(limit > 0 ? limit : Int.max).map { MeetingRecord(meeting: $0.0, dir: $0.1) }
             let lines = records.map { record in
                 let m = record.meeting
                 let mode = m.mode.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)

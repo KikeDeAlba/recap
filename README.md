@@ -59,6 +59,17 @@ recap show --bita-entry 812 --json    # the meeting behind a bita entry, with pa
 recap discard <meeting>
 ```
 
+Free space once a meeting is processed:
+
+```sh
+recap compress-video <meeting> --preset medium   # HEVC re-encode: light (1280 px, 2 fps), medium (960 px, 1 fps), max (720 px, 0.5 fps)
+recap strip-video <meeting>                      # drop the video, keep mic and system audio in recording.m4a
+recap prune <meeting> --intermediates            # delete mic.wav, system.wav and the per-channel transcripts
+recap delete <meeting>                           # delete the whole meeting folder
+```
+
+`compress-video` and `strip-video` work on remote meetings only, accept `--bita-entry` and `--prune-intermediates`, check the new file (duration and audio tracks) with AVFoundation before replacing the original, and refuse while the meeting is being recorded or processed. `compress-video` keeps the original when the result is not smaller (`NOT_SMALLER`). After `strip-video` the `frames` stage is skipped and the existing frames are kept. `recap list --json` reports `hasVideo`, `storage` (`recordingBytes`, `intermediateBytes`, `framesBytes`, `otherBytes`, `totalBytes`), `video` and `videoRemovedAt` for each meeting; `--limit 0` lists them all.
+
 `recap stop` processes the meeting in the background (`--no-process` to skip). Re-run the pipeline at any time:
 
 ```sh
@@ -152,7 +163,7 @@ Each meeting gets a folder under `~/Recap` (configurable):
 ~/Recap/2026-10-02-1530-sprint-planning/
 ├── meeting.json      metadata, status and pipeline stages
 ├── recording.mov     remote: video + mic track + system track
-├── recording.m4a     in-person: mic track
+├── recording.m4a     in-person: mic track; remote after strip-video: mic + system tracks
 ├── mic.wav, system.wav
 ├── transcript.md     merged transcript with timestamps
 ├── frames/           remote only
