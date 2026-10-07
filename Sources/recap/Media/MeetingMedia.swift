@@ -86,6 +86,10 @@ enum VideoPreset: String, CaseIterable, Codable, ExpressibleByArgument {
         }
     }
 
+    var durationTolerance: Double {
+        1 + 1 / (Double(frameRate) ?? 1)
+    }
+
     var videoBitrate: String {
         switch self {
         case .light: "250k"
