@@ -15,6 +15,14 @@ enum Stage: String, CaseIterable {
         default: true
         }
     }
+
+    func skipped(meeting: Meeting, dir: URL) -> Bool {
+        self == .frames && !MeetingMedia.hasVideo(dir: dir, mode: meeting.mode)
+    }
+
+    static func isComplete(_ state: StageState?) -> Bool {
+        state?.status == "done" || state?.status == "skipped"
+    }
 }
 
 struct FrameInfo: Codable {
@@ -40,7 +48,7 @@ final class Pipeline {
         guard meeting.status != .recording && meeting.status != .starting else {
             throw RecapError("STILL_RECORDING", "\"\(meeting.title)\" is still being recorded")
         }
-        guard FileManager.default.fileExists(atPath: file(meeting.mode.recordingFileName).path) else {
+        guard FileManager.default.fileExists(atPath: recording(meeting).path) else {
             throw RecapError("NO_RECORDING", "\"\(meeting.title)\" has no recording")
         }
         let lock = try ProcessLock(url: file("process.lock"))
@@ -51,6 +59,17 @@ final class Pipeline {
         for stage in Stage.allCases where stage.applies(to: meeting) {
             if let only, stage != only { continue }
             if stage == start { forced = true }
+            if stage.skipped(meeting: meeting, dir: dir) {
+                if Stage.isComplete(meeting.stages[stage.rawValue]) {
+                    log("\(stage.rawValue): already done")
+                    continue
+                }
+                meeting = try MeetingFile.update(dir) {
+                    $0.stages[stage.rawValue] = StageState(status: "skipped", updatedAt: Date())
+                }
+                log("\(stage.rawValue): skipped, the recording has no video")
+                continue
+            }
             let done = meeting.stages[stage.rawValue]?.status == "done"
             if done && !forced && only == nil {
                 log("\(stage.rawValue): already done")
@@ -75,7 +94,7 @@ final class Pipeline {
             }
         }
         let allDone = Stage.allCases.filter { $0.applies(to: meeting) }
-            .allSatisfy { meeting.stages[$0.rawValue]?.status == "done" }
+            .allSatisfy { Stage.isComplete(meeting.stages[$0.rawValue]) }
         return try MeetingFile.update(dir) { $0.status = allDone ? .processed : .recorded }
     }
 
@@ -83,13 +102,17 @@ final class Pipeline {
         switch stage {
         case .audio: try extractAudio(meeting)
         case .transcribe: try transcribe(meeting)
-        case .frames: try extractFrames()
+        case .frames: try extractFrames(meeting)
         case .summarize: try summarize(meeting)
         case .wrapup: try MeetingWrapup(config: config).run(meeting: meeting, dir: dir)
         }
     }
 
     private func file(_ name: String) -> URL { dir.appending(path: name) }
+
+    private func recording(_ meeting: Meeting) -> URL {
+        MeetingMedia.recordingURL(dir: dir, mode: meeting.mode)
+    }
 
     private func channels(_ meeting: Meeting) -> [(Channel, Int)] {
         meeting.mode == .remote ? [(.mic, 0), (.system, 1)] : [(.mic, 0)]
@@ -99,7 +122,7 @@ final class Pipeline {
         let ffmpeg = try Tool.ffmpeg.require(config)
         for (channel, index) in channels(meeting) {
             let result = try Shell.run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-y",
-                                                "-i", file(meeting.mode.recordingFileName).path,
+                                                "-i", recording(meeting).path,
                                                 "-map", "0:a:\(index)", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
                                                 file("\(channel.rawValue).wav").path])
             guard result.ok else { throw RecapError("FFMPEG_FAILED", result.stderr.trimmed) }
@@ -111,6 +134,9 @@ final class Pipeline {
         let model = config.whisperModelURL
         guard FileManager.default.fileExists(atPath: model.path) else {
             throw RecapError("MODEL_MISSING", "Whisper model not found at \(model.path). Run `recap setup`.")
+        }
+        if channels(meeting).contains(where: { !FileManager.default.fileExists(atPath: file("\($0.0.rawValue).wav").path) }) {
+            try extractAudio(meeting)
         }
         var byChannel: [Channel: [Segment]] = [:]
         for (channel, _) in channels(meeting) {
@@ -137,13 +163,13 @@ final class Pipeline {
             .write(to: file("transcript.md"), atomically: true, encoding: .utf8)
     }
 
-    private func extractFrames() throws {
+    private func extractFrames(_ meeting: Meeting) throws {
         let ffmpeg = try Tool.ffmpeg.require(config)
         let framesDir = file("frames")
         try? FileManager.default.removeItem(at: framesDir)
         try FileManager.default.createDirectory(at: framesDir, withIntermediateDirectories: true)
         let select = "select='isnan(prev_selected_t)+gt(scene\\,0.15)*gte(t-prev_selected_t\\,20)+gte(t-prev_selected_t\\,300)',showinfo"
-        let result = try Shell.run(ffmpeg, ["-hide_banner", "-y", "-i", file(MeetingMode.remote.recordingFileName).path,
+        let result = try Shell.run(ffmpeg, ["-hide_banner", "-y", "-i", recording(meeting).path,
                                             "-map", "0:v:0", "-vf", select, "-fps_mode", "vfr", "-q:v", "4",
                                             framesDir.appending(path: "raw-%04d.jpg").path])
         guard result.ok else { throw RecapError("FFMPEG_FAILED", result.stderr.trimmed.suffix(500).description) }

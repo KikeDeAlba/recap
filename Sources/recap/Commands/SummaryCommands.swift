@@ -49,7 +49,7 @@ struct SaveSummaryCommand: ParsableCommand {
                 $0.stages[Stage.summarize.rawValue] = StageState(status: "done", updatedAt: Date())
                 let stages = $0.stages
                 let complete = Stage.allCases.filter { $0.applies(to: found) }
-                    .allSatisfy { stages[$0.rawValue]?.status == "done" }
+                    .allSatisfy { Stage.isComplete(stages[$0.rawValue]) }
                 if complete { $0.status = .processed }
             }
             return (MeetingRecord(meeting: updated, dir: dir), dir.appending(path: "summary.md").path)
