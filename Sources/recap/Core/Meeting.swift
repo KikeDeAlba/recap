@@ -81,11 +81,13 @@ struct Meeting: Codable {
 struct MeetingRecord: Encodable {
     let meeting: Meeting
     let dir: URL
+    var detailed = false
 
     enum CodingKeys: String, CodingKey {
         case id, title, mode, status, createdAt, startedAt, endedAt, durationSeconds
         case bitaEntryId, bitaEntry, wrapup, error, stages, dir, recording, summary, transcript
         case transcriptSegments, frames, hasVideo, storage, video, videoRemovedAt
+        case liveTranscript, answers, proposals
     }
 
     func encode(to encoder: Encoder) throws {
@@ -114,6 +116,16 @@ struct MeetingRecord: Encodable {
         try container.encodeIfPresent(existing("summary.md"), forKey: .summary)
         try container.encodeIfPresent(existing("transcript.json"), forKey: .transcriptSegments)
         try container.encodeIfPresent(existing("frames.json"), forKey: .frames)
+        let live = LiveFiles.transcript(dir)
+        if FileManager.default.fileExists(atPath: live.path) {
+            try container.encode(live.path, forKey: .liveTranscript)
+        } else {
+            try container.encodeNil(forKey: .liveTranscript)
+        }
+        if detailed {
+            try container.encode(JSONLines.read(Answer.self, from: LiveFiles.answers(dir)), forKey: .answers)
+            try container.encode(ProposalStore.load(dir)?.proposals ?? [], forKey: .proposals)
+        }
     }
 
     private func existing(_ name: String) -> String? {

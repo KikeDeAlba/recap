@@ -91,7 +91,7 @@ struct ShowCommand: ParsableCommand {
             } else {
                 (meeting, dir) = try store.resolve(self.meeting)
             }
-            let record = MeetingRecord(meeting: meeting, dir: dir)
+            let record = MeetingRecord(meeting: meeting, dir: dir, detailed: true)
             if path { return (record, dir.path) }
             if let summary = try? String(contentsOf: dir.appending(path: "summary.md"), encoding: .utf8) {
                 return (record, summary)

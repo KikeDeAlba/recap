@@ -28,7 +28,7 @@ struct StripVideoCommand: ParsableCommand {
     @Option(name: .customLong("bita-entry"), help: "Use the meeting linked to this bita entry.")
     var bitaEntry: Int?
 
-    @Flag(name: .customLong("prune-intermediates"), help: "Also delete mic.wav, system.wav and the per-channel transcripts.")
+    @Flag(name: .customLong("prune-intermediates"), help: "Also delete mic.wav, system.wav, the per-channel transcripts and the live chunks.")
     var pruneIntermediates = false
 
     @OptionGroup var output: OutputOptions
@@ -60,7 +60,7 @@ struct CompressVideoCommand: ParsableCommand {
     @Option(help: "Compression level (\(VideoPreset.allCases.map(\.rawValue).joined(separator: ", "))).")
     var preset: VideoPreset
 
-    @Flag(name: .customLong("prune-intermediates"), help: "Also delete mic.wav, system.wav and the per-channel transcripts.")
+    @Flag(name: .customLong("prune-intermediates"), help: "Also delete mic.wav, system.wav, the per-channel transcripts and the live chunks.")
     var pruneIntermediates = false
 
     @OptionGroup var output: OutputOptions
@@ -90,7 +90,7 @@ struct PruneCommand: ParsableCommand {
     @Option(name: .customLong("bita-entry"), help: "Use the meeting linked to this bita entry.")
     var bitaEntry: Int?
 
-    @Flag(help: "Delete mic.wav, system.wav and the per-channel transcripts.")
+    @Flag(help: "Delete mic.wav, system.wav, the per-channel transcripts and the live chunks.")
     var intermediates = false
 
     @OptionGroup var output: OutputOptions

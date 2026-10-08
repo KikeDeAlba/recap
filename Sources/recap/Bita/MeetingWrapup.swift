@@ -90,7 +90,48 @@ enum WrapupRules {
     }
 }
 
-struct BitaClient {
+struct BitaResponse {
+    let ok: Bool
+    let data: Any?
+    let meta: [String: Any]?
+    let errorCode: String?
+    let errorMessage: String?
+
+    init(ok: Bool, data: Any? = nil, meta: [String: Any]? = nil, errorCode: String? = nil, errorMessage: String? = nil) {
+        self.ok = ok
+        self.data = data
+        self.meta = meta
+        self.errorCode = errorCode
+        self.errorMessage = errorMessage
+    }
+
+    init(stdout: String, stderr: String, status: Int32) {
+        let envelope = (try? JSONSerialization.jsonObject(with: Data(stdout.utf8))) as? [String: Any]
+        let error = envelope?["error"] as? [String: Any]
+        ok = status == 0 && envelope?["ok"] as? Bool == true
+        data = envelope?["data"]
+        meta = envelope?["meta"] as? [String: Any]
+        errorCode = error?["code"] as? String
+        errorMessage = (error?["message"] as? String) ?? (ok ? nil : (stdout + stderr).trimmed.suffix(300).description)
+    }
+}
+
+protocol BitaCalling {
+    func invoke(_ arguments: [String]) throws -> BitaResponse
+}
+
+extension BitaCalling {
+    @discardableResult
+    func call(_ arguments: [String]) throws -> Any? {
+        let response = try invoke(arguments)
+        guard response.ok else {
+            throw RecapError("BITA_FAILED", "bita \(arguments.prefix(3).joined(separator: " ")) failed: \(response.errorMessage ?? "no reason given")")
+        }
+        return response.data
+    }
+}
+
+struct BitaClient: BitaCalling {
     let executable: URL
     let config: Config
     let target: BitaTarget
@@ -101,20 +142,14 @@ struct BitaClient {
         self.target = target
     }
 
-    @discardableResult
-    func call(_ arguments: [String]) throws -> Any? {
+    func invoke(_ arguments: [String]) throws -> BitaResponse {
         var full = arguments + ["--json"]
         if let database = target.databasePath { full += ["--db-path", database] }
         if let docs = target.docsRoot { full += ["--docs-dir", docs] }
         var environment = Tool.environment(for: executable, config: config)
         environment["BITA_NO_HOOKS"] = "1"
         let result = try Shell.run(executable, full, environment: environment, cwd: URL(fileURLWithPath: "/"))
-        let envelope = (try? JSONSerialization.jsonObject(with: Data(result.stdout.utf8))) as? [String: Any]
-        guard result.ok, envelope?["ok"] as? Bool == true else {
-            let error = (envelope?["error"] as? [String: Any])?["message"] as? String
-            throw RecapError("BITA_FAILED", "bita \(arguments.prefix(3).joined(separator: " ")) failed: \(error ?? (result.stdout + result.stderr).trimmed.suffix(300).description)")
-        }
-        return envelope?["data"]
+        return BitaResponse(stdout: result.stdout, stderr: result.stderr, status: result.status)
     }
 }
 

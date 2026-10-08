@@ -27,9 +27,11 @@ final class RecordingController {
         do {
             let meeting = try MeetingFile.update(dir) { $0.recorderPid = getpid() }
             let url = dir.appending(path: meeting.mode.recordingFileName)
+            let live = (try? Config.load())?.liveSettings ?? LiveSettings(nil)
+            let liveTap = live.enabled ? makeLiveTap(maxChunkSeconds: live.maxChunkSeconds) : nil
             let recorder: Recorder = switch meeting.mode {
-            case .remote: RemoteRecorder(url: url, displayID: meeting.display)
-            case .inPerson: InPersonRecorder(url: url)
+            case .remote: RemoteRecorder(url: url, displayID: meeting.display, liveTap: liveTap)
+            case .inPerson: InPersonRecorder(url: url, liveTap: liveTap)
             }
             recorder.onFailure = { [weak self] error in
                 DispatchQueue.main.async { self?.finish(error: error) }
@@ -42,9 +44,32 @@ final class RecordingController {
                 $0.startedAt = Date()
             }
             log("recording \(meeting.mode.rawValue) to \(url.path)")
+            if liveTap != nil { startLiveWorker() }
             if stopRequested { finish(error: nil) }
         } catch {
             fail(error)
+        }
+    }
+
+    private func makeLiveTap(maxChunkSeconds: Int) -> LiveTap? {
+        do {
+            return try LiveTap(meetingDir: dir, maxChunkSeconds: maxChunkSeconds)
+        } catch {
+            log("live transcription disabled: \(error)")
+            return nil
+        }
+    }
+
+    private func startLiveWorker() {
+        guard let executable = Paths.executable else {
+            log("live worker not started: cannot locate the recap executable")
+            return
+        }
+        do {
+            let pid = try Shell.spawnDetached(executable, ["live-worker", dir.path], log: LiveFiles.workerLog(dir))
+            log("live worker \(pid)")
+        } catch {
+            log("live worker not started: \(error)")
         }
     }
 
