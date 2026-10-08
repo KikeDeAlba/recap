@@ -64,7 +64,7 @@ Free space once a meeting is processed:
 ```sh
 recap compress-video <meeting> --preset medium   # HEVC re-encode: light (1280 px, 2 fps), medium (960 px, 1 fps), max (720 px, 0.5 fps)
 recap strip-video <meeting>                      # drop the video, keep mic and system audio in recording.m4a
-recap prune <meeting> --intermediates            # delete mic.wav, system.wav and the per-channel transcripts
+recap prune <meeting> --intermediates            # delete mic.wav, system.wav, the per-channel transcripts and live/chunks
 recap delete <meeting>                           # delete the whole meeting folder
 ```
 
@@ -96,8 +96,49 @@ The repository is also a Claude Code plugin marketplace:
 | `/recap-status` | Shows whether a recording is running and how far processing got |
 | `/recap-list [meeting]` | Lists meetings or shows one meeting's minutes |
 | `/recap-summarize [meeting] [instructions]` | Rewrites the minutes inside the session, following extra instructions, and stores them with `recap save-summary` |
+| `/recap-ask [question]` | Answers the last question of the meeting being recorded, or the one given, from the bita pages and the project repositories |
+| `/recap-proposals [meeting]` | Reviews the documentation changes proposed by a meeting and accepts, edits or rejects them |
 
 The `recap` skill lets Claude answer questions such as "¿qué acordamos en la reunión de ayer?" from the stored minutes and transcripts. The commands call `recap`, so it must be on the `PATH` of the shell Claude Code runs.
+
+## Live assistant
+
+While a meeting is being recorded, recap also transcribes it live:
+
+- The recorder taps the microphone and system audio, converts each to 16 kHz mono, and cuts it on silence into 5–20 s chunks (`live.maxChunkSeconds`) under `live/chunks/`. The tap runs on its own queue and never blocks the file writer.
+- A detached `recap live-worker` transcribes each chunk with `whisper-cli` (same model and VAD as the pipeline, 4 threads, the previous text as prompt), drops hallucinations and microphone echo, and appends `{startMs, endMs, channel, text}` lines to `live/transcript.jsonl`, with offsets from the start of the recording. It exits once the recording stops and the queue is empty.
+- The transcript after `stop` is still the source of truth; the live one is for answering during the meeting.
+
+`recap ask` answers a question with Claude Code (headless, streaming), reading only the bita pages and the repositories registered for the entry's project (`bita project repo ls`, bita 0.16 or later):
+
+```sh
+recap ask --active                                      # the last question in the live transcript
+recap ask --active --question "¿cómo se despliega bita-desktop?"
+recap ask --meeting <meeting> --window 300 --json-stream
+recap ask --sources --project CoDi --json               # the docs root and repositories it would read
+```
+
+- The context is the last `--window` seconds (default 180) of the live transcript, the entry title and project, the project page tree and its repositories. Claude may use Read, Grep, Glob and `git log|show|diff`, and nothing else (`Resources/ask-prompt.md`).
+- Answers are short, give the exact command when there is one, cite the page, `file:line` or commit, and say "No está documentado." instead of guessing.
+- `--json-stream` prints one JSON object per line: `question`, `progress` (the file being read), `delta` (answer text), `source`, then `done` with the whole answer, or `error`.
+- Every answer is appended to `live/answers.jsonl` as `{id, askedAt, question, answer, found, sources}`.
+
+bita-desktop drives this from its floating window: it opens while recording (`live.openWindow`), runs `recap ask --active --json-stream` from a global shortcut and shows the answers.
+
+### Proposed documentation changes
+
+For meetings linked to a bita entry, the `proposals` stage (before `wrapup`) asks Claude Code (`Resources/proposals-prompt.md`) for the explicit, firm changes said about existing pages: the project pages and the pages linked to the entry, never the meeting's own page. Ideas, doubts and statements corrected later are left out, and the text follows bita's writing rule: nothing that reveals the conversation.
+
+Each change becomes a commit on the docs branch `proposal/meeting-<entry>` through `bita docs propose`, and is listed in `proposals.json` (its markdown in `proposals/<n>.md`). Nothing reaches `main`, or Confluence, until it is accepted:
+
+```sh
+recap proposals ls <meeting> --json          # or --bita-entry <id>
+recap proposals show <meeting> <n> --json    # markdown, quotes and the branch diff
+recap proposals accept <meeting> <n> [--md edited.md]
+recap proposals reject <meeting> <n>
+```
+
+`accept` runs `bita docs branch apply`; with `--md` it first proposes the edited text again. If the page changed since the proposal, the merge conflicts and the proposal turns `stale` (the command still succeeds). When no proposal is pending, the branch is dropped. A failure in this stage is recorded in `stages.proposals` and never stops the wrap-up. Turn it off with `recap config set live.proposals false`.
 
 ## bita integration
 
@@ -141,6 +182,7 @@ The hook output goes to `hooks.log` beside the bita database. Minutes regenerate
 | `transcribe` | per channel, then merged | mic | `transcript.json`, `transcript.md` |
 | `frames` | scene changes, at least 20 s apart, at most 40 | skipped | `frames/hh-mm-ss.jpg`, `frames.json` |
 | `summarize` | `claude -p` with transcript and frames | `claude -p` with transcript | `summary.md` |
+| `proposals` | only when linked to a bita entry and `live.proposals` is on | same | `proposals.json`, `proposals/<n>.md` and the docs branch `proposal/meeting-<entry>` |
 | `wrapup` | only when linked to a bita entry | same | entry title and project, a bita page, backlog items and the `## Reunión` section of the entry document |
 
 - Transcription runs locally with `whisper-cli`, `large-v3-turbo` and Silero VAD. Known whisper hallucinations on silence are dropped.
@@ -168,6 +210,8 @@ Each meeting gets a folder under `~/Recap` (configurable):
 ├── transcript.md     merged transcript with timestamps
 ├── frames/           remote only
 ├── summary.md        minutes
+├── live/             transcript.jsonl, answers.jsonl and chunks/ (live transcription)
+├── proposals.json    proposed documentation changes, with proposals/<n>.md
 ├── recorder.log
 └── process.log
 ```
@@ -185,6 +229,13 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
   "vocabulary": ["CoDi", "webhook", "PostgreSQL"],
   "summaryModel": "sonnet",
   "whisperModel": "~/.local/share/recap/models/ggml-large-v3-turbo.bin",
+  "live": {
+    "enabled": true,
+    "openWindow": true,
+    "proposals": true,
+    "maxChunkSeconds": 20,
+    "assistModel": "sonnet"
+  },
   "tools": {
     "claude": "/Users/me/.nvm/versions/node/v24.19.0/bin/claude",
     "ffmpeg": "/opt/homebrew/bin/ffmpeg"
@@ -195,6 +246,8 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
 - `vocabulary` is passed to whisper as a glossary and fixes most misheard product names.
 - `tools` holds absolute paths to the external commands. `recap setup` fills it in, so the pipeline also works when it is started with a minimal `PATH` (for example from a menu bar app).
 - `recap setup` downloads the whisper and VAD models to `~/.local/share/recap/models`.
+- `live` controls the live assistant; every key is optional. `enabled` turns the live transcription on, `openWindow` lets bita-desktop open its floating window while recording, `proposals` turns the `proposals` stage on, `maxChunkSeconds` (5–60) is the longest live chunk, and `assistModel` is the model for `recap ask` (Claude Code's default when unset).
+- `recap config get [<key>] --json` and `recap config set <key> <value> --json` read and change the `live.*` keys.
 
 Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`.
 
