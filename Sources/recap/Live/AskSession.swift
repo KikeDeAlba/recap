@@ -47,7 +47,14 @@ struct AskRequest {
 }
 
 enum AskPrompt {
-    static let allowedTools = ["Read", "Grep", "Glob", "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)"]
+    static let readTools = ["Read", "Grep", "Glob"]
+    static let gitSubcommands = ["log", "show", "diff"]
+
+    static func allowedTools(_ context: ProjectContext) -> [String] {
+        readTools + context.existingRepos.flatMap { repo in
+            gitSubcommands.map { "Bash(git -C \(repo.path) \($0):*)" }
+        }
+    }
     static let availableTools = ["Read", "Grep", "Glob", "Bash"]
 
     static func render(template: String, request: AskRequest, context: ProjectContext, segments: [Segment]) -> String {
@@ -65,8 +72,8 @@ enum AskPrompt {
             : context.pages.map { "  \(String(repeating: "  ", count: max(0, $0.depth)))- #\($0.pageId) \($0.title) — \($0.relPath)" }
                 .joined(separator: "\n")
         let repos = context.existingRepos.isEmpty
-            ? "  (sin repositorios registrados; usa `cd <repo> && git log …` cuando los haya)"
-            : context.existingRepos.map { "  - \($0.slug): \($0.path) (para git: `cd \($0.path) && git log …`)" }.joined(separator: "\n")
+            ? "  (sin repositorios registrados)"
+            : context.existingRepos.map { "  - \($0.slug): \($0.path) (git: `git -C \($0.path) log|show|diff …`)" }.joined(separator: "\n")
         let speakers = labelled
             ? "«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada."
             : "Un solo micrófono en la sala, sin separación por persona."
@@ -109,7 +116,7 @@ final class AskSession {
                                       context: context, segments: segments)
         if let explicit { emit(.question(explicit)) }
         let describer = ProgressDescriber(docsRoot: context.docsRoot, repos: context.existingRepos)
-        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools.joined(separator: " ")],
+        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context).joined(separator: " ")],
                                                      addDirs: AskPrompt.addDirs(context),
                                                      model: config.liveSettings.assistModel,
                                                      restrictTools: AskPrompt.availableTools)

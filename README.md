@@ -118,7 +118,7 @@ recap ask --meeting <meeting> --window 300 --json-stream
 recap ask --sources --project CoDi --json               # the docs root and repositories it would read
 ```
 
-- The context is the last `--window` seconds (default 180) of the live transcript, the entry title and project, the project page tree and its repositories. Claude may use Read, Grep, Glob and `git log|show|diff`, and nothing else (`Resources/ask-prompt.md`).
+- The context is the last `--window` seconds (default 180) of the live transcript, the entry title and project, the project page tree and its repositories. Claude may use Read, Grep, Glob and, in each repository, only `git -C <repo> log|show|diff` (one exact `--allowedTools` prefix per repository and subcommand, since headless Claude Code rejects `cd <repo> && git …` and does not match wildcards in the middle of a pattern), and nothing else (`Resources/ask-prompt.md`).
 - Answers are short, give the exact command when there is one, cite the page, `file:line` or commit, and say "No está documentado." instead of guessing.
 - `--json-stream` prints one JSON object per line: `question`, `progress` (the file being read), `delta` (answer text), `source`, then `done` with the whole answer, or `error`.
 - Every answer is appended to `live/answers.jsonl` as `{id, askedAt, question, answer, found, sources}`.

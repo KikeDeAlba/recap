@@ -52,6 +52,8 @@ private func streamLine(_ text: String) -> String {
         #expect(describer.describe(name: "Grep", input: ["pattern": "deploy", "path": "/src/bita-desktop"])
                 == "Buscando «deploy» en bita-desktop")
         #expect(describer.describe(name: "Bash", input: ["command": "git log -5"]) == "Ejecutando git log -5")
+        #expect(describer.describe(name: "Bash", input: ["command": "git -C /src/bita-desktop log -1"])
+                == "Ejecutando git -C bita-desktop log -1")
     }
 
     @Test func assemblerStripsTheQuestionHeaderAndHoldsBackTheSourcesBlock() {
@@ -160,7 +162,8 @@ private func streamLine(_ text: String) -> String {
         #expect(!prompt.contains("{{"))
         #expect(prompt.contains("«Daily de CoDi»"))
         #expect(prompt.contains("- #3 Despliegue — codi/despliegue.md"))
-        #expect(prompt.contains("/src/codi") && !prompt.contains("/src/gone"))
+        #expect(prompt.contains("`git -C /src/codi log|show|diff …`") && !prompt.contains("/src/gone"))
+        #expect(!prompt.contains("cd /src"))
         #expect(prompt.contains("[00:06:40] Remotos: ¿Cómo se despliega el webhook?"))
         #expect(!prompt.contains("sprint anterior"))
         #expect(prompt.contains("identifícala en la transcripción"))
@@ -173,13 +176,17 @@ private func streamLine(_ text: String) -> String {
     }
 
     @Test func streamArgumentsKeepTheIsolationFlags() {
-        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools.joined(separator: " ")],
+        let context = ProjectContext(project: "CoDi", docsRoot: "/d", repos: [RepoRef(path: "/r", slug: "r", exists: true),
+                                                                          RepoRef(path: "/gone", slug: "gone", exists: false)])
+        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context).joined(separator: " ")],
                                                      addDirs: ["/d", "/r", "/d"], model: "haiku",
                                                      restrictTools: AskPrompt.availableTools)
         #expect(Array(arguments.prefix(5)) == ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
         #expect(arguments.contains("--strict-mcp-config") && arguments.contains("--no-session-persistence"))
         #expect(arguments[arguments.firstIndex(of: "--allowedTools")! + 1]
-                == "Read Grep Glob Bash(git log:*) Bash(git show:*) Bash(git diff:*)")
+                == "Read Grep Glob Bash(git -C /r log:*) Bash(git -C /r show:*) Bash(git -C /r diff:*)")
+        #expect(AskPrompt.allowedTools(ProjectContext(project: nil, docsRoot: nil)) == ["Read", "Grep", "Glob"])
+        #expect(!arguments.joined(separator: " ").contains("gone"))
         #expect(arguments.filter { $0 == "--add-dir" }.count == 2)
         #expect(arguments.suffix(2) == ["--model", "haiku"])
     }

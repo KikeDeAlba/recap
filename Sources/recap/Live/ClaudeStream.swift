@@ -56,7 +56,9 @@ struct ProgressDescriber {
             let scope = input["path"].map { " en \(short($0))" } ?? ""
             return "Listando \(input["pattern"] ?? "")\(scope)"
         case "Bash":
-            return input["command"].map { "Ejecutando \($0)" } ?? "Ejecutando un comando"
+            guard var command = input["command"] else { return "Ejecutando un comando" }
+            for root in roots { command = command.replacingOccurrences(of: root.prefix, with: root.label) }
+            return "Ejecutando \(command)"
         default:
             return name
         }

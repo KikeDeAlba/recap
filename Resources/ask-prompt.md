@@ -8,7 +8,7 @@ Estás acompañando en vivo una reunión. Quien te consulta necesita una respues
 
 ## Dónde buscar
 
-Responde solo con lo que encuentres en estas fuentes. Puedes leerlas con Read, Grep y Glob, y en los repositorios usar `git log`, `git show` y `git diff`.
+Responde solo con lo que encuentres en estas fuentes. Puedes leerlas con Read, Grep y Glob. Para el historial de un repositorio usa solo `git -C <ruta del repo> log`, `git -C <ruta del repo> show` o `git -C <ruta del repo> diff`, con la ruta exacta de la lista: un comando por llamada, sin `cd`, sin `&&` y sin tuberías; cualquier otra forma se rechaza.
 
 - Raíz de la documentación de bita: {{docsRoot}}
 - Páginas del proyecto (ruta relativa a la raíz):
