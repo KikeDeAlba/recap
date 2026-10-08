@@ -57,6 +57,10 @@ struct MeetingStorage: Codable, Equatable {
                 storage.intermediateBytes += bytes
             } else if name == MeetingMedia.framesDirectoryName {
                 storage.framesBytes += bytes
+            } else if name == LiveFiles.directoryName {
+                let chunks = MeetingMedia.size(LiveFiles.chunks(dir))
+                storage.intermediateBytes += chunks
+                storage.otherBytes += bytes - chunks
             } else {
                 storage.otherBytes += bytes
             }

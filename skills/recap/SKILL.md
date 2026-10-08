@@ -49,7 +49,7 @@ Solo si el usuario lo pide; todos aceptan `<id>` o `--bita-entry <id>` y `--json
 ```sh
 recap compress-video <id> --preset light|medium|max   # recomprime el video en HEVC (solo remotas)
 recap strip-video <id>                                 # quita el video y deja recording.m4a con ambas pistas de audio
-recap prune <id> --intermediates                       # borra mic.wav, system.wav y transcript-mic/system.json
+recap prune <id> --intermediates                       # borra mic.wav, system.wav, transcript-mic/system.json y live/chunks
 recap delete <id>                                      # borra la carpeta completa de la reunión
 ```
 
@@ -94,6 +94,48 @@ El resultado está en `data.wrapup` de `recap wait`. Si `wrapup.projectResolved`
 es false, pregunta el proyecto y aplícalo con `bita amend`,
 `bita docs page move --project` y `bita backlog edit --project`.
 
+## En vivo
+
+Mientras se graba, recap transcribe por tramos de 5 a 20 s en
+`live/transcript.jsonl` (una línea `{startMs, endMs, channel, text}`; `mic` es
+Sala y `system` Remotos). Es aproximada: la transcripción de después del stop
+(`transcript.md`) sigue siendo la fuente de verdad.
+
+Para responder una pregunta que hicieron en la reunión, con las páginas de bita
+y los repos del proyecto (`bita project repo ls`):
+
+```sh
+recap ask --active --json                              # la última pregunta de la transcripción
+recap ask --active --question "¿cómo se despliega X?" --json
+recap ask --meeting <id> --question "..." --json-stream   # eventos question/progress/delta/source/done
+recap ask --sources --project <p> --json               # qué consultaría, sin llamar a claude
+```
+
+La respuesta lleva `found` y `sources` (página, `archivo:línea` o commit) y se
+guarda en `live/answers.jsonl`. Con `found: false` no está documentado: no lo
+completes por tu cuenta. Se configura con `recap config get|set`
+(`live.enabled`, `live.openWindow`, `live.proposals`, `live.maxChunkSeconds`,
+`live.assistModel`).
+
+## Cambios propuestos a la documentación
+
+Si la reunión está ligada a bita, la etapa `proposals` (antes de `wrapup`)
+detecta los cambios explícitos y firmes a páginas que ya existen y los deja en
+la rama `proposal/meeting-<entrada>` de los docs, sin tocar `main`. Ideas,
+dudas y lo que se corrigió después no entran.
+
+```sh
+recap proposals ls <id> --json            # o --bita-entry <id>
+recap proposals show <id> <n> --json      # markdown, citas y diff
+recap proposals accept <id> <n> [--md <archivo editado>] --json
+recap proposals reject <id> <n> --json
+```
+
+Acepta o rechaza **solo cuando el usuario lo pida**. Si `accept` deja la
+propuesta en `stale`, la página cambió desde entonces: edítala sobre la versión
+actual y acéptala con `--md`. Cuando no queda ninguna pendiente, recap borra la
+rama. Usa `/recap-proposals` para revisarlas en la sesión.
+
 ## Consultar reuniones
 
 ```sh
@@ -117,4 +159,5 @@ minuto en la respuesta. En reuniones remotas, **Sala** es el micrófono local y
 ## Lo que no hace
 
 - No separa hablantes por persona: los nombres salen del contexto.
-- No sube nada a la nube salvo la transcripción que lee Claude al resumir.
+- No sube nada a la nube salvo la transcripción que lee Claude al resumir, al
+  responder con `recap ask` y al buscar cambios propuestos.

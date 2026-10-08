@@ -27,6 +27,10 @@ struct Recap: ParsableCommand {
             SetupCommand.self,
             RecordCommand.self,
             PermissionsCommand.self,
+            AskCommand.self,
+            ProposalsCommand.self,
+            ConfigCommand.self,
+            LiveWorkerCommand.self,
         ]
     )
 }

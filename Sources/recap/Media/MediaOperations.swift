@@ -81,6 +81,7 @@ struct MediaOperations {
         for name in MeetingMedia.intermediateFileNames {
             try? FileManager.default.removeItem(at: dir.appending(path: name))
         }
+        try? FileManager.default.removeItem(at: LiveFiles.chunks(dir))
     }
 
     static func enableAudio(_ info: MediaInfo) -> [String] {

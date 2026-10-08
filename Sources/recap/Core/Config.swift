@@ -7,6 +7,7 @@ struct Config: Codable {
     var summaryModel: String?
     var vocabulary: [String]?
     var tools: [String: String]?
+    var live: LiveConfig?
 
     static func load() throws -> Config {
         let url = Paths.configFile
@@ -30,6 +31,8 @@ struct Config: Codable {
     var whisperModelURL: URL {
         whisperModel.map(Paths.expandTilde) ?? Paths.modelsDir.appending(path: Models.whisper.fileName)
     }
+
+    var liveSettings: LiveSettings { LiveSettings(live) }
 
     var vadModelURL: URL {
         Paths.modelsDir.appending(path: Models.vad.fileName)
