@@ -7,9 +7,11 @@ final class InPersonRecorder: NSObject, Recorder, AVCaptureAudioDataOutputSample
     private let queue = DispatchQueue(label: "recap.in-person-recorder")
     private let session = AVCaptureSession()
     private var writer: MediaWriter?
+    private let liveTap: LiveTap?
 
-    init(url: URL) {
+    init(url: URL, liveTap: LiveTap? = nil) {
         self.url = url
+        self.liveTap = liveTap
     }
 
     func start() async throws {
@@ -40,10 +42,12 @@ final class InPersonRecorder: NSObject, Recorder, AVCaptureAudioDataOutputSample
     func stop() async {
         session.stopRunning()
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+        liveTap?.finish()
         await writer?.finish()
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         writer?.append(sampleBuffer, track: 0)
+        liveTap?.append(sampleBuffer, channel: .mic)
     }
 }

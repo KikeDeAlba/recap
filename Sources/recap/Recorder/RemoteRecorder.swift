@@ -14,10 +14,12 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
     private let queue = DispatchQueue(label: "recap.remote-recorder")
     private var stream: SCStream?
     private var writer: MediaWriter?
+    private let liveTap: LiveTap?
 
-    init(url: URL, displayID: CGDirectDisplayID?) {
+    init(url: URL, displayID: CGDirectDisplayID?, liveTap: LiveTap? = nil) {
         self.url = url
         self.displayID = displayID
+        self.liveTap = liveTap
     }
 
     func start() async throws {
@@ -65,6 +67,7 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
         if let stream { try? await stream.stopCapture() }
         stream = nil
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+        liveTap?.finish()
         await writer?.finish()
     }
 
@@ -72,11 +75,16 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
         guard let writer else { return }
         switch type {
         case .screen:
-            if Self.isCompleteFrame(sampleBuffer) { writer.append(sampleBuffer, track: 0) }
+            if Self.isCompleteFrame(sampleBuffer) {
+                liveTap?.mark(sampleBuffer.presentationTimeStamp)
+                writer.append(sampleBuffer, track: 0)
+            }
         case .microphone:
             writer.append(sampleBuffer, track: Self.micTrack)
+            liveTap?.append(sampleBuffer, channel: .mic)
         case .audio:
             writer.append(sampleBuffer, track: Self.systemTrack)
+            liveTap?.append(sampleBuffer, channel: .system)
         @unknown default:
             break
         }

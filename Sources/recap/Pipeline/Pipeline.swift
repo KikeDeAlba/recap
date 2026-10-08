@@ -6,12 +6,13 @@ enum Stage: String, CaseIterable {
     case transcribe
     case frames
     case summarize
+    case proposals
     case wrapup
 
     func applies(to meeting: Meeting) -> Bool {
         switch self {
         case .frames: meeting.mode == .remote
-        case .wrapup: meeting.bitaEntryId != nil
+        case .wrapup, .proposals: meeting.bitaEntryId != nil
         default: true
         }
     }
@@ -20,8 +21,14 @@ enum Stage: String, CaseIterable {
         self == .frames && !MeetingMedia.hasVideo(dir: dir, mode: meeting.mode)
     }
 
+    var isOptional: Bool { self == .proposals }
+
     static func isComplete(_ state: StageState?) -> Bool {
         state?.status == "done" || state?.status == "skipped"
+    }
+
+    func isSatisfied(_ state: StageState?) -> Bool {
+        Stage.isComplete(state) || (isOptional && state?.status == "failed")
     }
 }
 
@@ -59,6 +66,13 @@ final class Pipeline {
         for stage in Stage.allCases where stage.applies(to: meeting) {
             if let only, stage != only { continue }
             if stage == start { forced = true }
+            if stage == .proposals && !config.liveSettings.proposals {
+                meeting = try MeetingFile.update(dir) {
+                    $0.stages[stage.rawValue] = StageState(status: "skipped", updatedAt: Date())
+                }
+                log("\(stage.rawValue): skipped, live.proposals is off")
+                continue
+            }
             if stage.skipped(meeting: meeting, dir: dir) {
                 if Stage.isComplete(meeting.stages[stage.rawValue]) {
                     log("\(stage.rawValue): already done")
@@ -85,6 +99,13 @@ final class Pipeline {
                 log("\(stage.rawValue): done in \(Int(Date().timeIntervalSince(began)))s")
             } catch {
                 let message = (error as? RecapError)?.message ?? String(describing: error)
+                if stage.isOptional {
+                    meeting = try MeetingFile.update(dir) {
+                        $0.stages[stage.rawValue] = StageState(status: "failed", updatedAt: Date(), error: message)
+                    }
+                    log("\(stage.rawValue): failed, continuing: \(message)")
+                    continue
+                }
                 meeting = try MeetingFile.update(dir) {
                     $0.stages[stage.rawValue] = StageState(status: "failed", updatedAt: Date(), error: message)
                     $0.status = .recorded
@@ -94,7 +115,7 @@ final class Pipeline {
             }
         }
         let allDone = Stage.allCases.filter { $0.applies(to: meeting) }
-            .allSatisfy { Stage.isComplete(meeting.stages[$0.rawValue]) }
+            .allSatisfy { $0.isSatisfied(meeting.stages[$0.rawValue]) }
         return try MeetingFile.update(dir) { $0.status = allDone ? .processed : .recorded }
     }
 
@@ -104,6 +125,7 @@ final class Pipeline {
         case .transcribe: try transcribe(meeting)
         case .frames: try extractFrames(meeting)
         case .summarize: try summarize(meeting)
+        case .proposals: try proposals(meeting)
         case .wrapup: try MeetingWrapup(config: config).run(meeting: meeting, dir: dir)
         }
     }
@@ -190,6 +212,12 @@ final class Pipeline {
             frames.append(FrameInfo(file: "frames/\(target)", timeSeconds: times[index]))
         }
         try JSONEncoder().encode(frames).write(to: file("frames.json"), options: .atomic)
+    }
+
+    private func proposals(_ meeting: Meeting) throws {
+        let bita = try BitaClient(config: config,
+                                  target: BitaTarget(databasePath: meeting.bitaDatabasePath, docsRoot: meeting.bitaDocsRoot))
+        _ = try ProposalGenerator(config: config, bita: bita, log: log).run(meeting: meeting, dir: dir)
     }
 
     private func summarize(_ meeting: Meeting) throws {
