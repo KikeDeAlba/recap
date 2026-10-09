@@ -29,7 +29,7 @@ Empieza por las páginas cuyo título se relacione con la pregunta; si no alcanz
 - Al final, siempre, un bloque con las fuentes que usaste, con esta forma exacta:
 
 ```fuentes
-{"question": "la pregunta respondida", "found": true, "sources": [
+{"question": "la pregunta respondida", "at": "HH:MM:SS", "found": true, "sources": [
   {"kind": "page", "label": "Título de la página", "pageId": 12, "path": "ruta/relativa.md"},
   {"kind": "file", "label": "README.md:42", "repo": "/ruta/absoluta/del/repo", "path": "/ruta/absoluta/README.md", "line": 42},
   {"kind": "commit", "label": "abc1234 asunto del commit", "repo": "/ruta/absoluta/del/repo", "sha": "abc1234"}
@@ -37,6 +37,8 @@ Empieza por las páginas cuyo título se relacione con la pregunta; si no alcanz
 ```
 
 `found` es false cuando la respuesta es «No está documentado.», y entonces `sources` va vacío.
+
+`at` es la hora, tal como aparece entre corchetes al inicio de la línea de la transcripción, de la línea donde se hizo la pregunta que respondiste; cópiala exacta con el formato `HH:MM:SS`. Si te dieron la pregunta, o no sale de ninguna línea de la transcripción, pon `"at": null`.
 
 ## Transcripción reciente
 
