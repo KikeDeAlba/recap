@@ -23,3 +23,6 @@ Muestra `data.answer` tal cual y, debajo, las fuentes de `data.sources` (su
 `label`). Si `data.found` es false, dilo en una línea: no está documentado.
 Si falla con `NOT_RECORDING`, no hay grabación activa; con `NO_QUESTION`, la
 transcripción en vivo todavía está vacía y hace falta escribir la pregunta.
+Con `ASK_BUSY`, otra respuesta de la misma reunión está en curso y no se pudo
+detener; vuelve a intentarlo en unos segundos. Las respuestas que el
+live-worker encontró solo llevan `auto: true` en `live/answers.jsonl`.

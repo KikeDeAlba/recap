@@ -6,16 +6,24 @@ struct LiveConfig: Codable, Equatable {
     var proposals: Bool?
     var maxChunkSeconds: Int?
     var assistModel: String?
+    var autoAsk: Bool?
+    var autoAskModel: String?
+    var autoAskMinSeconds: Int?
 }
 
 struct LiveSettings: Equatable {
     static let chunkSecondsRange = 5...60
+    static let autoAskSecondsRange = 10...120
+    static let defaultAutoAskModel = "haiku"
 
     var enabled: Bool
     var openWindow: Bool
     var proposals: Bool
     var maxChunkSeconds: Int
     var assistModel: String?
+    var autoAsk: Bool
+    var autoAskModel: String
+    var autoAskMinSeconds: Int
 
     init(_ config: LiveConfig?) {
         enabled = config?.enabled ?? true
@@ -24,6 +32,10 @@ struct LiveSettings: Equatable {
         let seconds = config?.maxChunkSeconds ?? 20
         maxChunkSeconds = min(max(seconds, Self.chunkSecondsRange.lowerBound), Self.chunkSecondsRange.upperBound)
         assistModel = config?.assistModel.flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
+        autoAsk = config?.autoAsk ?? true
+        autoAskModel = config?.autoAskModel.flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed } ?? Self.defaultAutoAskModel
+        let autoSeconds = config?.autoAskMinSeconds ?? 20
+        autoAskMinSeconds = min(max(autoSeconds, Self.autoAskSecondsRange.lowerBound), Self.autoAskSecondsRange.upperBound)
     }
 }
 
@@ -59,6 +71,9 @@ enum ConfigKey: String, CaseIterable {
     case liveProposals = "live.proposals"
     case liveAssistModel = "live.assistModel"
     case liveMaxChunkSeconds = "live.maxChunkSeconds"
+    case liveAutoAsk = "live.autoAsk"
+    case liveAutoAskModel = "live.autoAskModel"
+    case liveAutoAskMinSeconds = "live.autoAskMinSeconds"
 
     static func parse(_ raw: String) throws -> ConfigKey {
         guard let key = ConfigKey(rawValue: raw) ?? allCases.first(where: { $0.rawValue.lowercased() == raw.lowercased() }) else {
@@ -75,6 +90,9 @@ enum ConfigKey: String, CaseIterable {
         case .liveProposals: return .bool(settings.proposals)
         case .liveAssistModel: return settings.assistModel.map(ConfigValue.string) ?? .null
         case .liveMaxChunkSeconds: return .int(settings.maxChunkSeconds)
+        case .liveAutoAsk: return .bool(settings.autoAsk)
+        case .liveAutoAskModel: return .string(settings.autoAskModel)
+        case .liveAutoAskMinSeconds: return .int(settings.autoAskMinSeconds)
         }
     }
 
@@ -92,6 +110,15 @@ enum ConfigKey: String, CaseIterable {
                 throw RecapError("CONFIG_VALUE_INVALID", "\(rawValue) takes whole seconds between \(LiveSettings.chunkSecondsRange.lowerBound) and \(LiveSettings.chunkSecondsRange.upperBound)")
             }
             live.maxChunkSeconds = seconds
+        case .liveAutoAsk: live.autoAsk = try Self.bool(raw)
+        case .liveAutoAskModel:
+            let trimmed = raw.trimmed
+            live.autoAskModel = ["", "null", "none", "default"].contains(trimmed.lowercased()) ? nil : trimmed
+        case .liveAutoAskMinSeconds:
+            guard let seconds = Int(raw.trimmed), LiveSettings.autoAskSecondsRange.contains(seconds) else {
+                throw RecapError("CONFIG_VALUE_INVALID", "\(rawValue) takes whole seconds between \(LiveSettings.autoAskSecondsRange.lowerBound) and \(LiveSettings.autoAskSecondsRange.upperBound)")
+            }
+            live.autoAskMinSeconds = seconds
         }
         config.live = live
     }

@@ -209,6 +209,26 @@ private func feed(_ chunker: LiveChunker, _ samples: [Float], startMs: Int = 0, 
         #expect(config.liveSettings.enabled && config.liveSettings.openWindow && config.liveSettings.proposals)
         #expect(config.liveSettings.maxChunkSeconds == 20)
         #expect(config.liveSettings.assistModel == nil)
+        #expect(config.liveSettings.autoAsk && config.liveSettings.autoAskModel == "haiku")
+        #expect(config.liveSettings.autoAskMinSeconds == 20)
+        #expect(LiveSettings(LiveConfig(autoAskMinSeconds: 1)).autoAskMinSeconds == 10)
+        #expect(LiveSettings(LiveConfig(autoAskMinSeconds: 900)).autoAskMinSeconds == 120)
+    }
+
+    @Test func setsAndReadsTheAutoAskKeys() throws {
+        var config = Config()
+        try ConfigKey.parse("live.autoAsk").apply("off", to: &config)
+        try ConfigKey.parse("live.autoAskModel").apply("sonnet", to: &config)
+        try ConfigKey.parse("live.autoAskMinSeconds").apply("45", to: &config)
+        #expect(ConfigKey.liveAutoAsk.value(in: config) == .bool(false))
+        #expect(ConfigKey.liveAutoAskModel.value(in: config) == .string("sonnet"))
+        #expect(ConfigKey.liveAutoAskMinSeconds.value(in: config) == .int(45))
+        try ConfigKey.liveAutoAskModel.apply("default", to: &config)
+        #expect(ConfigKey.liveAutoAskModel.value(in: config) == .string("haiku"))
+        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskMinSeconds.apply("5", to: &config) }
+        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskMinSeconds.apply("121", to: &config) }
+        let snapshot = ConfigKey.snapshot(config)
+        #expect(snapshot["live.autoAsk"] == .bool(false) && snapshot["live.autoAskMinSeconds"] == .int(45))
     }
 
     @Test func setsAndReadsEachKey() throws {

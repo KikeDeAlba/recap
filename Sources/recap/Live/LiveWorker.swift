@@ -13,12 +13,15 @@ final class LiveWorker {
     private let config: Config
     private let log: (String) -> Void
     private let pollInterval: TimeInterval
+    private let detectorFactory: ((URL, Meeting) -> QuestionDetector?)?
     private var previousText: [Channel: String] = [:]
 
-    init(dir: URL, config: Config, pollInterval: TimeInterval = 1, log: @escaping (String) -> Void) {
+    init(dir: URL, config: Config, pollInterval: TimeInterval = 1,
+         detectorFactory: ((URL, Meeting) -> QuestionDetector?)? = nil, log: @escaping (String) -> Void) {
         self.dir = dir
         self.config = config
         self.pollInterval = pollInterval
+        self.detectorFactory = detectorFactory
         self.log = log
     }
 
@@ -37,8 +40,12 @@ final class LiveWorker {
         var state = (try? JSONDecoder().decode(LiveWorkerState.self, from: Data(contentsOf: LiveFiles.workerState(dir))))
             ?? LiveWorkerState(processed: 0)
         log("live worker started at chunk \(state.processed)")
+        let detector = makeDetector(meeting)
+        if detector != nil { log("question detector on (model \(settings.autoAskModel), every \(settings.autoAskMinSeconds) s at most)") }
+        defer { detector?.stop() }
         var finalPass = false
         while true {
+            detector?.tick()
             let entries = JSONLines.read(ChunkIndexEntry.self, from: LiveFiles.chunkIndex(dir))
             if entries.count > state.processed {
                 for entry in entries[state.processed...] {
@@ -47,13 +54,16 @@ final class LiveWorker {
                         ? merger.advance(entry.channel, toMs: entry.endMs, now: Date())
                         : merger.add(segments, channel: entry.channel, coveredUntilMs: entry.endMs, now: Date())
                     try JSONLines.append(ready, to: LiveFiles.transcript(dir))
+                    if !ready.isEmpty { detector?.transcriptGrew() }
                     state.processed += 1
                     try JSONEncoder().encode(state).write(to: LiveFiles.workerState(dir), options: .atomic)
                 }
                 finalPass = false
                 continue
             }
-            try JSONLines.append(merger.release(now: Date(), force: false), to: LiveFiles.transcript(dir))
+            let released = merger.release(now: Date(), force: false)
+            try JSONLines.append(released, to: LiveFiles.transcript(dir))
+            if !released.isEmpty { detector?.transcriptGrew() }
             if !isRecording() {
                 if finalPass { break }
                 finalPass = true
@@ -63,6 +73,11 @@ final class LiveWorker {
         }
         try JSONLines.append(merger.release(now: Date(), force: true), to: LiveFiles.transcript(dir))
         log("live worker finished after \(state.processed) chunks")
+    }
+
+    private func makeDetector(_ meeting: Meeting) -> QuestionDetector? {
+        guard let make = detectorFactory else { return nil }
+        return make(dir, meeting)
     }
 
     private func isRecording() -> Bool {
@@ -140,9 +155,12 @@ struct LiveWorkerCommand: ParsableCommand {
         } else {
             dir = try MeetingStore(config: config).resolve(meeting).1
         }
-        let worker = LiveWorker(dir: dir, config: config) { message in
+        let log: (String) -> Void = { message in
             FileHandle.standardError.write(Data("\(ISO8601DateFormatter().string(from: Date())) \(message)\n".utf8))
         }
+        let worker = LiveWorker(dir: dir, config: config, detectorFactory: { dir, meeting in
+            LiveQuestionDetector.make(dir: dir, meeting: meeting, config: config, log: log)
+        }, log: log)
         do {
             try worker.run()
         } catch {

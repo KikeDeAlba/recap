@@ -183,6 +183,7 @@ struct Answer: Codable, Equatable {
     var answer: String
     var found: Bool
     var sources: [AnswerSource]
+    var auto: Bool?
 }
 
 struct SourcesBlock: Equatable {

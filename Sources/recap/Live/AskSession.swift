@@ -44,6 +44,7 @@ struct AskRequest {
     var question: String?
     var windowSeconds: Int
     var now = Date()
+    var auto = false
 }
 
 enum AskPrompt {
@@ -124,8 +125,10 @@ final class AskSession {
         let result = try ClaudeRunner.stream(prompt: prompt, cwd: request.dir, config: config, arguments: arguments) { line in
             for event in reducer.consume(line, describer: describer) { emit(event) }
         }
-        let (events, answer) = try reducer.finish(status: result.status, stderr: result.stderr,
-                                                  id: UUID().uuidString.lowercased(), askedAt: request.now)
+        let (events, finished) = try reducer.finish(status: result.status, stderr: result.stderr,
+                                                    id: UUID().uuidString.lowercased(), askedAt: request.now)
+        var answer = finished
+        answer.auto = request.auto ? true : nil
         for event in events { emit(event) }
         try JSONLines.append([answer], to: LiveFiles.answers(request.dir))
         emit(.done(answer))
