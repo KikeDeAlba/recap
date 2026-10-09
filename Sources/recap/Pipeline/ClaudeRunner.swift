@@ -8,9 +8,11 @@ enum ClaudeRunner {
         try run(prompt: prompt, cwd: dir, config: config, tools: ["Read"], addDirs: [dir.path], model: config.summaryModel)
     }
 
-    static func run(prompt: String, cwd: URL, config: Config, tools: [String], addDirs: [String], model: String?) throws -> String {
+    static func run(prompt: String, cwd: URL, config: Config, tools: [String], addDirs: [String], model: String?,
+                    restrictTools: [String]? = nil) throws -> String {
         let claude = try Tool.claude.require(config)
-        let arguments = ["-p", "--output-format", "json"] + options(tools: tools, addDirs: addDirs, model: model)
+        let arguments = ["-p", "--output-format", "json"]
+            + options(tools: tools, addDirs: addDirs, model: model, restrictTools: restrictTools)
         let result = try Shell.run(claude, arguments, stdin: Data(prompt.utf8),
                                    environment: Tool.environment(for: claude, config: config), cwd: cwd)
         guard result.ok else {
@@ -22,7 +24,8 @@ enum ClaudeRunner {
     static func options(tools: [String], addDirs: [String], model: String?, restrictTools: [String]? = nil) -> [String] {
         var arguments = isolation
         if let restrictTools { arguments += ["--tools", restrictTools.joined(separator: ",")] }
-        arguments += ["--allowedTools", tools.joined(separator: " ")]
+        let allowed = tools.joined(separator: " ").trimmed
+        if !allowed.isEmpty { arguments += ["--allowedTools", allowed] }
         var seen = Set<String>()
         for dir in addDirs where seen.insert(dir).inserted {
             arguments += ["--add-dir", dir]
