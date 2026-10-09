@@ -234,7 +234,7 @@ struct ProposalGenerator {
             }
             if !existing.proposals.isEmpty { _ = try? bita.invoke(["docs", "branch", "drop", branch]) }
         }
-        let context = ProjectContextLoader.load(project: MeetingContext.project(meeting), docsRoot: meeting.bitaDocsRoot, bita: bita)
+        let context = ProjectContextLoader.load(project: MeetingContext.project(meeting, bita: bita), docsRoot: meeting.bitaDocsRoot, bita: bita)
         let pages = candidates(meeting: meeting, context: context)
         var file = ProposalsFile(entryId: entryId, branch: branch, generatedAt: Date(), proposals: [])
         guard !pages.isEmpty, let docsRoot = context.docsRoot else {
