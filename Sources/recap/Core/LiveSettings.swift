@@ -9,11 +9,16 @@ struct LiveConfig: Codable, Equatable {
     var autoAsk: Bool?
     var autoAskModel: String?
     var autoAskMinSeconds: Int?
+    var autoAskConcurrency: Int?
 }
 
 struct LiveSettings: Equatable {
     static let chunkSecondsRange = 5...60
-    static let autoAskSecondsRange = 10...120
+    static let autoAskSecondsRange = 3...120
+    static let autoAskConcurrencyRange = 1...6
+    static let defaultMaxChunkSeconds = 10
+    static let defaultAutoAskMinSeconds = 5
+    static let defaultAutoAskConcurrency = 3
     static let defaultAutoAskModel = "haiku"
 
     var enabled: Bool
@@ -24,18 +29,21 @@ struct LiveSettings: Equatable {
     var autoAsk: Bool
     var autoAskModel: String
     var autoAskMinSeconds: Int
+    var autoAskConcurrency: Int
 
     init(_ config: LiveConfig?) {
         enabled = config?.enabled ?? true
         openWindow = config?.openWindow ?? true
         proposals = config?.proposals ?? true
-        let seconds = config?.maxChunkSeconds ?? 20
+        let seconds = config?.maxChunkSeconds ?? Self.defaultMaxChunkSeconds
         maxChunkSeconds = min(max(seconds, Self.chunkSecondsRange.lowerBound), Self.chunkSecondsRange.upperBound)
         assistModel = config?.assistModel.flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
         autoAsk = config?.autoAsk ?? true
         autoAskModel = config?.autoAskModel.flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed } ?? Self.defaultAutoAskModel
-        let autoSeconds = config?.autoAskMinSeconds ?? 20
+        let autoSeconds = config?.autoAskMinSeconds ?? Self.defaultAutoAskMinSeconds
         autoAskMinSeconds = min(max(autoSeconds, Self.autoAskSecondsRange.lowerBound), Self.autoAskSecondsRange.upperBound)
+        let concurrency = config?.autoAskConcurrency ?? Self.defaultAutoAskConcurrency
+        autoAskConcurrency = min(max(concurrency, Self.autoAskConcurrencyRange.lowerBound), Self.autoAskConcurrencyRange.upperBound)
     }
 }
 
@@ -74,6 +82,7 @@ enum ConfigKey: String, CaseIterable {
     case liveAutoAsk = "live.autoAsk"
     case liveAutoAskModel = "live.autoAskModel"
     case liveAutoAskMinSeconds = "live.autoAskMinSeconds"
+    case liveAutoAskConcurrency = "live.autoAskConcurrency"
 
     static func parse(_ raw: String) throws -> ConfigKey {
         guard let key = ConfigKey(rawValue: raw) ?? allCases.first(where: { $0.rawValue.lowercased() == raw.lowercased() }) else {
@@ -93,6 +102,7 @@ enum ConfigKey: String, CaseIterable {
         case .liveAutoAsk: return .bool(settings.autoAsk)
         case .liveAutoAskModel: return .string(settings.autoAskModel)
         case .liveAutoAskMinSeconds: return .int(settings.autoAskMinSeconds)
+        case .liveAutoAskConcurrency: return .int(settings.autoAskConcurrency)
         }
     }
 
@@ -119,6 +129,11 @@ enum ConfigKey: String, CaseIterable {
                 throw RecapError("CONFIG_VALUE_INVALID", "\(rawValue) takes whole seconds between \(LiveSettings.autoAskSecondsRange.lowerBound) and \(LiveSettings.autoAskSecondsRange.upperBound)")
             }
             live.autoAskMinSeconds = seconds
+        case .liveAutoAskConcurrency:
+            guard let count = Int(raw.trimmed), LiveSettings.autoAskConcurrencyRange.contains(count) else {
+                throw RecapError("CONFIG_VALUE_INVALID", "\(rawValue) takes a whole number between \(LiveSettings.autoAskConcurrencyRange.lowerBound) and \(LiveSettings.autoAskConcurrencyRange.upperBound)")
+            }
+            live.autoAskConcurrency = count
         }
         config.live = live
     }

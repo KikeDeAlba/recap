@@ -207,12 +207,16 @@ private func feed(_ chunker: LiveChunker, _ samples: [Float], startMs: Int = 0, 
         let config = try JSONDecoder().decode(Config.self, from: Data(#"{"language":"es"}"#.utf8))
         #expect(config.liveSettings == LiveSettings(nil))
         #expect(config.liveSettings.enabled && config.liveSettings.openWindow && config.liveSettings.proposals)
-        #expect(config.liveSettings.maxChunkSeconds == 20)
+        #expect(config.liveSettings.maxChunkSeconds == 10)
         #expect(config.liveSettings.assistModel == nil)
         #expect(config.liveSettings.autoAsk && config.liveSettings.autoAskModel == "haiku")
-        #expect(config.liveSettings.autoAskMinSeconds == 20)
-        #expect(LiveSettings(LiveConfig(autoAskMinSeconds: 1)).autoAskMinSeconds == 10)
+        #expect(config.liveSettings.autoAskMinSeconds == 5)
+        #expect(config.liveSettings.autoAskConcurrency == 3)
+        #expect(LiveSettings(LiveConfig(autoAskMinSeconds: 1)).autoAskMinSeconds == 3)
         #expect(LiveSettings(LiveConfig(autoAskMinSeconds: 900)).autoAskMinSeconds == 120)
+        #expect(LiveSettings(LiveConfig(autoAskConcurrency: 0)).autoAskConcurrency == 1)
+        #expect(LiveSettings(LiveConfig(autoAskConcurrency: 9)).autoAskConcurrency == 6)
+        #expect(LiveSettings(LiveConfig(maxChunkSeconds: 2)).maxChunkSeconds == 5)
     }
 
     @Test func setsAndReadsTheAutoAskKeys() throws {
@@ -225,10 +229,19 @@ private func feed(_ chunker: LiveChunker, _ samples: [Float], startMs: Int = 0, 
         #expect(ConfigKey.liveAutoAskMinSeconds.value(in: config) == .int(45))
         try ConfigKey.liveAutoAskModel.apply("default", to: &config)
         #expect(ConfigKey.liveAutoAskModel.value(in: config) == .string("haiku"))
-        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskMinSeconds.apply("5", to: &config) }
+        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskMinSeconds.apply("2", to: &config) }
         #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskMinSeconds.apply("121", to: &config) }
+        try ConfigKey.liveAutoAskMinSeconds.apply("3", to: &config)
+        #expect(ConfigKey.liveAutoAskMinSeconds.value(in: config) == .int(3))
+        try ConfigKey.parse("live.autoAskConcurrency").apply("6", to: &config)
+        #expect(ConfigKey.liveAutoAskConcurrency.value(in: config) == .int(6))
+        try ConfigKey.parse("live.autoaskconcurrency").apply("1", to: &config)
+        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskConcurrency.apply("0", to: &config) }
+        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskConcurrency.apply("7", to: &config) }
+        #expect(throws: RecapError.self) { try ConfigKey.liveAutoAskConcurrency.apply("two", to: &config) }
         let snapshot = ConfigKey.snapshot(config)
-        #expect(snapshot["live.autoAsk"] == .bool(false) && snapshot["live.autoAskMinSeconds"] == .int(45))
+        #expect(snapshot["live.autoAsk"] == .bool(false) && snapshot["live.autoAskMinSeconds"] == .int(3))
+        #expect(snapshot["live.autoAskConcurrency"] == .int(1))
     }
 
     @Test func setsAndReadsEachKey() throws {

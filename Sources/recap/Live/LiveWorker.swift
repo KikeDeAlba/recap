@@ -8,6 +8,7 @@ struct LiveWorkerState: Codable {
 final class LiveWorker {
     static let threads = 4
     static let promptCharacters = 220
+    static let pruneSeconds: TimeInterval = 5
 
     private let dir: URL
     private let config: Config
@@ -41,11 +42,19 @@ final class LiveWorker {
             ?? LiveWorkerState(processed: 0)
         log("live worker started at chunk \(state.processed)")
         let detector = makeDetector(meeting)
-        if detector != nil { log("question detector on (model \(settings.autoAskModel), every \(settings.autoAskMinSeconds) s at most)") }
+        if detector != nil {
+            log("question detector on (model \(settings.autoAskModel), every \(settings.autoAskMinSeconds) s at most, \(settings.autoAskConcurrency) answers at a time)")
+        }
         defer { detector?.stop() }
+        AskingBoard.prune(dir)
+        var lastPrune = Date()
         var finalPass = false
         while true {
             detector?.tick()
+            if Date().timeIntervalSince(lastPrune) >= Self.pruneSeconds {
+                AskingBoard.prune(dir)
+                lastPrune = Date()
+            }
             let entries = JSONLines.read(ChunkIndexEntry.self, from: LiveFiles.chunkIndex(dir))
             if entries.count > state.processed {
                 for entry in entries[state.processed...] {
