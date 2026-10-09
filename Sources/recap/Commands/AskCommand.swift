@@ -101,8 +101,9 @@ struct AskCommand: ParsableCommand {
     private func answer(_ emit: @escaping (AskEvent) -> Void) throws -> Answer {
         let config = try Config.load()
         let (found, dir) = try target(config)
-        let context = ProjectContextLoader.load(project: MeetingContext.project(found), docsRoot: found.bitaDocsRoot,
-                                                bita: MeetingContext.bita(found, config: config))
+        let bita = MeetingContext.bita(found, config: config)
+        let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita), docsRoot: found.bitaDocsRoot,
+                                                bita: bita)
         let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window)
         return try AskSession(config: config, emit: emit).run(request, context: context)
     }
