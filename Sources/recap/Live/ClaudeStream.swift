@@ -184,12 +184,16 @@ struct Answer: Codable, Equatable {
     var found: Bool
     var sources: [AnswerSource]
     var auto: Bool?
+    var answeredAt: Date?
+    var questionMs: Int?
+    var channel: Channel?
 }
 
 struct SourcesBlock: Equatable {
     var question: String?
     var found: Bool?
     var sources: [AnswerSource]
+    var atMs: Int?
 
     static let kinds: Set<String> = ["page", "file", "commit"]
 
@@ -204,7 +208,8 @@ struct SourcesBlock: Equatable {
         let sources = items.compactMap(source)
         let question = (object["question"] as? String)?.trimmed
         return SourcesBlock(question: question?.isEmpty == true ? nil : question,
-                            found: object["found"] as? Bool, sources: sources)
+                            found: object["found"] as? Bool, sources: sources,
+                            atMs: QuestionClock.milliseconds(object["at"]))
     }
 
     private static func source(_ item: [String: Any]) -> AnswerSource? {
@@ -235,13 +240,20 @@ struct SourcesBlock: Equatable {
 enum AnswerBuilder {
     static let notDocumented = "no esta documentado"
 
-    static func build(id: String, askedAt: Date, explicitQuestion: String?, assembler: AnswerAssembler) -> Answer {
+    static func build(id: String, askedAt: Date, explicitQuestion: String?, assembler: AnswerAssembler,
+                      segments: [Segment] = []) -> Answer {
         let block = SourcesBlock.parse(assembler.sourcesText)
         let text = assembler.answer
         let sources = block?.sources ?? []
         let missing = TextSimilarity.fold(text).contains(notDocumented)
         let found = !missing && (block?.found ?? !sources.isEmpty)
         let question = explicitQuestion ?? assembler.question ?? block?.question ?? ""
-        return Answer(id: id, askedAt: askedAt, question: question, answer: text, found: found, sources: sources)
+        var answer = Answer(id: id, askedAt: askedAt, question: question, answer: text, found: found, sources: sources)
+        if explicitQuestion == nil, let atMs = block?.atMs,
+           let origin = QuestionOriginResolver.resolve(atMs: atMs, segments: segments, question: question) {
+            answer.questionMs = origin.questionMs
+            answer.channel = origin.channel
+        }
+        return answer
     }
 }

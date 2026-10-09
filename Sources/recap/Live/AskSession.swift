@@ -45,6 +45,8 @@ struct AskRequest {
     var windowSeconds: Int
     var now = Date()
     var auto = false
+    var questionMs: Int?
+    var channel: Channel?
 }
 
 enum AskPrompt {
@@ -126,10 +128,16 @@ final class AskSession {
             for event in reducer.consume(line, describer: describer) { emit(event) }
         }
         let (events, finished) = try reducer.finish(status: result.status, stderr: result.stderr,
-                                                    id: UUID().uuidString.lowercased(), askedAt: request.now)
+                                                    id: UUID().uuidString.lowercased(), askedAt: request.now,
+                                                    segments: LiveTranscript.window(segments, seconds: request.windowSeconds))
         var answer = finished
         answer.auto = request.auto ? true : nil
+        if request.questionMs != nil || request.channel != nil {
+            answer.questionMs = request.questionMs
+            answer.channel = request.channel
+        }
         for event in events { emit(event) }
+        answer.answeredAt = Date()
         try JSONLines.append([answer], to: LiveFiles.answers(request.dir))
         emit(.done(answer))
         return answer
@@ -176,7 +184,8 @@ struct AskStreamReducer {
         return [.question(question)]
     }
 
-    mutating func finish(status: Int32, stderr: String, id: String, askedAt: Date) throws -> ([AskEvent], Answer) {
+    mutating func finish(status: Int32, stderr: String, id: String, askedAt: Date,
+                         segments: [Segment] = []) throws -> ([AskEvent], Answer) {
         var events: [AskEvent] = []
         let tail = assembler.finish()
         events += questionEvent()
@@ -195,7 +204,8 @@ struct AskStreamReducer {
             _ = fresh.finish()
             canonical = fresh
         }
-        let answer = AnswerBuilder.build(id: id, askedAt: askedAt, explicitQuestion: explicitQuestion, assembler: canonical)
+        let answer = AnswerBuilder.build(id: id, askedAt: askedAt, explicitQuestion: explicitQuestion, assembler: canonical,
+                                         segments: segments)
         guard !answer.answer.isEmpty else {
             throw RecapError("CLAUDE_FAILED", "claude returned an empty answer")
         }
