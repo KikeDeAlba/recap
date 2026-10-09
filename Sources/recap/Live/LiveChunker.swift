@@ -27,7 +27,7 @@ final class LiveChunker {
     private var noiseFloor: Float?
     private var nextSeq = 1
 
-    init(minSeconds: Double = 5, maxSeconds: Double = 20, silenceSeconds: Double = 0.6,
+    init(minSeconds: Double = 3, maxSeconds: Double = 10, silenceSeconds: Double = 0.6,
          minThreshold: Float = 0.006, maxNoiseFloor: Float = 0.015, gapToleranceMs: Int = 1_000) {
         let rate = Double(Self.sampleRate)
         let frame = Double(Self.frameSamples)

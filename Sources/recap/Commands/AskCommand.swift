@@ -34,6 +34,9 @@ struct AskCommand: ParsableCommand {
     @Option(help: ArgumentHelp("Channel where the question was said (mic or system).", visibility: .hidden))
     var channel: Channel?
 
+    @Option(name: .customLong("ask-id"), help: ArgumentHelp("Id of the ask under live/asking/, given by the live worker.", visibility: .hidden))
+    var askId: String?
+
     @Option(help: "Question to answer; by default the last one asked in the live transcript.")
     var question: String?
 
@@ -63,6 +66,7 @@ struct AskCommand: ParsableCommand {
         guard window > 0 else { throw ValidationError("--window must be positive") }
         if auto, question?.trimmed.isEmpty != false { throw ValidationError("--auto needs --question") }
         if let questionMs, questionMs < 0 { throw ValidationError("--question-ms must not be negative") }
+        if let askId, !AskID.isValid(askId) { throw ValidationError("--ask-id takes lowercase letters, digits and dashes") }
     }
 
     func run() throws {
@@ -115,9 +119,11 @@ struct AskCommand: ParsableCommand {
     private func answer(_ emit: @escaping (AskEvent) -> Void) throws -> Answer {
         let config = try Config.load()
         let (found, dir) = try target(config)
+        let id = askId ?? AskID.make()
         let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window, auto: auto,
-                                 questionMs: questionMs, channel: channel)
-        return try AskCoordinator.perform(dir: dir, question: question, auto: auto, now: request.now,
+                                 questionMs: questionMs, channel: channel, askId: id)
+        AskSignalCleanup.install(dir: dir, id: id)
+        return try AskCoordinator.perform(dir: dir, id: id, question: question, auto: auto, now: request.now,
                                           questionMs: questionMs, channel: channel) {
             let bita = MeetingContext.bita(found, config: config)
             let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita),

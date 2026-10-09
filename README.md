@@ -105,7 +105,7 @@ The `recap` skill lets Claude answer questions such as "¿qué acordamos en la r
 
 While a meeting is being recorded, recap also transcribes it live:
 
-- The recorder taps the microphone and system audio, converts each to 16 kHz mono, and cuts it on silence into 5–20 s chunks (`live.maxChunkSeconds`) under `live/chunks/`. The tap runs on its own queue and never blocks the file writer.
+- The recorder taps the microphone and system audio, converts each to 16 kHz mono, and cuts it on silence into 3–10 s chunks (`live.maxChunkSeconds`) under `live/chunks/`. The tap runs on its own queue and never blocks the file writer.
 - A detached `recap live-worker` transcribes each chunk with `whisper-cli` (same model and VAD as the pipeline, 4 threads, the previous text as prompt), drops hallucinations and microphone echo, and appends `{startMs, endMs, channel, text}` lines to `live/transcript.jsonl`, with offsets from the start of the recording. It exits once the recording stops and the queue is empty.
 - The transcript after `stop` is still the source of truth; the live one is for answering during the meeting.
 
@@ -121,8 +121,9 @@ recap ask --sources --project CoDi --json               # the docs root and repo
 - The context is the last `--window` seconds (default 180) of the live transcript, the entry title and project, the project page tree and its repositories. Claude may use Read, Grep, Glob and, in each repository, only `git -C <repo> log|show|diff` (one exact `--allowedTools` prefix per repository and subcommand, since headless Claude Code rejects `cd <repo> && git …` and does not match wildcards in the middle of a pattern), and nothing else (`Resources/ask-prompt.md`).
 - Answers are short, give the exact command when there is one, cite the page, `file:line` or commit, and say "No está documentado." instead of guessing.
 - `--json-stream` prints one JSON object per line: `question`, `progress` (the file being read), `delta` (answer text), `source`, then `done` with the whole answer, or `error`.
-- Every answer is appended to `live/answers.jsonl` as `{id, askedAt, question, answer, found, sources}`, plus `"auto": true` when the live worker detected the question (manual answers leave `auto` out).
-- Only one answer runs at a time per meeting. The running one holds `live/ask.lock` (`{pid, auto, startedAt}`) and describes itself in `live/asking.json` as `{"question": "…" | null, "startedAt": "…", "auto": true | false}`; both are removed when it finishes. A manual `recap ask` always wins: it stops the running answer (and its `claude` process) and takes over; a stale lock from a dead process is ignored.
+- Every answer is appended to `live/answers.jsonl` as `{id, askId, askedAt, question, answer, found, sources}`, plus `"auto": true` when the live worker detected the question (manual answers leave `auto` out). `askId` is the id of the ask's file under `live/asking/`, so a pending ask maps to its answer exactly. A failed ask appends nothing.
+- Several answers can run at once. Each queued or running ask is described by `live/asking/<askId>.json`: `{"id": "…", "auto": true | false, "question": "…" | null, "questionMs": …, "channel": "mic" | "system", "startedAt": "…", "state": "queued" | "running", "pid": …}` (`questionMs` and `channel` only when known; `pid` is the process that owns the entry, and entries of dead processes are ignored and pruned). The file is removed when the ask ends, whether it answered or failed. Manual asks never stop other asks; they simply run alongside them.
+- For older readers, `live/asking.json` mirrors the running ask that started last (same shape) and is removed when no ask is running. Writes to `live/asking/` and `live/asking.json` are serialized with `flock` on `live/asking/.lock`.
 
 bita-desktop drives this from its floating window: it opens while recording (`live.openWindow`), runs `recap ask --active --json-stream` from a global shortcut and shows the answers.
 
@@ -130,11 +131,12 @@ bita-desktop drives this from its floating window: it opens while recording (`li
 
 With `live.autoAsk` on (the default), the live worker also looks for questions on its own queue, so transcription never waits for it:
 
-- Whenever new lines reach `live/transcript.jsonl`, and at most once every `live.autoAskMinSeconds` (default 20, 10–120), it sends the last 90 s of transcript, the project and its page titles to `claude -p --model <live.autoAskModel>` (default `haiku`) with no tools and the same isolation flags as the pipeline (`Resources/detect-prompt.md`). The answer is strict JSON: `{"question": "…"}` or `{"question": null}`.
+- It keeps a cursor in `live/detector-state.json` (`{"detectedThroughMs": …, "examinedSegments": …}`): the transcript lines already examined and the end of the last one. While there are lines past the cursor, and at most once every `live.autoAskMinSeconds` (default 5, 3–120), it sends the new lines, plus up to 60 s before the cursor marked as already reviewed, with the project and its page titles to `claude -p --model <live.autoAskModel>` (default `haiku`) with no tools and the same isolation flags as the pipeline (`Resources/detect-prompt.md`). The answer is strict JSON with every distinct question in the new part: `{"questions": [{"question": "…", "at": "HH:MM:SS"}]}` or `{"questions": []}` (the older `{"question": …}` form is still accepted). A follow-up that only refines the previous question is merged into it.
+- The cursor moves only after a successful call, so lines are never lost to a failed call or to answers in progress; it is retried on the next interval even if the transcript does not grow.
 - Only technical questions that the docs or the code can answer count: how to run, deploy or configure something, what changed, how something was done, where something is. Greetings, logistics, opinions and rhetorical questions are ignored. In remote meetings questions from Remotos weigh more; in-person meetings only have Sala, so the content decides. The question comes back rephrased so it stands on its own.
-- A question too similar to one already answered in `live/answers.jsonl`, or already detected in this meeting (Jaccard ≥ 0.5 on accent-folded words without stopwords), is skipped.
-- Otherwise the worker runs the same path as `recap ask --question <q>` in a child process, with `auto: true` in `asking.json` and in the answer. It skips the question when another answer holds the lock, and a manual ask stops it.
-- Detector failures go to `live/worker.log` and never stop the transcription; a running detected answer stops with the worker.
+- Each question gets its origin (`questionMs`, `channel`) from its `at`. A question too similar to one already answered in `live/answers.jsonl`, queued or running in `live/asking/`, or already detected in this meeting (Jaccard ≥ 0.5 on accent-folded words without stopwords), is skipped.
+- Otherwise it is queued, and the worker runs up to `live.autoAskConcurrency` (default 3, 1–6) of them at a time, in order, each as `recap ask --question <q> --auto --ask-id <id>` in a child process. Nothing is dropped: a question waits in the queue (`"state": "queued"`) until a slot frees up. Manual asks do not count against that limit.
+- Detector and answer failures go to `live/worker.log` and never stop the transcription; queued and running detected answers stop with the worker.
 
 ### Proposed documentation changes
 
@@ -221,7 +223,7 @@ Each meeting gets a folder under `~/Recap` (configurable):
 ├── transcript.md     merged transcript with timestamps
 ├── frames/           remote only
 ├── summary.md        minutes
-├── live/             transcript.jsonl, answers.jsonl, asking.json, ask.lock and chunks/ (live assistant)
+├── live/             transcript.jsonl, answers.jsonl, asking/, asking.json, detector-state.json and chunks/ (live assistant)
 ├── proposals.json    proposed documentation changes, with proposals/<n>.md
 ├── recorder.log
 └── process.log
@@ -244,11 +246,12 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
     "enabled": true,
     "openWindow": true,
     "proposals": true,
-    "maxChunkSeconds": 20,
+    "maxChunkSeconds": 10,
     "assistModel": "sonnet",
     "autoAsk": true,
     "autoAskModel": "haiku",
-    "autoAskMinSeconds": 20
+    "autoAskMinSeconds": 5,
+    "autoAskConcurrency": 3
   },
   "tools": {
     "claude": "/Users/me/.nvm/versions/node/v24.19.0/bin/claude",
@@ -260,7 +263,7 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
 - `vocabulary` is passed to whisper as a glossary and fixes most misheard product names.
 - `tools` holds absolute paths to the external commands. `recap setup` fills it in, so the pipeline also works when it is started with a minimal `PATH` (for example from a menu bar app).
 - `recap setup` downloads the whisper and VAD models to `~/.local/share/recap/models`.
-- `live` controls the live assistant; every key is optional. `enabled` turns the live transcription on, `openWindow` lets bita-desktop open its floating window while recording, `proposals` turns the `proposals` stage on, `maxChunkSeconds` (5–60) is the longest live chunk, `assistModel` is the model for `recap ask` (Claude Code's default when unset), `autoAsk` turns question detection on, `autoAskModel` is the model that detects them (`haiku` by default), and `autoAskMinSeconds` (10–120) is the shortest time between two detections.
+- `live` controls the live assistant; every key is optional. `enabled` turns the live transcription on, `openWindow` lets bita-desktop open its floating window while recording, `proposals` turns the `proposals` stage on, `maxChunkSeconds` (5–60) is the longest live chunk, `assistModel` is the model for `recap ask` (Claude Code's default when unset), `autoAsk` turns question detection on, `autoAskModel` is the model that detects them (`haiku` by default), `autoAskMinSeconds` (3–120) is the shortest time between two detections, and `autoAskConcurrency` (1–6) is how many detected questions are answered at once.
 - `recap config get [<key>] --json` and `recap config set <key> <value> --json` read and change the `live.*` keys.
 
 Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`.

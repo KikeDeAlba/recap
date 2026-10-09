@@ -10,7 +10,7 @@
       "name": "recap",
       "description": "Start and stop meeting recordings, and turn them into minutes with agreements and action items",
       "source": "./",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "category": "productivity",
       "tags": ["meetings", "recording", "transcription", "minutes"]
     }
