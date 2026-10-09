@@ -115,7 +115,14 @@ La respuesta lleva `found` y `sources` (página, `archivo:línea` o commit) y se
 guarda en `live/answers.jsonl`. Con `found: false` no está documentado: no lo
 completes por tu cuenta. Se configura con `recap config get|set`
 (`live.enabled`, `live.openWindow`, `live.proposals`, `live.maxChunkSeconds`,
-`live.assistModel`).
+`live.assistModel`, `live.autoAsk`, `live.autoAskModel`,
+`live.autoAskMinSeconds`).
+
+Con `live.autoAsk` (encendido por omisión), el live-worker detecta solo las
+preguntas técnicas de la reunión y las responde sin que nadie las pida: esas
+respuestas llevan `auto: true` en `live/answers.jsonl`. Mientras se responde
+algo, `live/asking.json` dice qué pregunta va (`{question, startedAt, auto}`);
+solo corre una respuesta a la vez y una manual detiene a la automática.
 
 ## Cambios propuestos a la documentación
 

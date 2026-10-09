@@ -51,7 +51,7 @@ struct ConfigSetCommand: ParsableCommand {
     @Argument(help: "Setting key (\(ConfigKey.allCases.map(\.rawValue).joined(separator: ", "))).")
     var key: String
 
-    @Argument(help: "New value; \"null\" clears live.assistModel.")
+    @Argument(help: "New value; \"null\" clears live.assistModel and resets live.autoAskModel.")
     var value: String
 
     @OptionGroup var output: OutputOptions

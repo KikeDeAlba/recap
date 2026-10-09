@@ -22,6 +22,12 @@ struct AskCommand: ParsableCommand {
     @Option(name: .customLong("bita-entry"), help: "Use the meeting linked to this bita entry.")
     var bitaEntry: Int?
 
+    @Option(help: ArgumentHelp("Meeting directory.", visibility: .hidden))
+    var dir: String?
+
+    @Flag(help: ArgumentHelp("Answer a question detected by the live worker.", visibility: .hidden))
+    var auto = false
+
     @Option(help: "Question to answer; by default the last one asked in the live transcript.")
     var question: String?
 
@@ -46,9 +52,10 @@ struct AskCommand: ParsableCommand {
             }
             return
         }
-        let targets = [active, meeting != nil, bitaEntry != nil].filter { $0 }.count
+        let targets = [active, meeting != nil, bitaEntry != nil, dir != nil].filter { $0 }.count
         guard targets == 1 else { throw ValidationError("Choose one of --active, --meeting or --bita-entry") }
         guard window > 0 else { throw ValidationError("--window must be positive") }
+        if auto, question?.trimmed.isEmpty != false { throw ValidationError("--auto needs --question") }
     }
 
     func run() throws {
@@ -101,14 +108,20 @@ struct AskCommand: ParsableCommand {
     private func answer(_ emit: @escaping (AskEvent) -> Void) throws -> Answer {
         let config = try Config.load()
         let (found, dir) = try target(config)
-        let bita = MeetingContext.bita(found, config: config)
-        let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita), docsRoot: found.bitaDocsRoot,
-                                                bita: bita)
-        let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window)
-        return try AskSession(config: config, emit: emit).run(request, context: context)
+        let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window, auto: auto)
+        return try AskCoordinator.perform(dir: dir, question: question, auto: auto, now: request.now) {
+            let bita = MeetingContext.bita(found, config: config)
+            let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita),
+                                                    docsRoot: found.bitaDocsRoot, bita: bita)
+            return try AskSession(config: config, emit: emit).run(request, context: context)
+        }
     }
 
     private func target(_ config: Config) throws -> (Meeting, URL) {
+        if let dir {
+            let url = URL(fileURLWithPath: dir)
+            return (try MeetingFile.load(url), url)
+        }
         if active {
             guard let (recording, meeting) = ActiveRecording.current() else {
                 throw RecapError("NOT_RECORDING", "There is no active recording")
