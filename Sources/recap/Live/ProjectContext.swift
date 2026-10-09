@@ -79,6 +79,14 @@ enum MeetingContext {
         meeting.bitaEntry?.projectName ?? meeting.wrapup?.project
     }
 
+    static func project(_ meeting: Meeting, bita: BitaCalling?) -> String? {
+        if let name = project(meeting), !name.trimmed.isEmpty { return name }
+        guard let bita, let pageId = meeting.wrapup?.pageId ?? meeting.bitaEntry?.pageIds.first,
+              let response = try? bita.invoke(["docs", "page", "show", String(pageId), "--no-markdown"]), response.ok,
+              let data = response.data as? [String: Any] else { return nil }
+        return data["projectName"] as? String
+    }
+
     static func bita(_ meeting: Meeting, config: Config) -> BitaClient? {
         try? BitaClient(config: config, target: BitaTarget(databasePath: meeting.bitaDatabasePath, docsRoot: meeting.bitaDocsRoot))
     }

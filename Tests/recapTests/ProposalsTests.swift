@@ -53,7 +53,7 @@ import Testing
             case ["project", "repo", "ls"]:
                 return BitaResponse(ok: true, data: ["repos": []])
             case ["docs", "page", "show"]:
-                return BitaResponse(ok: true, data: ["pageId": 7, "title": "Reglas de negocio", "relPath": "codi/reglas.md"])
+                return BitaResponse(ok: true, data: ["pageId": 7, "title": "Reglas de negocio", "relPath": "codi/reglas.md", "projectName": "CoDi"])
             case ["docs", "propose", "--branch"]:
                 proposeCount += 1
                 return BitaResponse(ok: true, data: ["branch": arguments[3], "sha": "sha\(proposeCount)", "pageId": Int(arguments[4]) ?? 0, "base": "main0"])
@@ -110,6 +110,16 @@ import Testing
         #expect(ProposalStore.load(dir)?.proposals.map(\.sha) == file.proposals.map(\.sha))
         let encoded = String(decoding: try JSONEncoder().encode(file.proposals[0]), as: UTF8.self)
         #expect(encoded.contains(#""status":"pending""#) && encoded.contains(#""pageTitle":"Despliegue""#))
+    }
+
+    @Test func takesTheProjectFromTheMeetingPageWhenTheEntryHadNone() throws {
+        var (meeting, dir) = try meetingDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        meeting.bitaEntry?.projectName = nil
+        let fake = bita()
+        let (generated, _) = try generate(fake, meeting: meeting, dir: dir)
+        #expect(fake.calls.contains(["docs", "page", "ls", "--project", "CoDi"]))
+        #expect(try #require(generated).proposals.map(\.pageId) == [3, 7])
     }
 
     @Test func acceptAppliesAndRejectDropsTheBranchWhenNothingIsPending() throws {
