@@ -1,8 +1,13 @@
 import Darwin
 import Foundation
 
+struct DetectedQuestion: Equatable {
+    var text: String
+    var atMs: Int?
+}
+
 enum DetectorResponse {
-    static func parse(_ text: String) throws -> String? {
+    static func parse(_ text: String) throws -> DetectedQuestion? {
         guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
               let object = (try? JSONSerialization.jsonObject(with: Data(String(text[start...end]).utf8),
                                                               options: [.fragmentsAllowed])) as? [String: Any],
@@ -14,7 +19,8 @@ enum DetectorResponse {
             throw RecapError("DETECTOR_OUTPUT", "Unexpected detector question: \(String(describing: value).prefix(200))")
         }
         let trimmed = question.trimmed
-        return trimmed.isEmpty || trimmed.lowercased() == "null" ? nil : trimmed
+        guard !trimmed.isEmpty, trimmed.lowercased() != "null" else { return nil }
+        return DetectedQuestion(text: trimmed, atMs: QuestionClock.milliseconds(object["at"]))
     }
 }
 
@@ -104,7 +110,7 @@ final class QuestionDetector {
         var template: () throws -> String = { try ResourceText.load("detect-prompt.md") }
         var context: () -> ProjectContext
         var complete: (String) throws -> String
-        var ask: (String) throws -> Void
+        var ask: (String, QuestionOrigin?) throws -> Void
         var cancelAsk: () -> Void = {}
         var log: (String) -> Void
     }
@@ -186,18 +192,20 @@ final class QuestionDetector {
     private func detect() -> DetectionOutcome {
         guard !isStopped else { return .none }
         guard !AskLock.isHeld(dir) else { return .skippedBusy }
-        let window = LiveTranscript.window(LiveTranscript.load(dir), seconds: DetectPrompt.windowSeconds)
+        let segments = LiveTranscript.load(dir)
+        let window = LiveTranscript.window(segments, seconds: DetectPrompt.windowSeconds)
         guard !window.isEmpty else { return .noTranscript }
         let known = knownQuestions()
-        let question: String?
+        let detection: DetectedQuestion?
         do {
             let prompt = DetectPrompt.render(template: try dependencies.template(), meeting: meeting,
                                              context: context(), window: window, known: known)
-            question = try DetectorResponse.parse(try dependencies.complete(prompt))
+            detection = try DetectorResponse.parse(try dependencies.complete(prompt))
         } catch {
             return .failed(Self.describe(error))
         }
-        guard let question else { return .none }
+        guard let detection else { return .none }
+        let question = detection.text
         if QuestionDedupe.isDuplicate(question, of: known) { return .duplicate(question) }
         state.lock()
         detected.append(question)
@@ -205,9 +213,10 @@ final class QuestionDetector {
         state.unlock()
         guard !halted else { return .none }
         guard !AskLock.isHeld(dir) else { return .askBusy(question) }
-        dependencies.log("auto ask: detected «\(question)»")
+        let origin = detection.atMs.flatMap { QuestionOriginResolver.resolve(atMs: $0, segments: window, question: question) }
+        dependencies.log("auto ask: detected «\(question)»" + (origin.map { " at \($0.questionMs) ms (\($0.channel.rawValue))" } ?? ""))
         do {
-            try dependencies.ask(question)
+            try dependencies.ask(question, origin)
             return .asked(question)
         } catch let error as RecapError where error.code == "ASK_BUSY" {
             return .askBusy(question)
@@ -252,14 +261,18 @@ final class AutoAskProcess {
         self.executable = executable
     }
 
-    static func arguments(dir: URL, question: String) -> [String] {
-        ["ask", "--dir", dir.path, "--question", question, "--auto", "--json"]
+    static func arguments(dir: URL, question: String, origin: QuestionOrigin? = nil) -> [String] {
+        var arguments = ["ask", "--dir", dir.path, "--question", question, "--auto", "--json"]
+        if let origin {
+            arguments += ["--question-ms", String(origin.questionMs), "--channel", origin.channel.rawValue]
+        }
+        return arguments
     }
 
-    func run(_ question: String) throws {
+    func run(_ question: String, origin: QuestionOrigin? = nil) throws {
         let child = Process()
         child.executableURL = executable
-        child.arguments = Self.arguments(dir: dir, question: question)
+        child.arguments = Self.arguments(dir: dir, question: question, origin: origin)
         child.currentDirectoryURL = dir
         let out = Pipe()
         let err = Pipe()
@@ -327,7 +340,7 @@ enum LiveQuestionDetector {
                                                   model: settings.autoAskModel, restrictTools: [])
                 return try ClaudeRunner.resultText(output)
             },
-            ask: { question in try runner.run(question) },
+            ask: { question, origin in try runner.run(question, origin: origin) },
             cancelAsk: { runner.cancel() },
             log: log
         )

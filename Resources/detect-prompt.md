@@ -35,11 +35,13 @@ No repitas ninguna de estas, ni otra que pregunte lo mismo con otras palabras:
 
 Responde únicamente con un objeto JSON en una línea, sin texto antes ni después y sin bloque de código:
 
-{"question": "la pregunta"}
+{"question": "la pregunta", "at": "HH:MM:SS"}
 
 o, si no hay ninguna pregunta que cumpla todo lo anterior:
 
-{"question": null}
+{"question": null, "at": null}
+
+`at` es la hora, tal como aparece entre corchetes al inicio de la línea de la transcripción, de la línea donde se dijo la pregunta. Cópiala exacta, con el formato `HH:MM:SS`; no la calcules ni la inventes.
 
 Si hay una, reformúlala como pregunta independiente y completa en español, que se entienda sin la transcripción: nombra el sistema, el componente o el ambiente del que se habla en lugar de «eso» o «ahí». Si hay varias, elige la más reciente. Ante la duda, responde null.
 

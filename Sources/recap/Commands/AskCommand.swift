@@ -28,6 +28,12 @@ struct AskCommand: ParsableCommand {
     @Flag(help: ArgumentHelp("Answer a question detected by the live worker.", visibility: .hidden))
     var auto = false
 
+    @Option(name: .customLong("question-ms"), help: ArgumentHelp("Milliseconds from the recording start where the question was said.", visibility: .hidden))
+    var questionMs: Int?
+
+    @Option(help: ArgumentHelp("Channel where the question was said (mic or system).", visibility: .hidden))
+    var channel: Channel?
+
     @Option(help: "Question to answer; by default the last one asked in the live transcript.")
     var question: String?
 
@@ -56,6 +62,7 @@ struct AskCommand: ParsableCommand {
         guard targets == 1 else { throw ValidationError("Choose one of --active, --meeting or --bita-entry") }
         guard window > 0 else { throw ValidationError("--window must be positive") }
         if auto, question?.trimmed.isEmpty != false { throw ValidationError("--auto needs --question") }
+        if let questionMs, questionMs < 0 { throw ValidationError("--question-ms must not be negative") }
     }
 
     func run() throws {
@@ -108,8 +115,10 @@ struct AskCommand: ParsableCommand {
     private func answer(_ emit: @escaping (AskEvent) -> Void) throws -> Answer {
         let config = try Config.load()
         let (found, dir) = try target(config)
-        let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window, auto: auto)
-        return try AskCoordinator.perform(dir: dir, question: question, auto: auto, now: request.now) {
+        let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window, auto: auto,
+                                 questionMs: questionMs, channel: channel)
+        return try AskCoordinator.perform(dir: dir, question: question, auto: auto, now: request.now,
+                                          questionMs: questionMs, channel: channel) {
             let bita = MeetingContext.bita(found, config: config)
             let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita),
                                                     docsRoot: found.bitaDocsRoot, bita: bita)
@@ -140,3 +149,5 @@ struct AskCommand: ParsableCommand {
         FileHandle.standardOutput.write(Data(text.utf8))
     }
 }
+
+extension Channel: ExpressibleByArgument {}

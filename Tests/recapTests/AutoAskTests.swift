@@ -34,18 +34,36 @@ final class ManualClock {
 final class Recorder {
     var prompts: [String] = []
     var asked: [String] = []
+    var origins: [QuestionOrigin?] = []
 }
 
 @Suite struct DetectorResponseTests {
     @Test func parsesAQuestion() throws {
-        #expect(try DetectorResponse.parse(#"{"question": "¿Cómo se despliega bita-desktop?"}"#) == "¿Cómo se despliega bita-desktop?")
-        #expect(try DetectorResponse.parse("```json\n{\"question\": \" ¿Dónde está el pipeline? \"}\n```") == "¿Dónde está el pipeline?")
+        #expect(try DetectorResponse.parse(#"{"question": "¿Cómo se despliega bita-desktop?"}"#)
+                == DetectedQuestion(text: "¿Cómo se despliega bita-desktop?", atMs: nil))
+        #expect(try DetectorResponse.parse("```json\n{\"question\": \" ¿Dónde está el pipeline? \"}\n```")?.text == "¿Dónde está el pipeline?")
     }
 
     @Test func parsesNoQuestion() throws {
         #expect(try DetectorResponse.parse(#"{"question": null}"#) == nil)
+        #expect(try DetectorResponse.parse(#"{"question": null, "at": null}"#) == nil)
         #expect(try DetectorResponse.parse(#"{"question": ""}"#) == nil)
         #expect(try DetectorResponse.parse(#"Aquí va: {"question":null}"#) == nil)
+    }
+
+    @Test func parsesTheClockOfTheQuestion() throws {
+        #expect(try DetectorResponse.parse(#"{"question": "¿Dónde está el pipeline?", "at": "00:01:05"}"#)
+                == DetectedQuestion(text: "¿Dónde está el pipeline?", atMs: 65_000))
+        #expect(try DetectorResponse.parse(#"{"question": "¿q?", "at": "[01:02:03]"}"#)?.atMs == 3_723_000)
+        #expect(try DetectorResponse.parse(#"{"question": "¿q?", "at": "02:03"}"#)?.atMs == 123_000)
+    }
+
+    @Test func toleratesAMissingOrGarbageClock() throws {
+        #expect(try DetectorResponse.parse(#"{"question": "¿q?"}"#) == DetectedQuestion(text: "¿q?", atMs: nil))
+        #expect(try DetectorResponse.parse(#"{"question": "¿q?", "at": null}"#)?.atMs == nil)
+        for garbage in [#""ayer""#, #""00:61:00""#, #""1:2:3:4""#, "65", #""""#, #""00:0a:10""#, #""-1:00""#] {
+            #expect(try DetectorResponse.parse(#"{"question": "¿q?", "at": "# + garbage + "}") == DetectedQuestion(text: "¿q?", atMs: nil))
+        }
     }
 
     @Test func rejectsGarbage() {
@@ -97,7 +115,7 @@ final class Recorder {
         let detector = QuestionDetector(dir: dir, meeting: meeting, minSeconds: 20, dependencies: .init(
             now: { clock.now }, template: { "{{transcript}}" }, context: { ProjectContext() },
             complete: { prompt in recorder.prompts.append(prompt); return #"{"question": null}"# },
-            ask: { recorder.asked.append($0) }, log: { _ in }))
+            ask: { question, origin in recorder.asked.append(question); recorder.origins.append(origin) }, log: { _ in }))
         #expect(!detector.tick())
         detector.transcriptGrew()
         #expect(detector.tick())
@@ -131,7 +149,7 @@ final class Recorder {
             template: { try ResourceText.load("detect-prompt.md") },
             context: { ProjectContext(project: "bita", pages: [PageRef(pageId: 1, title: "Despliegue", relPath: "d.md", depth: 0)]) },
             complete: { prompt in recorder.prompts.append(prompt); return reply },
-            ask: { recorder.asked.append($0) }, log: { _ in }))
+            ask: { question, origin in recorder.asked.append(question); recorder.origins.append(origin) }, log: { _ in }))
         #expect(detector.runCycle() == .asked("¿Cómo se despliega bita-desktop?"))
         #expect(detector.runCycle() == .duplicate("¿Cómo se despliega bita-desktop?"))
         let prompt = try #require(recorder.prompts.first)
@@ -172,7 +190,7 @@ final class Recorder {
         let detector = QuestionDetector(dir: dir, meeting: meeting, minSeconds: 20, dependencies: .init(
             template: { "{{transcript}}" }, context: { ProjectContext() },
             complete: { prompt in recorder.prompts.append(prompt); return #"{"question": "¿Cómo se corren las pruebas de recap?"}"# },
-            ask: { _ in throw RecapError("ASK_FAILED", "boom") }, log: { logs.append($0) }))
+            ask: { _, _ in throw RecapError("ASK_FAILED", "boom") }, log: { logs.append($0) }))
         #expect(detector.runCycle() == .skippedBusy)
         #expect(recorder.prompts.isEmpty)
         lock.release()
@@ -310,5 +328,57 @@ final class Recorder {
         #expect(JSONLines.parse(Answer.self, legacy).first?.auto == nil)
         #expect(AutoAskProcess.arguments(dir: URL(fileURLWithPath: "/m"), question: "¿q?")
                 == ["ask", "--dir", "/m", "--question", "¿q?", "--auto", "--json"])
+    }
+
+    @Test func argumentsCarryTheQuestionOrigin() {
+        let origin = QuestionOrigin(questionMs: 65_400, channel: .system)
+        #expect(AutoAskProcess.arguments(dir: URL(fileURLWithPath: "/m"), question: "¿q?", origin: origin)
+                == ["ask", "--dir", "/m", "--question", "¿q?", "--auto", "--json", "--question-ms", "65400", "--channel", "system"])
+    }
+
+    @Test func askCommandParsesTheHiddenOriginFlags() throws {
+        let command = try AskCommand.parse(["--dir", "/m", "--question", "¿q?", "--auto", "--question-ms", "65400", "--channel", "mic"])
+        #expect(command.questionMs == 65_400 && command.channel == .mic)
+        #expect(throws: (any Error).self) { try AskCommand.parse(["--dir", "/m", "--channel", "zoom"]) }
+        #expect(throws: (any Error).self) { try AskCommand.parse(["--dir", "/m", "--question-ms", "-5"]) }
+    }
+
+    @Test func answersCarryTheirOriginOnlyWhenKnown() throws {
+        var full = answer("¿a?", auto: true)
+        full.askedAt = Date(timeIntervalSince1970: 1_790_000_000)
+        full.answeredAt = Date(timeIntervalSince1970: 1_790_000_012)
+        full.questionMs = 65_400
+        full.channel = .system
+        let line = try JSONLines.line(full)
+        #expect(line.contains(#""answeredAt":"2026-09-21T14:13:32Z""#))
+        #expect(line.contains(#""questionMs":65400"#) && line.contains(#""channel":"system""#))
+        #expect(JSONLines.parse(Answer.self, line).first == full)
+        let bare = try JSONLines.line(answer("¿a?"))
+        #expect(!bare.contains("answeredAt") && !bare.contains("questionMs") && !bare.contains("channel"))
+        let legacy = #"{"id":"1","askedAt":"2026-10-08T10:00:00Z","question":"q","answer":"a","found":true,"sources":[]}"#
+        let old = try #require(JSONLines.parse(Answer.self, legacy).first)
+        #expect(old.answeredAt == nil && old.questionMs == nil && old.channel == nil)
+    }
+
+    @Test func askingStateCarriesTheOriginWhenKnown() throws {
+        let startedAt = Date(timeIntervalSince1970: 1_790_000_000)
+        let state = AskingState(question: "¿q?", startedAt: startedAt, auto: true, questionMs: 65_400, channel: .mic)
+        let raw = String(decoding: try JSONLines.encoder.encode(state), as: UTF8.self)
+        #expect(raw == #"{"auto":true,"channel":"mic","question":"¿q?","questionMs":65400,"startedAt":"2026-09-21T14:13:20Z"}"#)
+        #expect(try JSONLines.decoder.decode(AskingState.self, from: Data(raw.utf8)) == state)
+        let legacy = #"{"auto":false,"question":null,"startedAt":"2026-09-21T14:13:20Z"}"#
+        let old = try JSONLines.decoder.decode(AskingState.self, from: Data(legacy.utf8))
+        #expect(old.questionMs == nil && old.channel == nil)
+    }
+
+    @Test func coordinatorWritesTheOriginToAsking() throws {
+        let (dir, _) = try temporaryMeeting()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var seen: AskingState?
+        _ = try AskCoordinator.perform(dir: dir, question: "¿q?", auto: true, questionMs: 3_000, channel: .system) {
+            seen = AskingState.read(dir)
+            return answer("¿q?", auto: true)
+        }
+        #expect(seen?.questionMs == 3_000 && seen?.channel == .system)
     }
 }

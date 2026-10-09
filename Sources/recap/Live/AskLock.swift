@@ -11,15 +11,19 @@ struct AskingState: Codable, Equatable {
     var question: String?
     var startedAt: Date
     var auto: Bool
+    var questionMs: Int?
+    var channel: Channel?
 
     private enum CodingKeys: String, CodingKey {
-        case question, startedAt, auto
+        case question, startedAt, auto, questionMs, channel
     }
 
-    init(question: String?, startedAt: Date, auto: Bool) {
+    init(question: String?, startedAt: Date, auto: Bool, questionMs: Int? = nil, channel: Channel? = nil) {
         self.question = question
         self.startedAt = startedAt
         self.auto = auto
+        self.questionMs = questionMs
+        self.channel = channel
     }
 
     init(from decoder: Decoder) throws {
@@ -27,6 +31,8 @@ struct AskingState: Codable, Equatable {
         question = try container.decodeIfPresent(String.self, forKey: .question)
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         auto = try container.decodeIfPresent(Bool.self, forKey: .auto) ?? false
+        questionMs = try container.decodeIfPresent(Int.self, forKey: .questionMs)
+        channel = try? container.decodeIfPresent(Channel.self, forKey: .channel)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -34,6 +40,8 @@ struct AskingState: Codable, Equatable {
         try container.encode(question, forKey: .question)
         try container.encode(startedAt, forKey: .startedAt)
         try container.encode(auto, forKey: .auto)
+        try container.encodeIfPresent(questionMs, forKey: .questionMs)
+        try container.encodeIfPresent(channel, forKey: .channel)
     }
 
     static func read(_ meetingDir: URL) -> AskingState? {
@@ -153,6 +161,7 @@ final class AskLock {
 
 enum AskCoordinator {
     static func perform(dir: URL, question: String?, auto: Bool, now: Date = Date(),
+                        questionMs: Int? = nil, channel: Channel? = nil,
                         terminate: (Int32) -> Void = AskLock.terminate,
                         body: () throws -> Answer) throws -> Answer {
         guard let lock = try AskLock.acquire(dir, auto: auto, now: now, terminate: terminate) else {
@@ -164,7 +173,7 @@ enum AskCoordinator {
             lock.release()
         }
         let state = AskingState(question: question?.trimmed.isEmpty == false ? question?.trimmed : nil,
-                                startedAt: now, auto: auto)
+                                startedAt: now, auto: auto, questionMs: questionMs, channel: channel)
         try JSONLines.encoder.encode(state).write(to: asking, options: .atomic)
         return try body()
     }
