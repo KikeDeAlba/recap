@@ -12,8 +12,9 @@ enum LiveFiles {
     static func answers(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "answers.jsonl") }
     static func workerLock(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker.pid") }
     static func workerState(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker-state.json") }
-    static func askLock(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "ask.lock") }
+    static func detectorState(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "detector-state.json") }
     static func asking(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "asking.json") }
+    static func askingDir(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "asking") }
     static func workerLog(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker.log") }
 }
 

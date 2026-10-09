@@ -47,6 +47,7 @@ struct AskRequest {
     var auto = false
     var questionMs: Int?
     var channel: Channel?
+    var askId: String?
 }
 
 enum AskPrompt {
@@ -136,6 +137,7 @@ final class AskSession {
             answer.questionMs = request.questionMs
             answer.channel = request.channel
         }
+        answer.askId = request.askId
         for event in events { emit(event) }
         answer.answeredAt = Date()
         try JSONLines.append([answer], to: LiveFiles.answers(request.dir))

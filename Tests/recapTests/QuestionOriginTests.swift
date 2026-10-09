@@ -96,9 +96,9 @@ private let conversation = [
         var received: [(String, QuestionOrigin?)] = []
         let detector = QuestionDetector(dir: dir, meeting: meeting, minSeconds: 20, dependencies: .init(
             template: { "{{transcript}}" }, context: { ProjectContext() },
-            complete: { _ in #"{"question": "¿Cómo se despliega bita-desktop a producción?", "at": "00:00:09"}"# },
-            ask: { question, origin in received.append((question, origin)) }, log: { _ in }))
-        #expect(detector.runCycle() == .asked("¿Cómo se despliega bita-desktop a producción?"))
+            complete: { _ in #"{"questions": [{"question": "¿Cómo se despliega bita-desktop a producción?", "at": "00:00:09"}]}"# },
+            enqueue: { question, origin in received.append((question, origin)) }, log: { _ in }))
+        #expect(detector.runCycle() == .examined(queued: ["¿Cómo se despliega bita-desktop a producción?"], duplicates: []))
         #expect(received.first?.1 == QuestionOrigin(questionMs: 12_400, channel: .system))
     }
 }

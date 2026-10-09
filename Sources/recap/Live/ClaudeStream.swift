@@ -187,6 +187,7 @@ struct Answer: Codable, Equatable {
     var answeredAt: Date?
     var questionMs: Int?
     var channel: Channel?
+    var askId: String?
 }
 
 struct SourcesBlock: Equatable {
