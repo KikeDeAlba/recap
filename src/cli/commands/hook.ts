@@ -72,7 +72,8 @@ export async function handleHookEvent(event: BitaHookEvent): Promise<number> {
         }
         updateMeeting(found.dir, (meeting) => {
           meeting.bitaEntry = { ...eventSnapshot(event), pageIds: meeting.bitaEntry?.pageIds ?? [] }
-          if (event.entry.description.trim().length > 0) meeting.title = event.entry.description
+          const renamed = event.previousTitle !== undefined && event.previousTitle !== event.entry.description
+          if (renamed && event.entry.description.trim().length > 0) meeting.title = event.entry.description
         })
         log(`updated ${found.dir}`)
         break

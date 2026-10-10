@@ -5,6 +5,7 @@ import type { Meeting } from '../core/meeting.ts'
 import { trimmed } from '../core/text.ts'
 import { BitaClient, INKWELL_CAPABILITIES, findInkwell, meetingTarget, type ToolCalling } from '../bita/client.ts'
 import type { Config } from '../core/config.ts'
+import { RecapError } from '../errors.ts'
 
 export interface PageRef {
   pageId: number
@@ -106,10 +107,12 @@ export async function loadProjectContext(project: string | null | undefined, sou
   return context
 }
 
-export async function entryPages(inkwell: ToolCalling | null, entryId: number | undefined): Promise<PageRef[]> {
+export async function entryPages(inkwell: ToolCalling | null, entryId: number | undefined, strict = false): Promise<PageRef[]> {
   if (!inkwell || entryId === undefined) return []
   const response = await inkwell.invoke(['page', 'ls', '--entry', String(entryId)]).catch(() => null)
-  return response?.ok ? parsePages(response.data) : []
+  if (response?.ok) return parsePages(response.data)
+  if (strict) throw new RecapError('INKWELL_FAILED', `inkwell page ls --entry ${entryId} failed: ${response?.errorMessage ?? 'no reason given'}`)
+  return []
 }
 
 export function meetingProjectName(meeting: Meeting): string | null {
@@ -130,8 +133,7 @@ export async function meetingProject(meeting: Meeting, inkwell: ToolCalling | nu
 }
 
 export async function contextSources(config: Config, meeting: Meeting | null): Promise<ContextSources> {
-  const inkwell = await findInkwell(INKWELL_CAPABILITIES.pages)
-  const bita = await BitaClient.create(config, meeting ? meetingTarget(meeting) : {})
+  const [inkwell, bita] = await Promise.all([findInkwell(INKWELL_CAPABILITIES.pages), BitaClient.create(config, meeting ? meetingTarget(meeting) : {})])
   return { inkwell, bita }
 }
 

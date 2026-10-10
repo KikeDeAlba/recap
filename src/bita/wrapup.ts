@@ -8,7 +8,7 @@ import { fold, formatDuration, prefix, replaceAll, trimmed } from '../core/text.
 import { RecapError } from '../errors.ts'
 import { resultText, runSummaryClaude } from '../pipeline/claude.ts'
 import { loadResource } from '../pipeline/resources.ts'
-import { INKWELL_CAPABILITIES, INKWELL_HINT, callBita, callInkwell, inkwellForStage, lookupInkwell, meetingTarget, requireBita, type ToolCalling } from './client.ts'
+import { INKWELL_CAPABILITIES, INKWELL_HINT, StageSkipped, callBita, callInkwell, lookupInkwell, meetingTarget, requireBita, type ToolCalling } from './client.ts'
 import { entryPages } from '../live/context.ts'
 
 export interface WrapupItem {
@@ -148,7 +148,7 @@ export async function saveMinutes(meeting: Meeting, dir: string, notes?: ToolCal
   const note = path.join(dir, 'entry-note.md')
   writeAtomic(note, noteBody(summary, meeting, dir))
   let client = notes
-  let reason = 'inkwell is not installed'
+  let reason = 'no inkwell with docs.entry-notes was given'
   if (client === undefined) {
     const found = await lookupInkwell(INKWELL_CAPABILITIES.notes)
     client = found.client
@@ -222,7 +222,15 @@ export async function planWrapup(
 export async function runWrapup(meeting: Meeting, dir: string, config: Config, dependencies?: Partial<WrapupDependencies>): Promise<void> {
   const entryId = meeting.bitaEntryId
   if (entryId === undefined) return
-  const docs = dependencies?.docs ?? (await inkwellForStage(INKWELL_CAPABILITIES.wrapup))
+  let docs = dependencies?.docs
+  if (!docs) {
+    const found = await lookupInkwell(INKWELL_CAPABILITIES.wrapup)
+    if (!found.client) {
+      await saveMinutes(meeting, dir, undefined, dependencies?.log).catch((error: unknown) => dependencies?.log?.(`minutes: ${String(error)}`))
+      throw new StageSkipped(found.reason, INKWELL_HINT)
+    }
+    docs = found.client
+  }
   const bita = dependencies?.bita ?? (await requireBita(config, meetingTarget(meeting)))
   const claude = dependencies?.claude ?? (async (prompt: string) => resultText(await runSummaryClaude(prompt, dir, config)))
   const snapshot = meeting.bitaEntry ?? { title: meeting.title, pageIds: [] }
@@ -233,7 +241,7 @@ export async function runWrapup(meeting: Meeting, dir: string, config: Config, d
     .filter(isRecord)
     .filter((project) => project['active'] !== false)
     .flatMap((project) => (typeof project['name'] === 'string' ? [project['name']] : []))
-  const existingPageId = wrapup.pageId ?? (await entryPages(docs, entryId))[0]?.pageId
+  const existingPageId = wrapup.pageId ?? (await entryPages(docs, entryId, true))[0]?.pageId
   const existingPage = existingPageId === undefined ? null : await pageText(docs, existingPageId)
 
   const plan = await planWrapup(meeting, dir, snapshot, projects, existingPage, claude)

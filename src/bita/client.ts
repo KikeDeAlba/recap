@@ -101,6 +101,7 @@ export const INKWELL_CAPABILITIES = {
 export type InkwellLookup = { client: InkwellClient; reason?: undefined } | { client: null; reason: string }
 
 export async function lookupInkwell(capabilities: readonly string[] = []): Promise<InkwellLookup> {
+  if (process.env['RECAP_NO_INKWELL'] === '1') return { client: null, reason: 'inkwell is turned off (RECAP_NO_INKWELL=1)' }
   const tool = await findTool('inkwell').catch(() => null)
   if (!tool) return { client: null, reason: 'inkwell is not installed' }
   const missing = capabilities.filter((capability) => !tool.manifest.capabilities.includes(capability))

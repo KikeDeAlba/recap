@@ -165,3 +165,19 @@ test('without inkwell the proposals and wrap-up stages are skipped and the meeti
   assert.ok(lines.some((line) => line.startsWith('wrapup: skipped, inkwell is not installed')))
   assert.deepEqual(fake.calls(), [])
 })
+
+test('an inkwell with entry notes but without the wrap-up capabilities still gets the minutes', async (t) => {
+  const fake = await fakes(t)
+  await fake.register('bita', ['time.entries.read'])
+  await fake.register('inkwell', ['docs.page.read', 'docs.entry-notes'])
+  const dir = prepared(t)
+  const lines: string[] = []
+  await new Pipeline(dir, {}, (line) => lines.push(line)).run(undefined, 'wrapup')
+  const after = loadMeeting(dir)
+  assert.equal(after.stages['wrapup']?.status, 'skipped')
+  assert.ok(after.stages['wrapup']?.reason?.includes('docs.page.write'))
+  assert.deepEqual(
+    fake.calls().map((call) => call.slice(0, 5)),
+    [['inkwell', 'note', 'save', '42', '--section']],
+  )
+})
