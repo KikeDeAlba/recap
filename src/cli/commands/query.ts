@@ -3,7 +3,7 @@ import path from 'node:path'
 import { loadConfig } from '../../core/config.ts'
 import { isoNow } from '../../core/dates.ts'
 import { readText } from '../../core/fsutil.ts'
-import { MeetingStore, durationSeconds, updateMeeting, type Located, type Meeting } from '../../core/meeting.ts'
+import { MeetingStore, durationSeconds, loadMeeting, reconcile, updateMeeting, type Located, type Meeting } from '../../core/meeting.ts'
 import { waitUntil } from '../../core/proc.ts'
 import { meetingRecord } from '../../core/record.ts'
 import { processInBackground } from '../../core/self.ts'
@@ -147,9 +147,10 @@ export async function waitCommand(argv: string[]): Promise<number> {
     let found: Located | null = null
     const settled = await waitUntil(timeout, 2, () => {
       try {
-        found = bitaEntry !== undefined ? store.find(bitaEntry) : store.resolve(args.positionals[0])
+        if (found) found = { meeting: reconcile(loadMeeting(found.dir), found.dir), dir: found.dir }
+        else found = bitaEntry !== undefined ? store.find(bitaEntry) : store.resolve(args.positionals[0])
       } catch {
-        found = null
+        if (!found) found = null
       }
       return found !== null && isSettled(found.meeting)
     })

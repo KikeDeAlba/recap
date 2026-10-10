@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { parseDate } from '../core/dates.ts'
+import { isoNow, parseDate } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { isRecord, swiftLine } from '../core/json.ts'
 import { withDirectoryLock } from '../core/lock.ts'
@@ -189,7 +189,7 @@ export async function performAsk<T>(
   writeBoard(options.dir, {
     id,
     question,
-    startedAt: options.now ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    startedAt: options.now ?? isoNow(),
     auto: options.auto,
     questionMs: options.questionMs,
     channel: options.channel,

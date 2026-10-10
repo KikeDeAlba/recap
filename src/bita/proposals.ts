@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { Config } from '../core/config.ts'
 import { isoNow } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
-import { extractBetween, isRecord, swiftPretty } from '../core/json.ts'
+import { asIntLoose, extractBetween, isRecord, swiftPretty } from '../core/json.ts'
 import { withDirectoryLockAsync } from '../core/lock.ts'
 import { home } from '../core/paths.ts'
 import type { Meeting } from '../core/meeting.ts'
@@ -98,12 +98,6 @@ export function stripLeadingHeading(markdown: string, section: string | null): s
   return trimmed(lines.slice(1).join('\n'))
 }
 
-function intOf(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isInteger(value)) return value
-  if (typeof value === 'string' && /^[+-]?\d+$/.test(value)) return Number(value)
-  return undefined
-}
-
 function quoteOf(item: unknown): ProposalQuote | null {
   if (!isRecord(item) || typeof item['text'] !== 'string') return null
   const text = trimmed(item['text'])
@@ -127,7 +121,7 @@ export function parseProposalPlan(text: string, candidates: ReadonlySet<number>)
       discarded.push({ index, reason: 'not an object' })
       return
     }
-    const pageId = intOf(raw['pageId'])
+    const pageId = asIntLoose(raw['pageId'])
     const discard = (reason: string) => discarded.push({ index, pageId, reason })
     if (pageId === undefined) return discard('missing pageId')
     if (!candidates.has(pageId)) return discard(`page ${pageId} is not a candidate`)

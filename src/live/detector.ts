@@ -244,8 +244,15 @@ export class QuestionDetector {
   async waitUntilIdle(timeoutSeconds: number): Promise<boolean> {
     const current = this.busy
     if (!current) return true
-    const timeout = sleep(timeoutSeconds * 1000).then(() => false)
-    return Promise.race([current.then(() => true), timeout])
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutSeconds * 1000)
+    })
+    try {
+      return await Promise.race([current.then(() => true), timeout])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   async stop(timeoutSeconds = 20): Promise<void> {
@@ -285,7 +292,6 @@ export class QuestionDetector {
       const template = this.dependencies.template ? this.dependencies.template() : loadResource('detect-prompt.md')
       const prompt = renderDetectPrompt(template, this.meeting, await this.context(), batch, known)
       found = parseDetectorResponse(await this.dependencies.complete(prompt))
-      saveCursor(this.dir, batch.cursor)
     } catch (error) {
       return { type: 'failed', message: describeError(error) }
     }
@@ -304,6 +310,12 @@ export class QuestionDetector {
       this.dependencies.log(`auto ask: detected «${question}»${origin ? ` at ${origin.questionMs} ms (${origin.channel})` : ''}`)
       this.dependencies.enqueue(question, origin)
       queued.push(question)
+    }
+    if (this.stopped && queued.length < found.length - duplicates.length) return { type: 'examined', queued, duplicates }
+    try {
+      saveCursor(this.dir, batch.cursor)
+    } catch (error) {
+      return { type: 'failed', message: describeError(error) }
     }
     return { type: 'examined', queued, duplicates }
   }
@@ -395,7 +407,14 @@ export class AutoAskQueue {
         await sleep(10)
         continue
       }
-      await Promise.race([Promise.allSettled(pending), sleep(Math.max(0, deadline - Date.now()))])
+      let timer: NodeJS.Timeout | undefined
+      await Promise.race([
+        Promise.allSettled(pending),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, deadline - Date.now()))
+        }),
+      ])
+      clearTimeout(timer)
     }
     return true
   }

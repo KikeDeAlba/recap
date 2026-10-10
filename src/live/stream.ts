@@ -1,4 +1,4 @@
-import { isRecord, parseJsonSafe } from '../core/json.ts'
+import { asIntLoose, isRecord, parseJsonSafe } from '../core/json.ts'
 import { home } from '../core/paths.ts'
 import { fold, replaceAll, suffix, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
@@ -226,12 +226,6 @@ export function encodeAnswer(answer: Answer): Record<string, unknown> {
   }
 }
 
-function intLoose(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isInteger(value)) return value
-  if (typeof value === 'string' && /^[+-]?\d+$/.test(value)) return Number(value)
-  return undefined
-}
-
 function cleanOptional(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const text = trimmed(value)
@@ -242,8 +236,8 @@ function decodeSourceLoose(item: unknown): AnswerSource | null {
   if (!isRecord(item) || typeof item['kind'] !== 'string') return null
   const kind = item['kind'].toLowerCase()
   if (!['page', 'file', 'commit'].includes(kind)) return null
-  const pageId = intLoose(item['pageId'])
-  const line = intLoose(item['line'])
+  const pageId = asIntLoose(item['pageId'])
+  const line = asIntLoose(item['line'])
   const sourcePath = cleanOptional(item['path'])
   const repo = cleanOptional(item['repo'])
   const sha = cleanOptional(item['sha'])

@@ -110,7 +110,9 @@ test('reads ffprobe output and picks the import mode', () => {
   assert.equal(importMode(info, 'in-person'), 'in-person')
   assert.throws(() => importMode({ ...info, audioTracks: 1 }, 'remote'), RecapError)
   assert.ok(importArguments('/in.mp3', 'in-person', '/out.m4a').includes('aac'))
-  assert.ok(importArguments('/in.mov', 'remote', '/out.mov').includes('copy'))
+  assert.ok(importArguments('/in.mov', 'remote', '/out.mov').includes('0:v:0'))
+  const audioOnly = importArguments('/in.m4a', 'remote', '/out.m4a')
+  assert.ok(!audioOnly.includes('0:v:0') && audioOnly.includes('0:a'))
 })
 
 const ffmpeg = spawnSync('ffmpeg', ['-version']).status === 0 && spawnSync('ffprobe', ['-version']).status === 0

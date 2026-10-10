@@ -245,7 +245,7 @@ export class MeetingStore {
     }
     const exact = meetings.find((item) => item.meeting.id === reference)
     if (exact) return exact
-    const matches = meetings.filter((item) => item.meeting.id.startsWith(reference) || item.meeting.id.includes(reference))
+    const matches = meetings.filter((item) => item.meeting.id.includes(reference))
     if (matches.length === 1 && matches[0]) return matches[0]
     if (matches.length === 0) throw new RecapError('MEETING_NOT_FOUND', `No meeting matches "${reference}"`)
     throw new RecapError('MEETING_AMBIGUOUS', `"${reference}" matches ${matches.length} meetings`)

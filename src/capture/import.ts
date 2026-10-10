@@ -20,7 +20,8 @@ export function importMode(info: MediaInfo, requested?: MeetingMode): MeetingMod
 
 export function importArguments(source: string, mode: MeetingMode, target: string): string[] {
   const base = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', source]
-  if (mode === 'remote') return [...base, '-map', '0:v:0', '-map', '0:a', '-c', 'copy', '-f', 'mov', target]
+  if (mode === 'remote' && target.endsWith('.mov')) return [...base, '-map', '0:v:0', '-map', '0:a', '-c', 'copy', '-f', 'mov', target]
+  if (mode === 'remote') return [...base, '-vn', '-map', '0:a', '-c:a', 'aac', '-b:a', '128k', '-f', 'mp4', target]
   return [...base, '-vn', '-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', '-f', 'mp4', target]
 }
 
@@ -57,7 +58,7 @@ export async function importRecording(config: Config, file: string, options: { t
   const title = options.title && trimmed(options.title).length > 0 ? trimmed(options.title) : path.basename(source, path.extname(source))
   const created = new MeetingStore(config).create({ title, mode, now: startedAt })
   try {
-    const target = path.join(created.dir, mode === 'remote' ? VIDEO_FILE : AUDIO_FILE)
+    const target = path.join(created.dir, mode === 'remote' && info.videoTracks > 0 ? VIDEO_FILE : AUDIO_FILE)
     const result = await exec(ffmpeg, importArguments(source, mode, target))
     if (result.status !== 0) throw new RecapError('FFMPEG_FAILED', suffix(trimmed(result.stderr), 500))
     const meeting = updateMeeting(created.dir, (item) => {

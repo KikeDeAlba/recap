@@ -1,7 +1,7 @@
-import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { RecapError } from '../errors.ts'
-import { readText, writeAtomic } from './fsutil.ts'
+import { readText } from './fsutil.ts'
 import { isAlive } from './proc.ts'
 import { trimmed } from './text.ts'
 
@@ -16,21 +16,44 @@ export function lockOwner(file: string): number | null {
   return /^\d+$/.test(value) ? Number(value) : null
 }
 
+function steal(target: string): void {
+  const aside = `${target}.stale-${process.pid}-${Math.random().toString(36).slice(2)}`
+  try {
+    renameSync(target, aside)
+  } catch {
+    return
+  }
+  rmSync(aside, { recursive: true, force: true })
+}
+
 export class ProcessLock {
   readonly file: string
 
   constructor(file: string, code = 'ALREADY_PROCESSING', message = (pid: number) => `The meeting is already being processed (pid ${pid})`) {
     this.file = file
-    const pid = lockOwner(file)
-    if (pid !== null && pid !== process.pid && isAlive(pid)) throw new RecapError(code, message(pid))
-    writeAtomic(file, String(process.pid))
+    mkdirSync(path.dirname(file), { recursive: true })
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        writeFileSync(file, String(process.pid), { flag: 'wx' })
+        return
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+      const pid = lockOwner(file)
+      if (pid === process.pid) return
+      if (pid !== null && isAlive(pid)) throw new RecapError(code, message(pid))
+      if (pid === null && attempt < 20) {
+        sleepSync(10)
+        continue
+      }
+      steal(file)
+    }
   }
 
   release(): void {
     if (lockOwner(this.file) === process.pid) rmSync(this.file, { force: true })
   }
 }
-
 
 function tryLock(lockDir: string): boolean {
   const owner = path.join(lockDir, 'pid')
@@ -47,9 +70,13 @@ function tryLock(lockDir: string): boolean {
     } catch {
       return false
     }
-    if ((pid !== null && !isAlive(pid)) || (pid === null && age > 2_000)) rmSync(lockDir, { recursive: true, force: true })
+    if ((pid !== null && pid !== process.pid && !isAlive(pid)) || (pid === null && age > 2_000)) steal(lockDir)
     return false
   }
+}
+
+function unlock(lockDir: string): void {
+  if (lockOwner(path.join(lockDir, 'pid')) === process.pid) rmSync(lockDir, { recursive: true, force: true })
 }
 
 export function withDirectoryLock<T>(lockDir: string, body: () => T, timeoutMs = 15_000): T {
@@ -57,12 +84,12 @@ export function withDirectoryLock<T>(lockDir: string, body: () => T, timeoutMs =
   const deadline = Date.now() + timeoutMs
   while (!tryLock(lockDir)) {
     if (Date.now() > deadline) throw new RecapError('WRITE_FAILED', `Timed out waiting for the lock ${lockDir}`)
-    sleepSync(15)
+    sleepSync(5)
   }
   try {
     return body()
   } finally {
-    rmSync(lockDir, { recursive: true, force: true })
+    unlock(lockDir)
   }
 }
 
@@ -76,6 +103,6 @@ export async function withDirectoryLockAsync<T>(lockDir: string, body: () => Pro
   try {
     return await body()
   } finally {
-    rmSync(lockDir, { recursive: true, force: true })
+    unlock(lockDir)
   }
 }

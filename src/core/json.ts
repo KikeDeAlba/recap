@@ -54,7 +54,7 @@ export function asInt(value: unknown): number | undefined {
 
 export function asIntLoose(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isInteger(value)) return value
-  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) return Number(value.trim())
+  if (typeof value === 'string' && /^[+-]?\d+$/.test(value)) return Number(value)
   return undefined
 }
 

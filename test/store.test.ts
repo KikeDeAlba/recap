@@ -35,6 +35,19 @@ test('rejects ambiguous references', (t) => {
   assert.throws(() => subject.resolve('sync'), (error: unknown) => error instanceof RecapError && error.code === 'MEETING_AMBIGUOUS')
 })
 
+test('process locks are exclusive and recover from dead owners', async (t) => {
+  const { ProcessLock } = await import('../src/core/lock.ts')
+  const { writeFileSync } = await import('node:fs')
+  const { spawnSync } = await import('node:child_process')
+  const file = path.join(tempDir(t), 'process.lock')
+  writeFileSync(file, String(spawnSync(process.execPath, ['-e', '']).pid))
+  const lock = new ProcessLock(file)
+  writeFileSync(file, String(process.ppid))
+  assert.throws(() => new ProcessLock(file), (error: unknown) => error instanceof RecapError && error.code === 'ALREADY_PROCESSING')
+  writeFileSync(file, String(process.pid))
+  lock.release()
+})
+
 test('round trips the meeting file and keeps the keys Swift requires', (t) => {
   const subject = store(tempDir(t))
   const { dir } = subject.create({ title: 'Demo', mode: 'in-person', bitaEntryId: 9 })
