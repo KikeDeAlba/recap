@@ -23,7 +23,8 @@ async function recap(args: string[], env: NodeJS.ProcessEnv, input?: string): Pr
 
 test('passes the kit conformance checks', async (t) => {
   const env = sandboxEnv(tempDir(t))
-  await assertConformance([process.execPath, BIN], manifest(false), { platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux', env, home: env['HOME'] ?? '' })
+  const ctx = { platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux', env, home: env['HOME'] ?? '' } as const
+  await assertConformance([process.execPath, BIN], await manifest(false, false, ctx), ctx)
 })
 
 test('prints one-line envelopes and fails with an error envelope', async (t) => {

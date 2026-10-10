@@ -1,7 +1,7 @@
 {
   "name": "recap",
   "description": "Record meetings (remote: screen, system audio and mic; in-person: mic), transcribe them locally and turn them into minutes with agreements and action items",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "author": {
     "name": "Jesus Enrique De Alba Gaytan",
     "url": "https://github.com/KikeDeAlba"

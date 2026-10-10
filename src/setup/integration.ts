@@ -1,13 +1,14 @@
 import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { agents } from '@kikedealba/kit'
+import type { PlatformContext } from '@kikedealba/kit/platform'
 import { defineManifest, isInstalled, readManifest, registerTool, type ToolManifest } from '@kikedealba/kit/registry'
 import { bitaCommand } from '../bita/client.ts'
 import type { Config } from '../core/config.ts'
 import { readText } from '../core/fsutil.ts'
 import { isRecord } from '../core/json.ts'
 import { home } from '../core/paths.ts'
-import { selfCommand } from '../core/self.ts'
+import { stableCommand } from '../core/self.ts'
 import { HOOK_EVENTS, MEETING_KINDS } from '../bita/hook.ts'
 import { PACKAGE_ROOT, VERSION } from '../version.ts'
 
@@ -19,30 +20,35 @@ export function capabilities(captureAvailable: boolean): string[] {
   return captureAvailable ? ['meeting.record', ...BASE_CAPABILITIES] : [...BASE_CAPABILITIES]
 }
 
-export function bitaSubscription(): ToolManifest['subscribes'][number] {
+function subscription(bin: readonly string[]): ToolManifest['subscribes'][number] {
   return {
     tool: 'bita',
     events: [...HOOK_EVENTS],
     filter: { kind: Object.keys(MEETING_KINDS).sort() },
-    command: [...selfCommand(), 'bita-hook'],
+    command: [...bin, 'bita-hook'],
   }
 }
 
-export function manifest(captureAvailable: boolean, subscribe = captureAvailable): ToolManifest {
+export async function bitaSubscription(ctx?: PlatformContext): Promise<ToolManifest['subscribes'][number]> {
+  return subscription(await stableCommand(ctx))
+}
+
+export async function manifest(captureAvailable: boolean, subscribe = captureAvailable, ctx?: PlatformContext): Promise<ToolManifest> {
+  const bin = await stableCommand(ctx)
   return defineManifest({
     name: 'recap',
     version: VERSION,
     description: 'Meeting recorder: local transcription, minutes, live answers',
-    bin: selfCommand(),
+    bin,
     capabilities: capabilities(captureAvailable),
-    subscribes: subscribe ? [bitaSubscription()] : [],
+    subscribes: subscribe ? [subscription(bin)] : [],
     homepage: 'https://github.com/KikeDeAlba/recap',
     install: INSTALL_HINT,
   })
 }
 
-export function register(captureAvailable: boolean, subscribe = captureAvailable): Promise<string> {
-  return registerTool(manifest(captureAvailable, subscribe))
+export async function register(captureAvailable: boolean, subscribe = captureAvailable): Promise<string> {
+  return registerTool(await manifest(captureAvailable, subscribe))
 }
 
 export async function bitaLinked(config: Config): Promise<boolean> {
