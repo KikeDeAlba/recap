@@ -40,6 +40,9 @@ package struct LiveWorkerLaunch: Equatable {
         guard let executable else {
             throw RecapError("LIVE_WORKER_MISSING", "Cannot locate the current executable to find \(defaultExecutableName)")
         }
+        guard executable.lastPathComponent == CaptureTool.name else {
+            return LiveWorkerLaunch(executable: executable, arguments: defaultArguments)
+        }
         let candidate = executable.deletingLastPathComponent().appending(path: defaultExecutableName)
         guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
             throw RecapError("LIVE_WORKER_MISSING", "\(candidate.path) not found; pass --live-worker or set \(environmentKey)")

@@ -140,12 +140,9 @@ package enum CaptureCLI {
     package static let usageError = "USAGE"
 
     package static func main(_ root: ParsableCommand.Type, arguments: [String]) -> Never {
+        var command: ParsableCommand
         do {
-            var command = try root.parseAsRoot(arguments)
-            try command.run()
-            root.exit()
-        } catch let exit as ExitCode {
-            root.exit(withError: exit)
+            command = try root.parseAsRoot(arguments)
         } catch {
             if let envelope = usageEnvelope(root, arguments: arguments, error: error) {
                 print(envelope)
@@ -153,11 +150,21 @@ package enum CaptureCLI {
             }
             root.exit(withError: error)
         }
+        do {
+            try command.run()
+            root.exit()
+        } catch {
+            root.exit(withError: error)
+        }
+    }
+
+    package static func wantsJSON(_ arguments: [String]) -> Bool {
+        arguments.prefix { $0 != "--" }.contains("--json")
     }
 
     package static func usageEnvelope(_ root: ParsableCommand.Type, arguments: [String], error: Error) -> String? {
-        guard arguments.contains("--json"), root.exitCode(for: error) != .success else { return nil }
-        let command = arguments.first { !$0.hasPrefix("-") } ?? CaptureTool.name
+        guard wantsJSON(arguments), root.exitCode(for: error) != .success else { return nil }
+        let command = arguments.first { !$0.hasPrefix("-") && $0 != "capture" } ?? CaptureTool.name
         let withoutJSON = arguments.filter { $0 != "--json" }
         var reported = error
         do {

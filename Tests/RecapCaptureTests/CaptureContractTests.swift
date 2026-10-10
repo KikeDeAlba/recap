@@ -76,6 +76,30 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         #expect(object["endedAt"] is String)
     }
 
+    @Test func updatesKeepKeysTheRecorderDoesNotKnow() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let written = """
+        {"schemaVersion": 1, "id": "m", "title": "Sync", "mode": "remote", "status": "starting",
+         "createdAt": "2026-10-10T12:00:00Z", "stages": {}, "source": "den", "attendees": ["ana", "luis"]}
+        """
+        try Data(written.utf8).write(to: dir.appending(path: MeetingFile.name))
+        _ = try MeetingFile.update(dir) {
+            $0.status = .recording
+            $0.recorderPid = 7
+        }
+        let object = try jsonObject(try String(contentsOf: dir.appending(path: MeetingFile.name), encoding: .utf8))
+        #expect(object["source"] as? String == "den")
+        #expect(object["attendees"] as? [String] == ["ana", "luis"])
+        #expect(object["status"] as? String == "recording")
+        #expect(object["recorderPid"] as? Int == 7)
+        _ = try MeetingFile.update(dir) { $0.recorderPid = nil }
+        let cleared = try jsonObject(try String(contentsOf: dir.appending(path: MeetingFile.name), encoding: .utf8))
+        #expect(cleared["recorderPid"] == nil)
+        #expect(cleared["source"] as? String == "den")
+        #expect(try MeetingFile.load(dir).status == .recording)
+    }
+
     @Test func recordingFileDependsOnTheMode() {
         #expect(MeetingMode.remote.recordingFileName == "recording.mov")
         #expect(MeetingMode.inPerson.recordingFileName == "recording.m4a")
@@ -192,6 +216,7 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         #expect(body["code"] as? String == "USAGE")
         #expect((body["message"] as? String)?.contains("bogus") == true)
         #expect(CaptureCLI.usageEnvelope(TestRoot.self, arguments: ["bogus"], error: error) == nil)
+        #expect(CaptureCLI.usageEnvelope(TestRoot.self, arguments: ["bogus", "--", "--json"], error: error) == nil)
     }
 }
 
@@ -244,6 +269,24 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         let launch = try #require(try LiveWorkerLaunch.resolve(option: nil, environment: [:], executable: dir.appending(path: "recap-capture")))
         #expect(launch.executable.path == recap.path)
         #expect(launch.arguments(for: URL(fileURLWithPath: "/tmp/m")) == ["live-worker", "/tmp/m"])
+    }
+
+    @Test func otherExecutablesSpawnThemselves() throws {
+        let recap = URL(fileURLWithPath: "/Applications/Recap.app/Contents/MacOS/recap")
+        let launch = try #require(try LiveWorkerLaunch.resolve(option: nil, environment: [:], executable: recap))
+        #expect(launch == LiveWorkerLaunch(executable: recap, arguments: ["live-worker"]))
+    }
+
+    @Test func theLauncherForwardsTheWorkerSettingThroughOpen() {
+        let app = URL(fileURLWithPath: "/Applications/Recap.app")
+        let dir = URL(fileURLWithPath: "/tmp/m")
+        let log = dir.appending(path: "recorder.log")
+        let plain = RecorderLauncher.openArguments(app: app, dir: dir, log: log, environment: [:])
+        #expect(plain == ["-g", "-n", "-a", app.path, "--stdout", log.path, "--stderr", log.path, "--args", "record", dir.path])
+        let forwarded = RecorderLauncher.openArguments(app: app, dir: dir, log: log,
+                                                       environment: [LiveWorkerLaunch.environmentKey: "none"])
+        #expect(forwarded.prefix(6) == ["-g", "-n", "-a", app.path, "--env", "RECAP_LIVE_WORKER=none"])
+        #expect(forwarded.suffix(3) == ["--args", "record", dir.path])
     }
 
     @Test func missingSiblingIsReported() throws {

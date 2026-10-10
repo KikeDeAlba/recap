@@ -290,7 +290,7 @@ open -g -n -a Recap.app --stdout <meetingDir>/recorder.log --stderr <meetingDir>
   --args capture record <meetingDir>
 ```
 
-`recap capture <command>` runs the same commands as `recap-capture <command>`; that is how the `open` call above, which always starts the bundle's main executable, reaches them. `permissions --request` only shows the system prompts this way; running `recap-capture` directly from a terminal attributes the permissions to the terminal.
+`recap capture <command>` runs the same commands as `recap-capture <command>`, with the same envelopes; that is how the `open` call above, which always starts the bundle's main executable, reaches them. `permissions --request` only shows the system prompts this way; running `recap-capture` directly from a terminal attributes the permissions to the terminal. macOS applies a newly granted screen permission on the next launch, so the report that follows the request still says `denied` for it.
 
 ### On-disk contract
 
@@ -306,7 +306,7 @@ The caller creates `<meetingDir>/meeting.json` and `recap-capture record` update
 | `startedAt`, `endedAt` | recorder | when the capture started and stopped |
 | `error` | recorder | why it failed or stopped early |
 
-The other keys `recap` defines (`bitaEntryId`, `wrapup`, `video`…) are kept; keys it does not know are dropped when the recorder rewrites the file. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
+Every other key, including ones recap does not know, is kept. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
 
 When `live.enabled` is on (the default, see Configuration), it also cuts the audio into 16 kHz mono 16-bit WAV chunks under `live/chunks/`, named `<channel>-<seq, 5 digits>.wav` with `channel` `mic` or `system`, and appends one line per chunk to `live/chunks/index.jsonl`:
 
@@ -315,7 +315,7 @@ When `live.enabled` is on (the default, see Configuration), it also cuts the aud
 {"channel":"system","endMs":12000,"seq":2,"startMs":9870}
 ```
 
-Offsets are milliseconds from the start of the recording; chunks without speech have no `file` and no WAV. Then it spawns the live worker, detached, with its output in `live/worker.log`. `--live-worker` (or `RECAP_LIVE_WORKER` when the option is absent) picks it: an executable runs as `<executable> live-worker <meetingDir>`, a JSON array such as `["node", "/path/recap.js", "live-worker"]` is the whole command with `<meetingDir>` appended, and `none` turns it off. By default it is the `recap` next to `recap-capture`, which is the behavior of `recap start`.
+Offsets are milliseconds from the start of the recording; chunks without speech have no `file` and no WAV. Then it spawns the live worker, detached, with its output in `live/worker.log`. `--live-worker` (or `RECAP_LIVE_WORKER` when the option is absent) picks it: an executable runs as `<executable> live-worker <meetingDir>`, a JSON array such as `["node", "/path/recap.js", "live-worker"]` is the whole command with `<meetingDir>` appended, and `none` turns it off. Use absolute paths: an app started by `open` gets the minimal launchd `PATH`, and bare names are only searched there and in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. `open` does not pass the caller's environment either; `recap start` forwards `RECAP_LIVE_WORKER` with `open --env`, and other callers should do the same or use `--live-worker`. By default `recap-capture` spawns the `recap` next to it and `recap` spawns itself, which is the behavior of `recap start`.
 
 ## Development
 
@@ -331,7 +331,7 @@ make release                      # dist/Recap-<version>-macos-arm64.zip and its
 ./scripts/release.sh --publish    # from main: create or update the v<version> GitHub release
 ```
 
-The version comes from `Recap.version` in `Sources/recap/Recap.swift`; `CaptureTool.version` in `Sources/RecapCapture/Commands/CaptureCommands.swift` must match it, and a test checks that. Releases are built and signed locally with an Apple Development identity, so macOS keeps the permissions across updates; they are not notarized. `bita setup` downloads the `*-macos-arm64.zip` asset of the latest release.
+The version comes from `CaptureTool.version` in `Sources/RecapCapture/Commands/CaptureCommands.swift`, which `recap` and `recap-capture` share. Releases are built and signed locally with an Apple Development identity, so macOS keeps the permissions across updates; they are not notarized. `bita setup` downloads the `*-macos-arm64.zip` asset of the latest release.
 
 ## License
 

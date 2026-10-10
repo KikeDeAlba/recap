@@ -5,7 +5,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 configuration="${CONFIGURATION:-release}"
-version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/recap/Recap.swift)"
+version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/RecapCapture/Commands/CaptureCommands.swift)"
 app="build/Recap.app"
 
 swift build -c "$configuration" --product recap

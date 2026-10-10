@@ -6,6 +6,7 @@ import Testing
 @Suite struct CaptureRoutingTests {
     @Test func recapAndRecapCaptureShareTheVersion() {
         #expect(Recap.version == CaptureTool.version)
+        #expect(Recap.configuration.version == CaptureTool.version)
     }
 
     @Test func captureArgumentsRouteToRecapCapture() throws {

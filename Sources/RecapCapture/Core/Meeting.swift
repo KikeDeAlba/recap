@@ -166,8 +166,22 @@ package enum MeetingFile {
 
     package static func update(_ dir: URL, _ change: (inout Meeting) -> Void) throws -> Meeting {
         var meeting = try load(dir)
+        let before = try encoder.encode(meeting)
         change(&meeting)
-        try save(meeting, to: dir)
+        let after = try encoder.encode(meeting)
+        let url = dir.appending(path: name)
+        try merged(original: try? Data(contentsOf: url), before: before, after: after).write(to: url, options: .atomic)
         return meeting
+    }
+
+    package static func merged(original: Data?, before: Data, after: Data) throws -> Data {
+        guard let original,
+              let raw = try? JSONSerialization.jsonObject(with: original) as? [String: Any],
+              let known = try JSONSerialization.jsonObject(with: before) as? [String: Any],
+              let updated = try JSONSerialization.jsonObject(with: after) as? [String: Any] else { return after }
+        let unknown = raw.filter { known[$0.key] == nil }
+        guard !unknown.isEmpty else { return after }
+        let combined = updated.merging(unknown) { current, _ in current }
+        return try JSONSerialization.data(withJSONObject: combined, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     }
 }

@@ -130,9 +130,8 @@ package enum RecorderLauncher {
         let log = dir.appending(path: "recorder.log")
         if let app = Paths.appBundle {
             let open = URL(fileURLWithPath: "/usr/bin/open")
-            let result = try Shell.run(open, ["-g", "-n", "-a", app.path,
-                                              "--stdout", log.path, "--stderr", log.path,
-                                              "--args", "record", dir.path])
+            let result = try Shell.run(open, openArguments(app: app, dir: dir, log: log,
+                                                           environment: ProcessInfo.processInfo.environment))
             guard result.ok else {
                 throw RecapError("LAUNCH_FAILED", "Cannot launch \(app.lastPathComponent): \(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
@@ -142,5 +141,11 @@ package enum RecorderLauncher {
             }
             _ = try Shell.spawnDetached(executable, ["record", dir.path], log: log)
         }
+    }
+
+    package static func openArguments(app: URL, dir: URL, log: URL, environment: [String: String]) -> [String] {
+        let forwarded = environment[LiveWorkerLaunch.environmentKey].map { ["--env", "\(LiveWorkerLaunch.environmentKey)=\($0)"] } ?? []
+        return ["-g", "-n", "-a", app.path] + forwarded
+            + ["--stdout", log.path, "--stderr", log.path, "--args", "record", dir.path]
     }
 }

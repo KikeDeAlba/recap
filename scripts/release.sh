@@ -12,17 +12,10 @@ for argument in "$@"; do
   esac
 done
 
-version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/recap/Recap.swift)"
+version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/RecapCapture/Commands/CaptureCommands.swift)"
 asset="Recap-${version}-macos-arm64.zip"
 
 ./scripts/bundle.sh
-
-for binary in recap recap-capture; do
-  if [[ ! -x "build/Recap.app/Contents/MacOS/$binary" ]]; then
-    echo "error: Recap.app is missing $binary" >&2
-    exit 1
-  fi
-done
 
 rm -rf dist
 mkdir -p dist
