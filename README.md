@@ -51,9 +51,11 @@ recap import llamada.mov --remote                         # video con dos pistas
 
 Los archivos en disco, los comandos, las opciones y el sobre `--json` son los
 mismos que los del `recap` en Swift, así que las dos versiones leen las mismas
-reuniones. Cuando [inkwell](https://github.com/KikeDeAlba/inkwell) está
-instalado y ya migró los documentos de bita, las páginas, las propuestas y el
-backlog se escriben con inkwell; si no, con `bita docs` y `bita backlog`.
+reuniones. bita solo lleva el tiempo: las páginas, las propuestas, el backlog
+y la nota de cada entrada viven en [inkwell](https://github.com/KikeDeAlba/inkwell),
+y el volcado del tiempo a Jira lo hace [tally](https://github.com/KikeDeAlba/tally).
+Sin inkwell la reunión se procesa igual: las etapas `proposals` y `wrapup` se
+saltan con un aviso y la minuta se queda en la carpeta de la reunión.
 
 Para trabajar en el paquete: `pnpm install`, `pnpm test`, `pnpm typecheck` y
 `node src/bin/recap.ts <comando>`.
@@ -147,7 +149,7 @@ The repository is also a Claude Code plugin marketplace:
 | `/recap-status` | Shows whether a recording is running and how far processing got |
 | `/recap-list [meeting]` | Lists meetings or shows one meeting's minutes |
 | `/recap-summarize [meeting] [instructions]` | Rewrites the minutes inside the session, following extra instructions, and stores them with `recap save-summary` |
-| `/recap-ask [question]` | Answers the last question of the meeting being recorded, or the one given, from the bita pages and the project repositories |
+| `/recap-ask [question]` | Answers the last question of the meeting being recorded, or the one given, from the inkwell pages and the project repositories |
 | `/recap-proposals [meeting]` | Reviews the documentation changes proposed by a meeting and accepts, edits or rejects them |
 
 The `recap` skill lets Claude answer questions such as "¿qué acordamos en la reunión de ayer?" from the stored minutes and transcripts. The commands call `recap`, so it must be on the `PATH` of the shell Claude Code runs.
@@ -160,7 +162,7 @@ While a meeting is being recorded, recap also transcribes it live:
 - A detached `recap live-worker` transcribes each chunk with `whisper-cli` (same model and VAD as the pipeline, 4 threads, the previous text as prompt), drops hallucinations and microphone echo, and appends `{startMs, endMs, channel, text}` lines to `live/transcript.jsonl`, with offsets from the start of the recording. It exits once the recording stops and the queue is empty.
 - The transcript after `stop` is still the source of truth; the live one is for answering during the meeting.
 
-`recap ask` answers a question with Claude Code (headless, streaming), reading only the bita pages and the repositories registered for the entry's project (`bita project repo ls`, bita 0.16 or later):
+`recap ask` answers a question with Claude Code (headless, streaming), reading only the inkwell pages of the project (`inkwell page ls --project`) and the repositories registered for it in bita (`bita project repo ls`). Without inkwell it answers from the repositories alone:
 
 ```sh
 recap ask --active                                      # the last question in the live transcript
@@ -191,9 +193,9 @@ With `live.autoAsk` on (the default), the live worker also looks for questions o
 
 ### Proposed documentation changes
 
-For meetings linked to a bita entry, the `proposals` stage (before `wrapup`) asks Claude Code (`Resources/proposals-prompt.md`) for the explicit, firm changes said about existing pages: the project pages and the pages linked to the entry, never the meeting's own page. Ideas, doubts and statements corrected later are left out, and the text follows bita's writing rule: nothing that reveals the conversation.
+For meetings linked to a bita entry, when inkwell is installed, the `proposals` stage (before `wrapup`) asks Claude Code (`Resources/proposals-prompt.md`) for the explicit, firm changes said about existing pages: the project pages and the pages linked to the entry in inkwell (`inkwell page ls --entry`), never the meeting's own page. Ideas, doubts and statements corrected later are left out, and the text follows the documentation writing rule: nothing that reveals the conversation.
 
-Each change becomes a commit on the docs branch `proposal/meeting-<entry>` through `bita docs propose`, and is listed in `proposals.json` (its markdown in `proposals/<n>.md`). Nothing reaches `main`, or Confluence, until it is accepted:
+Each change becomes a commit on the docs branch `proposal/meeting-<entry>` through `inkwell git propose`, and is listed in `proposals.json` (its markdown in `proposals/<n>.md`). Nothing reaches `main`, or Confluence, until it is accepted:
 
 ```sh
 recap proposals ls <meeting> --json          # or --bita-entry <id>
@@ -202,41 +204,44 @@ recap proposals accept <meeting> <n> [--md edited.md]
 recap proposals reject <meeting> <n>
 ```
 
-`accept` runs `bita docs branch apply`; with `--md` it first proposes the edited text again. If the page changed since the proposal, the merge conflicts and the proposal turns `stale` (the command still succeeds). When no proposal is pending, the branch is dropped. A failure in this stage is recorded in `stages.proposals` and never stops the wrap-up. Turn it off with `recap config set live.proposals false`.
+`accept` runs `inkwell branch apply` (and needs inkwell); with `--md` it first proposes the edited text again. If the page changed since the proposal, the merge conflicts and the proposal turns `stale` (the command still succeeds). When no proposal is pending, the branch is dropped. A failure in this stage is recorded in `stages.proposals` and never stops the wrap-up; without inkwell the stage is `skipped` with the reason in `stages.proposals.reason`. Turn it off with `recap config set live.proposals false`.
 
 ## bita integration
 
-With [bita](https://github.com/KikeDeAlba/bita-cli) 0.12 or later, a meeting timer records the meeting while it runs:
+With [bita](https://github.com/KikeDeAlba/bita-cli), a meeting timer records the meeting while it runs:
 
 ```sh
 bita start "Planeación sprint 42" --kind remote-meeting     # recap starts recording the screen, system audio and mic
 bita start "1:1 con Ana" --kind in-person-meeting           # recap records the mic only
-bita stop                                                   # recap stops, processes, and writes the minutes into the entry
+bita stop                                                   # recap stops, processes, and writes the minutes into the entry note in inkwell
 ```
 
-`recap setup` registers the hook in bita (`bita hooks add --on start,stop,cancel,amend --kind in-person-meeting,remote-meeting -- …/recap bita-hook`). It works the same whether the timer is started from the terminal, from Claude Code or from bita-desktop.
+`recap setup` subscribes `recap bita-hook` to bita's `start`, `stop`, `cancel` and `amend` events through the kit registry. It works the same whether the timer is started from the terminal, from Claude Code or from bita-desktop.
 
 | bita event | recap |
 |---|---|
 | `start` of a meeting kind | starts recording in the matching mode, linked to the entry |
-| `stop` | stops, processes in the background and wraps the meeting up in bita (see below) |
+| `stop` | stops, processes in the background and wraps the meeting up (see below) |
 | `cancel` | discards the recording |
 | `amend --kind <meeting kind>` on a running entry | starts recording |
 | `amend --kind none` while recording | stops without processing; the recording is kept |
+| `amend` of the title or project only | updates the meeting's title and entry data; the recording is not touched |
 
 ### Wrap-up
 
-After the summary, the `wrapup` stage asks Claude Code (headless, `Resources/wrapup-prompt.md`) for a title, a project, a documentation page and backlog items, and applies them through the bita CLI:
+After the summary, the `wrapup` stage asks Claude Code (headless, `Resources/wrapup-prompt.md`) for a title, a project, a documentation page and backlog items, and applies them: title and project through `bita amend`, everything else through inkwell (found in the kit registry by its capabilities):
 
 - the timer gets the meeting's real topic as its title when the current one is generic ("Reunión presencial", "Junta", …);
-- if the timer has no project, it gets one only when the conversation makes it clear and the name exists in `bita projects`; otherwise `wrapup.projectResolved` is false and `/bita-stop` asks;
-- a page is created with `bita docs page new --from-entry` in that project and written as formal documentation (no pending sections); if the timer already had a page, a `## Reunión <date>` section is added to it instead;
-- action items and open questions become `bita backlog` items on that page;
-- the minutes still land in the `## Reunión` section of the entry document.
+- if the timer has no project, it gets one only when the conversation makes it clear and the name exists in `bita projects`; otherwise `wrapup.projectResolved` is false and `/recap-stop` asks;
+- a page is created with `inkwell page new --from-entry` in that project and written as formal documentation (no pending sections); if the entry already has a page in inkwell (`inkwell page ls --entry`), a `## Reunión <date>` section is added to it instead;
+- action items and findings become `inkwell backlog add` items on that page;
+- the minutes land in the `Reunión` section of the entry note (`inkwell note save <entry> --section Reunión --md …`, capability `docs.entry-notes`).
+
+Without inkwell the stage is `skipped` (reason and hint `npm i -g @kikedealba/inkwell && inkwell setup` in `stages.wrapup`) and the meeting is still `processed`; the minutes stay in `summary.md`. With an inkwell lacking `docs.entry-notes` the page and backlog are written and `process.log` notes that the minutes were not saved. Run `recap process <id> --from proposals` after installing it. Time goes to Jira later through tally, never from recap.
 
 `recap wait --bita-entry <id>` blocks until all of that is done and prints the result (`data.wrapup` with `--json`).
 
-The hook output goes to `hooks.log` beside the bita database. Minutes regenerated with `/recap-summarize` or `recap save-summary` are sent to bita again.
+The hook output goes to `hooks.log` beside the bita database. Minutes regenerated with `/recap-summarize` or `recap save-summary` are saved in the entry note again when inkwell is installed.
 
 ## Pipeline
 
@@ -246,8 +251,8 @@ The hook output goes to `hooks.log` beside the bita database. Minutes regenerate
 | `transcribe` | per channel, then merged | mic | `transcript.json`, `transcript.md` |
 | `frames` | scene changes, at least 20 s apart, at most 40 | skipped | `frames/hh-mm-ss.jpg`, `frames.json` |
 | `summarize` | `claude -p` with transcript and frames | `claude -p` with transcript | `summary.md` |
-| `proposals` | only when linked to a bita entry and `live.proposals` is on | same | `proposals.json`, `proposals/<n>.md` and the docs branch `proposal/meeting-<entry>` |
-| `wrapup` | only when linked to a bita entry | same | entry title and project, a bita page, backlog items and the `## Reunión` section of the entry document |
+| `proposals` | only when linked to a bita entry and `live.proposals` is on; skipped without inkwell | same | `proposals.json`, `proposals/<n>.md` and the docs branch `proposal/meeting-<entry>` |
+| `wrapup` | only when linked to a bita entry; skipped without inkwell | same | entry title and project (bita), an inkwell page, backlog items and the `Reunión` section of the entry note |
 
 - Transcription runs locally with `whisper-cli`, `large-v3-turbo` and Silero VAD. Known whisper hallucinations on silence are dropped.
 - In remote meetings the microphone is labelled **Sala** and the call audio **Remotos**. When the microphone picks up the speakers, segments that repeat the call audio within a few seconds are removed as echo; headphones avoid the problem entirely.

@@ -9,7 +9,7 @@ import { AnswerAssembler, AskStreamReducer, ProgressDescriber, encodeAskEvent, p
 import { streamArguments } from '../src/pipeline/claude.ts'
 import { loadResource } from '../src/pipeline/resources.ts'
 import { RecapError } from '../src/errors.ts'
-import { FakeBita, meeting, tempDir } from './helpers.ts'
+import { FakeTool, meeting, tempDir } from './helpers.ts'
 
 const streamLine = (text: string) => JSON.stringify({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } })
 
@@ -161,9 +161,9 @@ test('stream arguments keep the isolation flags', () => {
 test('sources list only the project repositories and the docs root', async (t) => {
   const existing = path.join(tempDir(t), 'repo')
   mkdirSync(existing)
-  const bita = new FakeBita((args) => {
+  const bita = new FakeTool((args) => {
     const head = args.slice(0, 3).join(' ')
-    if (head === 'docs page ls') {
+    if (head === 'page ls --project') {
       return {
         ok: true,
         data: { pages: [{ pageId: 1, title: 'CoDi', relPath: 'codi/index.md', depth: 0, children: [{ pageId: 2, title: 'Reglas', relPath: 'codi/reglas.md', depth: 1 }] }] },
@@ -183,7 +183,7 @@ test('sources list only the project repositories and the docs root', async (t) =
     }
     return { ok: false, errorCode: 'USAGE', errorMessage: 'unknown' }
   })
-  const context = await loadProjectContext('CoDi', null, bita)
+  const context = await loadProjectContext('CoDi', { inkwell: bita, bita })
   assert.equal(context.docsRoot, '/data/docs')
   assert.deepEqual(
     context.pages.map((page) => page.pageId),

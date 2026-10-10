@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import type { BitaCalling, BitaResponse } from '../src/bita/client.ts'
+import type { ToolCalling, ToolResponse } from '../src/bita/client.ts'
 import { saveMeeting, type Meeting } from '../src/core/meeting.ts'
 
 export function tempDir(t: { after: (fn: () => void) => void }, prefix = 'recap-test-'): string {
@@ -27,15 +27,15 @@ export function meetingDir(t: { after: (fn: () => void) => void }, overrides: Pa
   return { dir, meeting: value }
 }
 
-export class FakeBita implements BitaCalling {
+export class FakeTool implements ToolCalling {
   calls: string[][] = []
-  readonly handler: (args: string[]) => BitaResponse
+  readonly handler: (args: string[]) => ToolResponse
 
-  constructor(handler: (args: string[]) => BitaResponse) {
+  constructor(handler: (args: string[]) => ToolResponse) {
     this.handler = handler
   }
 
-  async invoke(args: readonly string[]): Promise<BitaResponse> {
+  async invoke(args: readonly string[]): Promise<ToolResponse> {
     this.calls.push([...args])
     return this.handler([...args])
   }
@@ -58,14 +58,13 @@ export function sandboxEnv(dir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.P
     RECAP_STATE_DIR: path.join(dir, 'state'),
     RECAP_DATA_DIR: path.join(dir, 'data'),
     RECAP_APP: path.join(dir, 'NoRecap.app'),
-    RECAP_NO_INKWELL: '1',
     ...extra,
   }
 }
 
 export function useSandbox(dir: string): void {
   const env = sandboxEnv(dir)
-  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'KIT_REGISTRY_DIR', 'RECAP_ROOT', 'RECAP_CONFIG_PATH', 'RECAP_STATE_DIR', 'RECAP_DATA_DIR', 'RECAP_APP', 'RECAP_NO_INKWELL']) {
+  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'KIT_REGISTRY_DIR', 'RECAP_ROOT', 'RECAP_CONFIG_PATH', 'RECAP_STATE_DIR', 'RECAP_DATA_DIR', 'RECAP_APP']) {
     process.env[key] = env[key]
   }
 }

@@ -1,4 +1,4 @@
-Vas a cerrar en bita el registro de una reunión ya transcrita y resumida. Con la minuta y la transcripción de abajo, decide cómo queda documentada.
+Vas a cerrar el registro de una reunión ya transcrita y resumida. Con la minuta y la transcripción de abajo, decide cómo queda documentada.
 
 - Título actual del contador: «{{currentTitle}}»
 - Proyecto actual del contador: {{currentProject}}

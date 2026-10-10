@@ -5,7 +5,7 @@ import Foundation
 
 package enum CaptureTool {
     package static let name = "recap-capture"
-    package static let version = "0.9.1"
+    package static let version = "0.10.0"
     package static let envelope = 1
     package static let capabilities = ["capture.remote", "capture.in-person", "capture.live-chunks"]
     package static let subcommands: [ParsableCommand.Type] = [

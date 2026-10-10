@@ -5,8 +5,10 @@ allowed-tools: Bash(recap proposals:*), Bash(recap show:*), Read, Write
 ---
 
 Al cerrar una reunión ligada a bita, recap deja los cambios explícitos a
-páginas existentes como propuestas en la rama `proposal/meeting-<entrada>` de
-los docs. Nada llega a `main` sin aceptarse.
+páginas existentes de inkwell como propuestas en la rama
+`proposal/meeting-<entrada>` de sus docs. Nada llega a `main` sin aceptarse.
+Aceptar o rechazar necesita inkwell instalado (`npm i -g @kikedealba/inkwell &&
+inkwell setup`).
 
 1. La reunión es `$ARGUMENTS`, o `last` si viene vacío. Lista sus propuestas:
 
