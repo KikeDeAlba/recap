@@ -4,11 +4,12 @@ import { dayString, parseDate } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { extractBetween, isRecord, swiftDefault } from '../core/json.ts'
 import { durationSeconds, emptyWrapup, updateMeeting, type BitaEntrySnapshot, type Meeting } from '../core/meeting.ts'
-import { fold, formatDuration, prefix, replaceAll, suffix, trimmed } from '../core/text.ts'
+import { fold, formatDuration, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { resultText, runSummaryClaude } from '../pipeline/claude.ts'
 import { loadResource } from '../pipeline/resources.ts'
-import { callBita, docsClient, meetingTarget, requireBita, type BitaCalling, type BitaClient } from './client.ts'
+import { INKWELL_CAPABILITIES, INKWELL_HINT, callBita, callInkwell, inkwellForStage, lookupInkwell, meetingTarget, requireBita, type ToolCalling } from './client.ts'
+import { entryPages } from '../live/context.ts'
 
 export interface WrapupItem {
   kind: string
@@ -134,18 +135,32 @@ export function noteBody(summary: string, meeting: Meeting, dir: string): string
   return `${lines.join('\n')}\n`
 }
 
-export async function saveMinutes(meeting: Meeting, dir: string, config: Config, client?: BitaClient): Promise<void> {
+export interface MinutesResult {
+  saved: boolean
+  reason?: string | undefined
+}
+
+export async function saveMinutes(meeting: Meeting, dir: string, notes?: ToolCalling | null, log?: (line: string) => void): Promise<MinutesResult> {
   const entryId = meeting.bitaEntryId
-  if (entryId === undefined) return
-  const bita = client ?? (await requireBita(config, meetingTarget(meeting)))
+  if (entryId === undefined) return { saved: false, reason: 'the meeting has no bita entry' }
   const summary = readText(path.join(dir, 'summary.md'))
-  if (summary === null) throw new RecapError('NO_SUMMARY', `"${meeting.title}" has no summary to send to bita`)
-  const note = path.join(dir, 'bita-note.md')
+  if (summary === null) throw new RecapError('NO_SUMMARY', `"${meeting.title}" has no summary to save in the entry note`)
+  const note = path.join(dir, 'entry-note.md')
   writeAtomic(note, noteBody(summary, meeting, dir))
-  const result = await bita.run(['note', 'save', String(entryId), '--note-md', note, '--section', NOTE_SECTION, '--json', ...bita.targetArgs()])
-  if (result.status !== 0) {
-    throw new RecapError('BITA_FAILED', `bita note save ${entryId} failed: ${suffix(trimmed(result.stdout + result.stderr), 400)}`)
+  let client = notes
+  let reason = 'inkwell is not installed'
+  if (client === undefined) {
+    const found = await lookupInkwell(INKWELL_CAPABILITIES.notes)
+    client = found.client
+    if (found.reason !== undefined) reason = found.reason
   }
+  if (!client) {
+    log?.(`minutes: not saved in the note of entry #${entryId}, ${reason}; they stay in ${dir} (${INKWELL_HINT})`)
+    return { saved: false, reason }
+  }
+  await callInkwell(client, ['note', 'save', String(entryId), '--section', NOTE_SECTION, '--md', note])
+  log?.(`minutes: saved in the note of entry #${entryId}`)
+  return { saved: true }
 }
 
 export function meetingDay(meeting: Meeting): string {
@@ -162,17 +177,19 @@ export function encodeWrapupPlan(plan: WrapupPlan): string {
   })
 }
 
-async function pageText(docs: BitaCalling, pageId: number): Promise<string | null> {
-  const page = await callBita(docs, ['docs', 'page', 'show', String(pageId)])
+async function pageText(docs: ToolCalling, pageId: number): Promise<string | null> {
+  const page = await callInkwell(docs, ['page', 'show', String(pageId)])
   const doc = isRecord(page) && isRecord(page['doc']) ? page['doc'] : undefined
   const file = typeof doc?.['path'] === 'string' ? doc['path'] : undefined
   return file ? readText(file) : null
 }
 
 export interface WrapupDependencies {
-  bita: BitaClient
-  docs: BitaCalling
+  bita: ToolCalling
+  docs: ToolCalling
+  notes?: ToolCalling | null | undefined
   claude: (prompt: string) => Promise<string>
+  log?: ((line: string) => void) | undefined
 }
 
 export async function planWrapup(
@@ -202,11 +219,11 @@ export async function planWrapup(
   return parseWrapup(await claude(prompt))
 }
 
-export async function runWrapup(meeting: Meeting, dir: string, config: Config, dependencies?: WrapupDependencies): Promise<void> {
+export async function runWrapup(meeting: Meeting, dir: string, config: Config, dependencies?: Partial<WrapupDependencies>): Promise<void> {
   const entryId = meeting.bitaEntryId
   if (entryId === undefined) return
+  const docs = dependencies?.docs ?? (await inkwellForStage(INKWELL_CAPABILITIES.wrapup))
   const bita = dependencies?.bita ?? (await requireBita(config, meetingTarget(meeting)))
-  const docs = dependencies?.docs ?? (await docsClient(config, meetingTarget(meeting))) ?? bita
   const claude = dependencies?.claude ?? (async (prompt: string) => resultText(await runSummaryClaude(prompt, dir, config)))
   const snapshot = meeting.bitaEntry ?? { title: meeting.title, pageIds: [] }
   const wrapup = { ...emptyWrapup(), ...(meeting.wrapup ?? {}) }
@@ -216,7 +233,7 @@ export async function runWrapup(meeting: Meeting, dir: string, config: Config, d
     .filter(isRecord)
     .filter((project) => project['active'] !== false)
     .flatMap((project) => (typeof project['name'] === 'string' ? [project['name']] : []))
-  const existingPageId = wrapup.pageId ?? snapshot.pageIds[0]
+  const existingPageId = wrapup.pageId ?? (await entryPages(docs, entryId))[0]?.pageId
   const existingPage = existingPageId === undefined ? null : await pageText(docs, existingPageId)
 
   const plan = await planWrapup(meeting, dir, snapshot, projects, existingPage, claude)
@@ -235,20 +252,20 @@ export async function runWrapup(meeting: Meeting, dir: string, config: Config, d
   wrapup.project = choice.apply ?? snapshot.projectName
   wrapup.projectResolved = choice.resolved
 
-  const pageFile = path.join(dir, 'bita-page.md')
+  const pageFile = path.join(dir, 'wrapup-page.md')
   if (existingPageId !== undefined) {
     writeAtomic(pageFile, demoteHeadings(plan.pageMarkdown))
-    await callBita(docs, ['docs', 'page', 'write', String(existingPageId), '--md', pageFile, '--section', `Reunión ${meetingDay(meeting)}`])
+    await callInkwell(docs, ['page', 'write', String(existingPageId), '--md', pageFile, '--section', `Reunión ${meetingDay(meeting)}`])
     wrapup.pageId = existingPageId
   } else {
     writeAtomic(pageFile, plan.pageMarkdown)
-    const args = ['docs', 'page', 'new', plan.pageTitle, '--from-entry', String(entryId)]
+    const args = ['page', 'new', plan.pageTitle, '--from-entry', String(entryId)]
     if (wrapup.project) args.push('--project', wrapup.project)
-    const created = await callBita(docs, args)
+    const created = await callInkwell(docs, args)
     const page = isRecord(created) && isRecord(created['page']) ? created['page'] : undefined
     const pageId = typeof page?.['pageId'] === 'number' ? page['pageId'] : undefined
-    if (pageId === undefined) throw new RecapError('BITA_FAILED', 'bita docs page new did not return the page id')
-    await callBita(docs, ['docs', 'page', 'write', String(pageId), '--md', pageFile])
+    if (pageId === undefined) throw new RecapError('INKWELL_FAILED', 'inkwell page new did not return the page id')
+    await callInkwell(docs, ['page', 'write', String(pageId), '--md', pageFile])
     wrapup.pageId = pageId
     wrapup.pageCreated = true
   }
@@ -260,18 +277,18 @@ export async function runWrapup(meeting: Meeting, dir: string, config: Config, d
     if (wrapup.backlogKeys[item.title] !== undefined) continue
     const args = ['backlog', 'add', '--kind', item.kind, '--title', item.title, '--page', String(wrapup.pageId ?? 0)]
     if (item.body) {
-      const bodyFile = path.join(dir, 'bita-backlog-item.md')
+      const bodyFile = path.join(dir, 'wrapup-backlog-item.md')
       writeAtomic(bodyFile, item.body)
       args.push('--md', bodyFile)
     }
-    const added = await callBita(docs, args)
+    const added = await callInkwell(docs, args)
     wrapup.backlogKeys[item.title] = isRecord(added) && typeof added['key'] === 'string' ? added['key'] : '?'
     updateMeeting(dir, (current) => {
       current.wrapup = { ...wrapup, backlogKeys: { ...wrapup.backlogKeys } }
     })
   }
 
-  await saveMinutes(meeting, dir, config, bita)
+  await saveMinutes(meeting, dir, dependencies?.notes, dependencies?.log)
   updateMeeting(dir, (current) => {
     current.wrapup = { ...wrapup, backlogKeys: { ...wrapup.backlogKeys } }
   })

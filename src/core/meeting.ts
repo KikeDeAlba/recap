@@ -49,6 +49,8 @@ export interface StageState {
   status: string
   updatedAt: string
   error?: string | undefined
+  reason?: string | undefined
+  hint?: string | undefined
 }
 
 export interface Meeting {

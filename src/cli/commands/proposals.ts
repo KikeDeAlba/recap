@@ -3,7 +3,7 @@ import { expandTilde } from '../../core/paths.ts'
 import { readText } from '../../core/fsutil.ts'
 import { MeetingStore, resolveTarget, type Located } from '../../core/meeting.ts'
 import { RecapError, usageError } from '../../errors.ts'
-import { docsClient, meetingTarget, type BitaCalling } from '../../bita/client.ts'
+import { INKWELL_CAPABILITIES, INKWELL_HINT, findInkwell, requireInkwell, type ToolCalling } from '../../bita/client.ts'
 import { ProposalReview, loadProposals, proposalJson, type Proposal } from '../../bita/proposals.ts'
 import { parseArgs, type Args } from '../args.ts'
 import { output } from '../output.ts'
@@ -24,13 +24,12 @@ function number(args: Args): number {
   return Number(raw)
 }
 
-const noBita: BitaCalling = { invoke: async () => ({ ok: false, errorCode: 'DEPENDENCY_MISSING', errorMessage: 'bita not found' }) }
+const noInkwell: ToolCalling = { invoke: async () => ({ ok: false, errorCode: 'DEPENDENCY_MISSING', errorMessage: `inkwell not found (${INKWELL_HINT})` }) }
 
 async function review(args: Args, config: Config, required: boolean): Promise<ProposalReview> {
   const found = meeting(args, config)
-  const docs = await docsClient(config, meetingTarget(found.meeting))
-  if (!docs && required) throw new RecapError('DEPENDENCY_MISSING', 'bita not found. Install it with `npm install -g @kikedealba/bita`')
-  return new ProposalReview(found.dir, docs ?? noBita)
+  const inkwell = required ? await requireInkwell(INKWELL_CAPABILITIES.proposals, 'Reviewing proposals') : await findInkwell(INKWELL_CAPABILITIES.proposals)
+  return new ProposalReview(found.dir, inkwell ?? noInkwell)
 }
 
 export async function proposalsCommand(argv: string[]): Promise<number> {

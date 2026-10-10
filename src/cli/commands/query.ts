@@ -10,6 +10,7 @@ import { processInBackground } from '../../core/self.ts'
 import { formatDuration, padEnd } from '../../core/text.ts'
 import { RecapError, usageError } from '../../errors.ts'
 import { saveMinutes } from '../../bita/wrapup.ts'
+import { INKWELL_HINT } from '../../bita/client.ts'
 import { Pipeline } from '../../pipeline/pipeline.ts'
 import { STAGES, allStagesSatisfied, isStage, type Stage } from '../../pipeline/stages.ts'
 import { saveSummary, summaryPromptFor } from '../../pipeline/summary.ts'
@@ -104,12 +105,16 @@ export async function saveSummaryCommand(argv: string[]): Promise<number> {
       throw new RecapError('FILE_UNREADABLE', `Cannot read ${file}: ${(error as Error).message}`)
     }
     saveSummary(body, meeting, dir)
-    if (meeting.bitaEntryId !== undefined) await saveMinutes(meeting, dir, config)
+    let minutes: string | null = null
+    if (meeting.bitaEntryId !== undefined) {
+      const result = await saveMinutes(meeting, dir)
+      minutes = result.saved ? `Minutes saved in the note of entry #${meeting.bitaEntryId}` : `Minutes not saved in the entry note: ${result.reason ?? 'no reason given'} (${INKWELL_HINT})`
+    }
     const updated = updateMeeting(dir, (current) => {
       current.stages['summarize'] = { status: 'done', updatedAt: isoNow() }
       if (allStagesSatisfied({ ...meeting, stages: current.stages })) current.status = 'processed'
     })
-    return { data: meetingRecord(updated, dir), text: path.join(dir, 'summary.md') }
+    return { data: meetingRecord(updated, dir), text: minutes === null ? path.join(dir, 'summary.md') : `${path.join(dir, 'summary.md')}\n${minutes}` }
   })
 }
 
@@ -127,6 +132,9 @@ export function describeWait(meeting: Meeting, dir: string): string {
   const lines = [`${meeting.title} [${meeting.status}] ${formatDuration(durationSeconds(meeting))}`]
   const failed = failedStage(meeting)
   if (failed) lines.push(`Failed at ${failed[0]}: ${failed[1].error ?? 'no reason given'}`)
+  for (const [stage, state] of Object.entries(meeting.stages)) {
+    if (state.status === 'skipped' && state.reason !== undefined) lines.push(`Skipped ${stage}: ${state.reason}${state.hint !== undefined ? ` (${state.hint})` : ''}`)
+  }
   const wrapup = meeting.wrapup
   if (wrapup) {
     lines.push(`Title   : ${wrapup.title ?? meeting.title}`)

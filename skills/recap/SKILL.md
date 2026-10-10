@@ -74,37 +74,57 @@ Errores típicos y qué hacer:
 | `DEPENDENCY_MISSING`, `MODEL_MISSING` | Falta ffmpeg, whisper-cli, claude o el modelo | `recap setup --install-deps` |
 | `CAPTURE_UNAVAILABLE` | No hay grabador en este equipo (Windows, Linux, o falta Recap.app) | Graba con otra app y usa `recap import <archivo>`; en mac, `recap setup` |
 
-## Con bita
+## Con bita e inkwell
+
+Cada herramienta hace una sola cosa:
+
+- **bita** lleva el tiempo (cronómetros). recap solo le pide `projects`,
+  `project repo ls`, `entries get` y `amend` (título y proyecto).
+- **inkwell** guarda la documentación: páginas, backlog, propuestas, historial
+  y la nota de cada entrada de bita (`inkwell note …`).
+- **tally** vuelca a Jira el tiempo de bita (`tally summary --pending`); recap
+  no toca Jira.
 
 Si `recap status --json` trae `data.bitaLinked: true` (recap está suscrito a
 los eventos de bita desde `recap setup`), **arranca y para las reuniones desde
 bita**, no desde recap: así el tiempo queda medido y la grabación sigue al
-contador.
+cronómetro.
 
 ```sh
 bita start "<título>" --kind remote-meeting
 bita start "<título>" --kind in-person-meeting
-bita stop <id> --json                 # sin --did y sin escribir la página
+bita stop <id> --json                 # sin escribir la página: eso lo hace recap
 recap wait --bita-entry <id> --json   # espera a que todo quede listo
 ```
+
+Cambiar el título o el proyecto del cronómetro mientras se graba (`bita amend`)
+no corta ni duplica la grabación: recap solo actualiza los datos de la reunión.
+Solo un cambio de tipo (`--kind`) que cruce la línea de reunión la arranca o la
+detiene.
 
 Al parar, recap hace todo lo demás sin que nadie lo pida:
 
 - transcribe y escribe la minuta;
-- le pone al contador un título real, si el que tenía era genérico;
-- le asigna el proyecto si no tenía y la conversación lo deja claro;
-- crea la página en ese proyecto, o agrega una sección a la que ya tenía, y la escribe;
-- pasa pendientes y preguntas abiertas al backlog;
-- deja la minuta en la sección «Reunión» de la entrada.
+- le pone al cronómetro un título real, si el que tenía era genérico (`bita amend`);
+- le asigna el proyecto si no tenía y la conversación lo deja claro (`bita amend`);
+- crea la página en inkwell, ligada a la entrada (`inkwell page new --from-entry`),
+  o agrega una sección a la que ya tenía (`inkwell page ls --entry`), y la escribe;
+- pasa pendientes y hallazgos al backlog de inkwell (`inkwell backlog add`);
+- deja la minuta en la sección «Reunión» de la nota de la entrada
+  (`inkwell note save <entrada> --section Reunión --md …`).
 
 El resultado está en `data.wrapup` de `recap wait`. Si `wrapup.projectResolved`
-es false, pregunta el proyecto y aplícalo con `bita amend`, y mueve la página y
-el backlog con inkwell si está instalado (`inkwell page move --project`,
-`inkwell backlog edit --project`) o, si no, con `bita docs page move --project`
-y `bita backlog edit --project`.
+es false, pregunta el proyecto, aplícalo con `bita amend <id> --project …` y
+mueve la página y el backlog con `inkwell page move --project` e
+`inkwell backlog edit --project`.
 
-Las páginas, las propuestas y el backlog se escriben con inkwell cuando está
-instalado y ya migró los documentos de bita; si no, con `bita docs`/`bita backlog`.
+**Sin inkwell** la reunión igual queda procesada: las etapas `proposals` y
+`wrapup` quedan en `skipped` con el motivo en `stages.<etapa>.reason` y la pista
+`npm i -g @kikedealba/inkwell && inkwell setup`; la minuta se queda en
+`summary.md` de la carpeta de la reunión. Si inkwell es viejo y no tiene la
+capacidad `docs.entry-notes`, se escribe la página y el backlog pero la minuta
+no pasa a la nota (queda anotado en `process.log`). Después de instalar o
+actualizar inkwell, `recap process <id> --from proposals` lo completa.
 
 ## En vivo
 
@@ -113,8 +133,9 @@ Mientras se graba, recap transcribe por tramos de 5 a 20 s en
 Sala y `system` Remotos). Es aproximada: la transcripción de después del stop
 (`transcript.md`) sigue siendo la fuente de verdad.
 
-Para responder una pregunta que hicieron en la reunión, con las páginas de bita
-y los repos del proyecto (`bita project repo ls`):
+Para responder una pregunta que hicieron en la reunión, con las páginas de
+inkwell y los repos del proyecto (`bita project repo ls`); sin inkwell responde
+solo con los repos:
 
 ```sh
 recap ask --active --json                              # la última pregunta de la transcripción
@@ -138,9 +159,10 @@ solo corre una respuesta a la vez y una manual detiene a la automática.
 
 ## Cambios propuestos a la documentación
 
-Si la reunión está ligada a bita, la etapa `proposals` (antes de `wrapup`)
-detecta los cambios explícitos y firmes a páginas que ya existen y los deja en
-la rama `proposal/meeting-<entrada>` de los docs, sin tocar `main`. Ideas,
+Si la reunión está ligada a bita e inkwell está instalado, la etapa `proposals`
+(antes de `wrapup`) detecta los cambios explícitos y firmes a páginas de inkwell
+que ya existen y los deja en la rama `proposal/meeting-<entrada>` de sus docs
+(`inkwell git propose`), sin tocar `main`. Ideas,
 dudas y lo que se corrigió después no entran.
 
 ```sh

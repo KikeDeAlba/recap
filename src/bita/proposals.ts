@@ -9,11 +9,11 @@ import { home } from '../core/paths.ts'
 import type { Meeting } from '../core/meeting.ts'
 import { fold, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError, errorMessage } from '../errors.ts'
-import { loadProjectContext, meetingProject, type PageRef, type ProjectContext } from '../live/context.ts'
+import { entryPages, loadProjectContext, meetingProject, type PageRef, type ProjectContext } from '../live/context.ts'
 import { resultText, runClaude } from '../pipeline/claude.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import type { Channel } from '../pipeline/transcript.ts'
-import { callBita, type BitaCalling } from './client.ts'
+import { callInkwell, type ToolCalling } from './client.ts'
 import { meetingDay } from './wrapup.ts'
 
 export interface ProposalQuote {
@@ -237,31 +237,31 @@ export function saveProposals(file: ProposalsFile, dir: string): void {
   )
 }
 
-export async function propose(bita: BitaCalling, branch: string, pageId: number, section: string | null, file: string, reason: string, entryId: number): Promise<string> {
-  const args = ['docs', 'propose', '--branch', branch, String(pageId), '--md', file]
+export async function propose(inkwell: ToolCalling, branch: string, pageId: number, section: string | null, file: string, reason: string, entryId: number): Promise<string> {
+  const args = ['git', 'propose', '--branch', branch, String(pageId), '--md', file]
   if (section !== null) args.push('--section', section)
   args.push('--reason', reason, '--source', `meeting:${entryId}`)
-  const data = await callBita(bita, args)
+  const data = await callInkwell(inkwell, args)
   const sha = isRecord(data) && typeof data['sha'] === 'string' ? data['sha'] : ''
-  if (sha.length === 0) throw new RecapError('BITA_FAILED', 'bita docs propose did not return the commit sha')
+  if (sha.length === 0) throw new RecapError('INKWELL_FAILED', 'inkwell git propose did not return the commit sha')
   return sha
 }
 
-export function ownPageId(meeting: Meeting): number | undefined {
-  return meeting.wrapup?.pageId ?? meeting.bitaEntry?.pageIds[0]
+export function ownPageId(meeting: Meeting, linked: readonly PageRef[]): number | undefined {
+  return meeting.wrapup?.pageId ?? linked[0]?.pageId
 }
 
 export type ClaudeAsk = (prompt: string, addDirs: string[]) => Promise<string>
 
 export class ProposalGenerator {
   readonly config: Config
-  readonly bita: BitaCalling
+  readonly inkwell: ToolCalling
   readonly log: (line: string) => void
   readonly claude: ClaudeAsk
 
-  constructor(config: Config, bita: BitaCalling, log: (line: string) => void, claude?: ClaudeAsk) {
+  constructor(config: Config, inkwell: ToolCalling, log: (line: string) => void, claude?: ClaudeAsk) {
     this.config = config
-    this.bita = bita
+    this.inkwell = inkwell
     this.log = log
     this.claude =
       claude ??
@@ -269,16 +269,14 @@ export class ProposalGenerator {
         resultText(await runClaude({ prompt, cwd: dirs[dirs.length - 1] ?? home(), config, tools: ['Read Grep Glob'], addDirs: dirs, model: config.summaryModel })))
   }
 
-  async candidates(meeting: Meeting, context: ProjectContext): Promise<PageRef[]> {
-    const own = ownPageId(meeting)
+  candidates(meeting: Meeting, context: ProjectContext, linked: readonly PageRef[]): PageRef[] {
+    const own = ownPageId(meeting, linked)
     const pages = [...context.pages]
     const known = new Set(pages.map((page) => page.pageId))
-    for (const pageId of meeting.bitaEntry?.pageIds ?? []) {
-      if (known.has(pageId) || pageId === own) continue
-      const response = await this.bita.invoke(['docs', 'page', 'show', String(pageId), '--no-markdown']).catch(() => null)
-      if (!response?.ok || !isRecord(response.data) || typeof response.data['title'] !== 'string') continue
-      pages.push({ pageId, title: response.data['title'], relPath: typeof response.data['relPath'] === 'string' ? response.data['relPath'] : '', depth: 0 })
-      known.add(pageId)
+    for (const page of linked) {
+      if (known.has(page.pageId) || page.pageId === own) continue
+      pages.push({ ...page, depth: 0 })
+      known.add(page.pageId)
     }
     return pages.filter((page) => page.pageId !== own)
   }
@@ -293,10 +291,11 @@ export class ProposalGenerator {
         this.log(`proposals: already reviewed, keeping ${existing.proposals.length}`)
         return existing
       }
-      if (existing.proposals.length > 0) await this.bita.invoke(['docs', 'branch', 'drop', branch]).catch(() => null)
+      if (existing.proposals.length > 0) await this.inkwell.invoke(['branch', 'drop', branch]).catch(() => null)
     }
-    const context = await loadProjectContext(await meetingProject(meeting, this.bita), meeting.bitaDocsRoot, this.bita)
-    const pages = await this.candidates(meeting, context)
+    const linked = await entryPages(this.inkwell, entryId)
+    const context = await loadProjectContext(await meetingProject(meeting, this.inkwell, linked), { inkwell: this.inkwell, bita: null })
+    const pages = this.candidates(meeting, context, linked)
     const file: ProposalsFile = { entryId, branch, generatedAt: isoNow(), branchDropped: false, proposals: [], discarded: [] }
     if (pages.length === 0 || context.docsRoot === null) {
       this.log('proposals: no candidate pages')
@@ -320,7 +319,7 @@ export class ProposalGenerator {
       const markdownFile = proposalStore.markdownFile(dir, n)
       writeAtomic(markdownFile, `${draft.markdown}\n`)
       try {
-        const sha = await propose(this.bita, branch, draft.pageId, draft.section, markdownFile, draft.title, entryId)
+        const sha = await propose(this.inkwell, branch, draft.pageId, draft.section, markdownFile, draft.title, entryId)
         file.proposals.push({
           n,
           pageId: draft.pageId,
@@ -368,11 +367,11 @@ export class ProposalGenerator {
 
 export class ProposalReview {
   readonly dir: string
-  readonly bita: BitaCalling
+  readonly inkwell: ToolCalling
 
-  constructor(dir: string, bita: BitaCalling) {
+  constructor(dir: string, inkwell: ToolCalling) {
     this.dir = dir
-    this.bita = bita
+    this.inkwell = inkwell
   }
 
   list(): Proposal[] {
@@ -388,7 +387,7 @@ export class ProposalReview {
   }
 
   async diff(proposal: Proposal): Promise<unknown> {
-    const response = await this.bita.invoke(['docs', 'branch', 'diff', proposal.branch, '--commit', proposal.sha]).catch(() => null)
+    const response = await this.inkwell.invoke(['branch', 'diff', proposal.branch, '--commit', proposal.sha]).catch(() => null)
     return response?.ok ? response.data : null
   }
 
@@ -408,7 +407,7 @@ export class ProposalReview {
     const index = file.proposals.findIndex((item) => item.n === proposal.n)
     if (index !== -1) file.proposals[index] = proposal
     if (!file.branchDropped && !file.proposals.some((item) => item.status === 'pending')) {
-      const response = await this.bita.invoke(['docs', 'branch', 'drop', file.branch]).catch(() => null)
+      const response = await this.inkwell.invoke(['branch', 'drop', file.branch]).catch(() => null)
       file.branchDropped = response?.ok === true
     }
     saveProposals(file, this.dir)
@@ -428,10 +427,10 @@ export class ProposalReview {
         if (path.resolve(editedMarkdown) !== path.resolve(target)) writeAtomic(target, text)
       }
       if (editedMarkdown !== undefined || file.branchDropped) {
-        proposal.sha = await propose(this.bita, proposal.branch, proposal.pageId, proposal.section, target, proposal.title, file.entryId)
+        proposal.sha = await propose(this.inkwell, proposal.branch, proposal.pageId, proposal.section, target, proposal.title, file.entryId)
         file.branchDropped = false
       }
-      const response = await this.bita.invoke(['docs', 'branch', 'apply', proposal.branch, '--commit', proposal.sha])
+      const response = await this.inkwell.invoke(['branch', 'apply', proposal.branch, '--commit', proposal.sha])
       if (response.ok) {
         proposal.status = 'accepted'
         const data = isRecord(response.data) ? response.data : {}
@@ -439,7 +438,7 @@ export class ProposalReview {
       } else if (response.errorCode === 'MERGE_CONFLICT') {
         proposal.status = 'stale'
       } else {
-        throw new RecapError('BITA_FAILED', `bita docs branch apply failed: ${response.errorMessage ?? 'no reason given'}`)
+        throw new RecapError('INKWELL_FAILED', `inkwell branch apply failed: ${response.errorMessage ?? 'no reason given'}`)
       }
       proposal.updatedAt = isoNow()
       await this.store(proposal, file)

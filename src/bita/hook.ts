@@ -15,6 +15,7 @@ export interface BitaHookEvent {
   databasePath?: string | undefined
   docsRoot?: string | undefined
   pageIds?: number[] | undefined
+  kindChanged: boolean
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -26,6 +27,8 @@ export function decodeHookEvent(text: string): BitaHookEvent {
   if (!isRecord(value) || typeof value['event'] !== 'string' || !isRecord(value['entry'])) throw new Error('the event has no event name or entry')
   const entry = value['entry']
   if (typeof entry['id'] !== 'number' || !Number.isInteger(entry['id']) || typeof entry['description'] !== 'string') throw new Error('the entry has no id or description')
+  const reportsEveryChange = 'previousTitle' in value || 'previousProjectId' in value
+  const kindChanged = !reportsEveryChange || ('previousKind' in value && (optionalString(value['previousKind']) ?? null) !== (optionalString(entry['kind']) ?? null))
   const pageIds = Array.isArray(value['pageIds']) ? value['pageIds'].filter((id): id is number => typeof id === 'number' && Number.isInteger(id)) : undefined
   return {
     event: value['event'],
@@ -40,6 +43,7 @@ export function decodeHookEvent(text: string): BitaHookEvent {
     databasePath: optionalString(value['databasePath']),
     docsRoot: optionalString(value['docsRoot']),
     pageIds,
+    kindChanged,
   }
 }
 
@@ -65,6 +69,7 @@ export type HookAction =
   | { type: 'processIfRecorded' }
   | { type: 'stopWithoutProcessing' }
   | { type: 'discard' }
+  | { type: 'refresh' }
   | { type: 'ignore'; reason: string }
 
 export function describeAction(action: HookAction): string {
@@ -90,6 +95,7 @@ export function planHook(event: BitaHookEvent, activeEntryId: number | undefined
     case 'cancel':
       return { type: 'discard' }
     case 'amend': {
+      if (!event.kindChanged) return { type: 'refresh' }
       const previous = previousMode(event)
       if (mode && previous === undefined) {
         if (event.entry.running === false) return { type: 'ignore', reason: `entry #${event.entry.id} already stopped` }

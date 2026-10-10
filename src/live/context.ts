@@ -3,13 +3,15 @@ import { isDirectory } from '../core/fsutil.ts'
 import { isRecord } from '../core/json.ts'
 import type { Meeting } from '../core/meeting.ts'
 import { trimmed } from '../core/text.ts'
-import type { BitaCalling } from '../bita/client.ts'
+import { BitaClient, INKWELL_CAPABILITIES, findInkwell, meetingTarget, type ToolCalling } from '../bita/client.ts'
+import type { Config } from '../core/config.ts'
 
 export interface PageRef {
   pageId: number
   title: string
   relPath: string
   depth: number
+  projectName?: string | undefined
 }
 
 export interface RepoRef {
@@ -47,6 +49,7 @@ export function parsePages(data: unknown): PageRef[] {
         title,
         relPath: typeof item['relPath'] === 'string' ? item['relPath'] : '',
         depth: typeof item['depth'] === 'number' && Number.isInteger(item['depth']) ? item['depth'] : depth,
+        ...(typeof item['projectName'] === 'string' ? { projectName: item['projectName'] } : {}),
       })
       if (Array.isArray(item['children'])) walk(item['children'], depth + 1)
     }
@@ -75,36 +78,64 @@ function metaRoot(meta: Record<string, unknown> | undefined): string | null {
   return typeof meta?.['root'] === 'string' ? meta['root'] : null
 }
 
-export async function loadProjectContext(project: string | null | undefined, docsRoot: string | null | undefined, bita: BitaCalling | null): Promise<ProjectContext> {
-  const context = emptyContext({ project: project && trimmed(project).length > 0 ? project : null, docsRoot: docsRoot ?? null })
-  if (!bita) return context
+export interface ContextSources {
+  inkwell: ToolCalling | null
+  bita: ToolCalling | null
+}
+
+export async function loadProjectContext(project: string | null | undefined, sources: ContextSources): Promise<ProjectContext> {
+  const context = emptyContext({ project: project && trimmed(project).length > 0 ? project : null })
+  const { inkwell, bita } = sources
   if (context.project) {
-    const pages = await bita.invoke(['docs', 'page', 'ls', '--project', context.project]).catch(() => null)
-    if (pages?.ok) {
-      context.pages = parsePages(pages.data)
-      context.docsRoot ??= metaRoot(pages.meta)
+    if (inkwell) {
+      const pages = await inkwell.invoke(['page', 'ls', '--project', context.project]).catch(() => null)
+      if (pages?.ok) {
+        context.pages = parsePages(pages.data)
+        context.docsRoot = metaRoot(pages.meta)
+      }
     }
-    const repos = await bita.invoke(['project', 'repo', 'ls', '--project', context.project]).catch(() => null)
-    if (repos?.ok) context.repos = parseRepos(repos.data)
+    if (bita) {
+      const repos = await bita.invoke(['project', 'repo', 'ls', '--project', context.project]).catch(() => null)
+      if (repos?.ok) context.repos = parseRepos(repos.data)
+    }
   }
-  if (context.docsRoot === null) {
-    const tree = await bita.invoke(['docs', 'tree']).catch(() => null)
+  if (context.docsRoot === null && inkwell) {
+    const tree = await inkwell.invoke(['tree']).catch(() => null)
     if (tree?.ok) context.docsRoot = metaRoot(tree.meta)
   }
   return context
+}
+
+export async function entryPages(inkwell: ToolCalling | null, entryId: number | undefined): Promise<PageRef[]> {
+  if (!inkwell || entryId === undefined) return []
+  const response = await inkwell.invoke(['page', 'ls', '--entry', String(entryId)]).catch(() => null)
+  return response?.ok ? parsePages(response.data) : []
 }
 
 export function meetingProjectName(meeting: Meeting): string | null {
   return meeting.bitaEntry?.projectName ?? meeting.wrapup?.project ?? null
 }
 
-export async function meetingProject(meeting: Meeting, bita: BitaCalling | null): Promise<string | null> {
+export async function meetingProject(meeting: Meeting, inkwell: ToolCalling | null, linked?: readonly PageRef[]): Promise<string | null> {
   const name = meetingProjectName(meeting)
   if (name && trimmed(name).length > 0) return name
-  const pageId = meeting.wrapup?.pageId ?? meeting.bitaEntry?.pageIds[0]
-  if (!bita || pageId === undefined) return null
-  const response = await bita.invoke(['docs', 'page', 'show', String(pageId), '--no-markdown']).catch(() => null)
-  if (!response?.ok || !isRecord(response.data)) return null
-  return typeof response.data['projectName'] === 'string' ? response.data['projectName'] : null
+  if (!inkwell) return null
+  const pageId = meeting.wrapup?.pageId
+  if (pageId !== undefined) {
+    const response = await inkwell.invoke(['page', 'show', String(pageId), '--no-markdown']).catch(() => null)
+    if (response?.ok && isRecord(response.data) && typeof response.data['projectName'] === 'string') return response.data['projectName']
+  }
+  const pages = linked ?? (await entryPages(inkwell, meeting.bitaEntryId))
+  return pages.find((page) => page.projectName !== undefined)?.projectName ?? null
 }
 
+export async function contextSources(config: Config, meeting: Meeting | null): Promise<ContextSources> {
+  const inkwell = await findInkwell(INKWELL_CAPABILITIES.pages)
+  const bita = await BitaClient.create(config, meeting ? meetingTarget(meeting) : {})
+  return { inkwell, bita }
+}
+
+export async function meetingContext(meeting: Meeting, config: Config): Promise<ProjectContext> {
+  const sources = await contextSources(config, meeting)
+  return loadProjectContext(await meetingProject(meeting, sources.inkwell), sources)
+}

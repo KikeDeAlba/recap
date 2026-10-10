@@ -64,6 +64,19 @@ export async function handleHookEvent(event: BitaHookEvent): Promise<number> {
         log(`discarded ${record.dir}`)
         break
       }
+      case 'refresh': {
+        const found = new MeetingStore(loadConfig()).find(event.entry.id)
+        if (!found) {
+          log(`nothing to do: no meeting for entry #${event.entry.id}`)
+          break
+        }
+        updateMeeting(found.dir, (meeting) => {
+          meeting.bitaEntry = { ...eventSnapshot(event), pageIds: meeting.bitaEntry?.pageIds ?? [] }
+          if (event.entry.description.trim().length > 0) meeting.title = event.entry.description
+        })
+        log(`updated ${found.dir}`)
+        break
+      }
       case 'ignore':
         log(`nothing to do: ${action.reason}`)
         break
