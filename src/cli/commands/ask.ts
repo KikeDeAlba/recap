@@ -5,10 +5,9 @@ import { MeetingStore, loadMeeting, resolveTarget, type Located } from '../../co
 import { signalNumber, signalTree } from '../../core/proc.ts'
 import { trimmed } from '../../core/text.ts'
 import { RecapError, asRecapError, usageError } from '../../errors.ts'
-import { BitaClient, docsClient, meetingTarget } from '../../bita/client.ts'
 import { runAsk } from '../../live/ask.ts'
 import { isValidAskId, makeAskId, performAsk, removeBoard } from '../../live/asking.ts'
-import { loadProjectContext, meetingProject, meetingProjectName } from '../../live/context.ts'
+import { contextSources, loadProjectContext, meetingContext, meetingProjectName } from '../../live/context.ts'
 import { jsonLine } from '../../live/files.ts'
 import { encodeAnswer, encodeAskEvent, type AskEvent } from '../../live/stream.ts'
 import type { Channel } from '../../pipeline/transcript.ts'
@@ -74,8 +73,7 @@ async function answer(args: Args, emit: (event: AskEvent) => void) {
   let childPid: number | null = null
   installCleanup(found.dir, id, () => childPid)
   return performAsk({ dir: found.dir, id, question, auto: args.has('auto'), now, questionMs, channel }, async () => {
-    const docs = await docsClient(config, meetingTarget(found.meeting))
-    const context = await loadProjectContext(await meetingProject(found.meeting, docs), found.meeting.bitaDocsRoot, docs)
+    const context = await meetingContext(found.meeting, config)
     return runAsk(
       config,
       { meeting: found.meeting, dir: found.dir, question, windowSeconds: args.int('window') ?? 180, now, auto: args.has('auto'), questionMs, channel, askId: id },
@@ -108,9 +106,9 @@ export async function askCommand(argv: string[]): Promise<number> {
     if (args.has('sources')) {
       const config = loadConfig()
       const found = args.has('active') || args.value('meeting') !== undefined || args.value('bita-entry') !== undefined ? target(args, config) : null
-      const docs = found ? await docsClient(config, meetingTarget(found.meeting)) : await docsClient(config, {})
+      const sources = await contextSources(config, found?.meeting ?? null)
       const name = args.value('project') ?? (found ? meetingProjectName(found.meeting) : null)
-      const context = await loadProjectContext(name, found?.meeting.bitaDocsRoot, docs ?? (await BitaClient.create(config, {})))
+      const context = await loadProjectContext(name, sources)
       const lines = [`Project: ${context.project ?? '(none)'}`, `Docs: ${context.docsRoot ?? '(unknown)'}`, ...context.repos.map((repo) => `Repo: ${repo.slug} ${repo.path}${repo.exists ? '' : ' (missing)'}`)]
       return { data: { project: context.project ?? undefined, docsRoot: context.docsRoot ?? undefined, repos: context.repos }, text: lines.join('\n') }
     }

@@ -10,7 +10,7 @@ import { suffix, trimmed } from '../core/text.ts'
 import { locateTool, toolEnvironment } from '../core/tools.ts'
 import { RecapError, errorMessage } from '../errors.ts'
 
-export interface BitaResponse {
+export interface ToolResponse {
   ok: boolean
   data?: unknown
   meta?: Record<string, unknown> | undefined
@@ -18,11 +18,11 @@ export interface BitaResponse {
   errorMessage?: string | undefined
 }
 
-export interface BitaCalling {
-  invoke(args: readonly string[]): Promise<BitaResponse>
+export interface ToolCalling {
+  invoke(args: readonly string[]): Promise<ToolResponse>
 }
 
-export function parseResponse(stdout: string, stderr: string, status: number): BitaResponse {
+export function parseResponse(stdout: string, stderr: string, status: number): ToolResponse {
   const envelope = parseEnvelope(stdout) as Record<string, unknown> | null
   const error = isRecord(envelope?.['error']) ? envelope['error'] : undefined
   const ok = status === 0 && envelope?.['ok'] === true
@@ -35,7 +35,7 @@ export function parseResponse(stdout: string, stderr: string, status: number): B
   }
 }
 
-export async function callBita(bita: BitaCalling, args: readonly string[]): Promise<unknown> {
+export async function callBita(bita: ToolCalling, args: readonly string[]): Promise<unknown> {
   const response = await bita.invoke(args)
   if (!response.ok) throw new RecapError('BITA_FAILED', `bita ${args.slice(0, 3).join(' ')} failed: ${response.errorMessage ?? 'no reason given'}`)
   return response.data
@@ -54,7 +54,7 @@ export async function bitaCommand(config: Config): Promise<string[] | null> {
   return located ? [located] : null
 }
 
-export class BitaClient implements BitaCalling {
+export class BitaClient implements ToolCalling {
   readonly command: string[]
   readonly config: Config
   readonly target: BitaTarget
@@ -73,7 +73,6 @@ export class BitaClient implements BitaCalling {
   targetArgs(): string[] {
     const args: string[] = []
     if (this.target.databasePath) args.push('--db-path', this.target.databasePath)
-    if (this.target.docsRoot) args.push('--docs-dir', this.target.docsRoot)
     return args
   }
 
@@ -84,50 +83,68 @@ export class BitaClient implements BitaCalling {
     return exec(executable, [...prefix, ...args], { env, cwd: neutralCwd() })
   }
 
-  async invoke(args: readonly string[]): Promise<BitaResponse> {
+  async invoke(args: readonly string[]): Promise<ToolResponse> {
     const result = await this.run([...args, '--json', ...this.targetArgs()])
     return parseResponse(result.stdout, result.stderr, result.status)
   }
 }
 
-export function inkwellArguments(args: readonly string[]): string[] | null {
-  if (args[0] === 'backlog') return [...args]
-  if (args[0] !== 'docs') return null
-  if (args[1] === 'propose') return ['git', 'propose', ...args.slice(2)]
-  return args.slice(1)
+export const INKWELL_HINT = 'npm i -g @kikedealba/inkwell && inkwell setup'
+
+export const INKWELL_CAPABILITIES = {
+  pages: ['docs.page.read'],
+  wrapup: ['docs.page.read', 'docs.page.write', 'docs.backlog'],
+  proposals: ['docs.page.read', 'docs.propose'],
+  notes: ['docs.entry-notes'],
+} as const
+
+export type InkwellLookup = { client: InkwellClient; reason?: undefined } | { client: null; reason: string }
+
+export async function lookupInkwell(capabilities: readonly string[] = []): Promise<InkwellLookup> {
+  if (process.env['RECAP_NO_INKWELL'] === '1') return { client: null, reason: 'inkwell is turned off (RECAP_NO_INKWELL=1)' }
+  const tool = await findTool('inkwell').catch(() => null)
+  if (!tool) return { client: null, reason: 'inkwell is not installed' }
+  const missing = capabilities.filter((capability) => !tool.manifest.capabilities.includes(capability))
+  if (missing.length > 0) return { client: null, reason: `inkwell ${tool.manifest.version} lacks ${missing.join(', ')}` }
+  return { client: new InkwellClient(tool) }
 }
 
-let inkwellCache: Promise<FoundTool | null> | null = null
-
-export function resetInkwellCache(): void {
-  inkwellCache = null
+export async function findInkwell(capabilities: readonly string[] = []): Promise<InkwellClient | null> {
+  return (await lookupInkwell(capabilities)).client
 }
 
-async function discoverInkwell(): Promise<FoundTool | null> {
-  if (process.env['RECAP_NO_INKWELL'] === '1') return null
-  const tool = await findTool('inkwell', { capability: 'docs.page.write' }).catch(() => null)
-  if (!tool) return null
-  try {
-    const { envelope } = await invokeTool<{ migrated?: boolean }>(tool, ['migrate', 'status'], { env: { ...process.env, ...QUIET_ENV }, timeoutMs: 20_000 })
-    return envelope.ok && envelope.data?.migrated === true ? tool : null
-  } catch {
-    return null
+export async function requireInkwell(capabilities: readonly string[], purpose: string): Promise<InkwellClient> {
+  const found = await lookupInkwell(capabilities)
+  if (found.client) return found.client
+  throw new RecapError('DEPENDENCY_MISSING', `${purpose} needs inkwell: ${found.reason}`, { hint: INKWELL_HINT })
+}
+
+export class StageSkipped extends RecapError {
+  constructor(message: string, hint?: string) {
+    super('STAGE_SKIPPED', message, hint === undefined ? {} : { hint })
   }
 }
 
-export function findInkwell(): Promise<FoundTool | null> {
-  inkwellCache ??= discoverInkwell()
-  return inkwellCache
+export async function inkwellForStage(capabilities: readonly string[]): Promise<InkwellClient> {
+  const found = await lookupInkwell(capabilities)
+  if (found.client) return found.client
+  throw new StageSkipped(found.reason, INKWELL_HINT)
 }
 
-export class InkwellClient implements BitaCalling {
+export async function callInkwell(inkwell: ToolCalling, args: readonly string[]): Promise<unknown> {
+  const response = await inkwell.invoke(args)
+  if (!response.ok) throw new RecapError('INKWELL_FAILED', `inkwell ${args.slice(0, 2).join(' ')} failed: ${response.errorMessage ?? 'no reason given'}`)
+  return response.data
+}
+
+export class InkwellClient implements ToolCalling {
   readonly tool: FoundTool
 
   constructor(tool: FoundTool) {
     this.tool = tool
   }
 
-  async invoke(args: readonly string[]): Promise<BitaResponse> {
+  async invoke(args: readonly string[]): Promise<ToolResponse> {
     try {
       const { envelope } = await invokeTool(this.tool, args, { env: { ...process.env, ...QUIET_ENV }, cwd: neutralCwd(), timeoutMs: 300_000 })
       return {
@@ -143,32 +160,8 @@ export class InkwellClient implements BitaCalling {
   }
 }
 
-export class DocsRouter implements BitaCalling {
-  readonly bita: BitaCalling | null
-  readonly inkwell: BitaCalling | null
-
-  constructor(bita: BitaCalling | null, inkwell: BitaCalling | null) {
-    this.bita = bita
-    this.inkwell = inkwell
-  }
-
-  async invoke(args: readonly string[]): Promise<BitaResponse> {
-    const mapped = this.inkwell ? inkwellArguments(args) : null
-    if (mapped && this.inkwell) return this.inkwell.invoke(mapped)
-    if (this.bita) return this.bita.invoke(args)
-    return { ok: false, errorCode: 'DEPENDENCY_MISSING', errorMessage: 'bita not found' }
-  }
-}
-
 export function meetingTarget(meeting: Meeting): BitaTarget {
   return { databasePath: meeting.bitaDatabasePath, docsRoot: meeting.bitaDocsRoot }
-}
-
-export async function docsClient(config: Config, target: BitaTarget): Promise<DocsRouter | null> {
-  const bita = await BitaClient.create(config, target)
-  const inkwell = await findInkwell()
-  if (!bita && !inkwell) return null
-  return new DocsRouter(bita, inkwell ? new InkwellClient(inkwell) : null)
 }
 
 export async function requireBita(config: Config, target: BitaTarget): Promise<BitaClient> {

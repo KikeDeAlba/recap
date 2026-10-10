@@ -12,7 +12,7 @@ import { exec } from '../core/proc.ts'
 import { suffix, trimmed } from '../core/text.ts'
 import { requireTool } from '../core/tools.ts'
 import { RecapError, errorMessage } from '../errors.ts'
-import { docsClient, meetingTarget, requireBita } from '../bita/client.ts'
+import { INKWELL_CAPABILITIES, StageSkipped, inkwellForStage } from '../bita/client.ts'
 import { ProposalGenerator } from '../bita/proposals.ts'
 import { runWrapup } from '../bita/wrapup.ts'
 import { runSummaryClaude } from './claude.ts'
@@ -82,9 +82,9 @@ export class Pipeline {
     return recordingPath(this.dir, meeting.mode)
   }
 
-  private setStage(stage: Stage, status: string, error?: string, extra?: (meeting: Meeting) => void): Meeting {
+  private setStage(stage: Stage, status: string, error?: string, extra?: (meeting: Meeting) => void, details: { reason?: string; hint?: string } = {}): Meeting {
     return updateMeeting(this.dir, (current) => {
-      current.stages[stage] = { status, updatedAt: isoNow(), ...(error !== undefined ? { error } : {}) }
+      current.stages[stage] = { status, updatedAt: isoNow(), ...(error !== undefined ? { error } : {}), ...details }
       extra?.(current)
     })
   }
@@ -130,6 +130,11 @@ export class Pipeline {
           this.log(`${stage}: done in ${Math.trunc((Date.now() - began) / 1000)}s`)
         } catch (error) {
           const message = error instanceof RecapError ? error.message : errorMessage(error)
+          if (error instanceof StageSkipped) {
+            meeting = this.setStage(stage, 'skipped', undefined, undefined, { reason: message, ...(error.hint !== undefined ? { hint: error.hint } : {}) })
+            this.log(`${stage}: skipped, ${message}${error.hint !== undefined ? ` (${error.hint})` : ''}`)
+            continue
+          }
           if (stageIsOptional(stage)) {
             meeting = this.setStage(stage, 'failed', message)
             this.log(`${stage}: failed, continuing: ${message}`)
@@ -164,7 +169,7 @@ export class Pipeline {
       case 'proposals':
         return this.proposals(meeting)
       case 'wrapup':
-        return runWrapup(meeting, this.dir, this.config)
+        return runWrapup(meeting, this.dir, this.config, { log: this.log })
     }
   }
 
@@ -265,9 +270,8 @@ export class Pipeline {
   }
 
   async proposals(meeting: Meeting): Promise<void> {
-    const target = meetingTarget(meeting)
-    const docs = (await docsClient(this.config, target)) ?? (await requireBita(this.config, target))
-    await new ProposalGenerator(this.config, docs, this.log).run(meeting, this.dir)
+    const inkwell = await inkwellForStage(INKWELL_CAPABILITIES.proposals)
+    await new ProposalGenerator(this.config, inkwell, this.log).run(meeting, this.dir)
   }
 }
 

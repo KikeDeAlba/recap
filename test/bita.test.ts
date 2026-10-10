@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DocsRouter, inkwellArguments } from '../src/bita/client.ts'
 import { decodeHookEvent, eventSnapshot, eventTarget, planHook } from '../src/bita/hook.ts'
 import { chooseProject, demoteHeadings, isGenericTitle, noteBody, parseWrapup } from '../src/bita/wrapup.ts'
 import { isSettled } from '../src/cli/commands/query.ts'
 import { legacyHookIndexes } from '../src/setup/legacy.ts'
 import { RecapError } from '../src/errors.ts'
-import { FakeBita, meeting } from './helpers.ts'
+import { meeting } from './helpers.ts'
 
 function event(name: string, options: { kind?: string | null; previous?: string; running?: boolean } = {}) {
   const entry: Record<string, unknown> = { id: 7, description: 'Daily', running: options.running ?? true }
@@ -113,18 +112,17 @@ test('old bita hooks pointing at recap are found by their 1-based index', () => 
   assert.deepEqual(legacyHookIndexes(null), [])
 })
 
-test('docs calls go to inkwell without the docs prefix and the rest to bita', async () => {
-  assert.deepEqual(inkwellArguments(['docs', 'page', 'show', '3']), ['page', 'show', '3'])
-  assert.deepEqual(inkwellArguments(['docs', 'propose', '--branch', 'b', '3']), ['git', 'propose', '--branch', 'b', '3'])
-  assert.deepEqual(inkwellArguments(['docs', 'branch', 'apply', 'b']), ['branch', 'apply', 'b'])
-  assert.deepEqual(inkwellArguments(['backlog', 'add', '--kind', 'pending']), ['backlog', 'add', '--kind', 'pending'])
-  assert.equal(inkwellArguments(['project', 'repo', 'ls']), null)
-  const bita = new FakeBita(() => ({ ok: true, data: 'bita' }))
-  const inkwell = new FakeBita(() => ({ ok: true, data: 'inkwell' }))
-  const router = new DocsRouter(bita, inkwell)
-  assert.equal((await router.invoke(['docs', 'tree'])).data, 'inkwell')
-  assert.equal((await router.invoke(['project', 'repo', 'ls', '--project', 'X'])).data, 'bita')
-  assert.deepEqual(inkwell.calls, [['tree']])
-  assert.equal((await new DocsRouter(bita, null).invoke(['docs', 'tree'])).data, 'bita')
-  assert.equal((await new DocsRouter(null, null).invoke(['docs', 'tree'])).ok, false)
+test('amend only starts or stops when the kind really changes', () => {
+  const amend = (payload: Record<string, unknown>) =>
+    decodeHookEvent(JSON.stringify({ event: 'amend', entry: { id: 7, description: 'Daily de CoDi', kind: 'remote-meeting', running: true }, ...payload }))
+  const titleOnly = amend({ previousKind: 'remote-meeting', previousTitle: 'Reunión remota', previousProjectId: null })
+  assert.equal(titleOnly.kindChanged, false)
+  assert.deepEqual(planHook(titleOnly, undefined), { type: 'refresh' })
+  assert.deepEqual(planHook(titleOnly, 7), { type: 'refresh' })
+  assert.deepEqual(planHook(amend({ previousKind: 'remote-meeting', previousProjectId: 3 }), 7), { type: 'refresh' })
+  assert.deepEqual(planHook(amend({ previousTitle: 'x' }), undefined), { type: 'start', mode: 'remote' })
+  assert.deepEqual(planHook(amend({ previousKind: null, previousTitle: 'x' }), undefined), { type: 'start', mode: 'remote' })
+  assert.deepEqual(planHook(amend({}), undefined), { type: 'start', mode: 'remote' })
+  const stopped = decodeHookEvent(JSON.stringify({ event: 'amend', entry: { id: 7, description: 'Daily', running: true }, previousKind: 'remote-meeting', previousTitle: 'Daily' }))
+  assert.deepEqual(planHook(stopped, 7), { type: 'stopWithoutProcessing' })
 })

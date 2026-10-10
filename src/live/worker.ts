@@ -11,12 +11,11 @@ import { selfCommand } from '../core/self.ts'
 import { suffix, trimmed } from '../core/text.ts'
 import { requireTool } from '../core/tools.ts'
 import { RecapError, errorMessage } from '../errors.ts'
-import { docsClient, meetingTarget } from '../bita/client.ts'
 import { resultText, runClaude } from '../pipeline/claude.ts'
 import { whisperArguments } from '../pipeline/pipeline.ts'
 import { parseWhisper, type Channel, type Segment } from '../pipeline/transcript.ts'
 import { pruneBoard } from './asking.ts'
-import { loadProjectContext, meetingProject } from './context.ts'
+import { meetingContext } from './context.ts'
 import { AutoAskProcess, AutoAskQueue, QuestionDetector } from './detector.ts'
 import { appendLines, liveFiles, readLines } from './files.ts'
 import { LiveMerger } from './merger.ts'
@@ -180,10 +179,7 @@ export function makeLiveDetector(dir: string, meeting: Meeting, config: Config, 
   const runner = new AutoAskProcess(dir, selfCommand())
   const asks = new AutoAskQueue({ dir, concurrency: settings.autoAskConcurrency, run: (job) => runner.run(job), cancelRunning: () => runner.cancel(), log })
   return new QuestionDetector(dir, meeting, settings.autoAskMinSeconds, {
-    context: async () => {
-      const docs = await docsClient(config, meetingTarget(meeting))
-      return loadProjectContext(await meetingProject(meeting, docs), meeting.bitaDocsRoot, docs)
-    },
+    context: () => meetingContext(meeting, config),
     complete: async (prompt) => resultText(await runClaude({ prompt, cwd: dir, config, tools: [], addDirs: [], model: settings.autoAskModel, restrictTools: [] })),
     enqueue: (question, origin) => {
       asks.enqueue(question, origin)

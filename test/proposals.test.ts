@@ -6,7 +6,7 @@ import { ProposalGenerator, ProposalReview, loadProposals, parseProposalPlan, pr
 import { saveMeeting, type Meeting } from '../src/core/meeting.ts'
 import { stageApplies, stageSatisfied, STAGES } from '../src/pipeline/stages.ts'
 import { RecapError } from '../src/errors.ts'
-import { FakeBita, meeting, tempDir } from './helpers.ts'
+import { FakeTool, meeting, tempDir } from './helpers.ts'
 
 test('keeps only valid changes to candidate pages', () => {
   const answer = `Listo:
@@ -36,17 +36,28 @@ test('keeps only valid changes to candidate pages', () => {
 
 function setup(t: Parameters<typeof tempDir>[0], projectName: string | undefined = 'CoDi'): { dir: string; value: Meeting } {
   const dir = tempDir(t)
-  const value = meeting({ status: 'processing', bitaEntryId: 42, bitaEntry: { title: 'Daily de CoDi', projectName, kind: 'remote-meeting', pageIds: [50, 7] } })
+  const value = meeting({ status: 'processing', bitaEntryId: 42, bitaEntry: { title: 'Daily de CoDi', projectName, kind: 'remote-meeting', pageIds: [] } })
   saveMeeting(value, dir)
   writeFileSync(path.join(dir, 'transcript.md'), '**[00:12:34] Sala:** ya no es make deploy')
   return { dir, value }
 }
 
-function bita(applyConflict = false): FakeBita {
+function bita(applyConflict = false): FakeTool {
   let proposeCount = 0
-  return new FakeBita((args) => {
+  return new FakeTool((args) => {
     const head = args.slice(0, 3).join(' ')
-    if (head === 'docs page ls') {
+    if (head === 'page ls --entry') {
+      return {
+        ok: true,
+        data: {
+          pages: [
+            { pageId: 50, title: 'Daily', relPath: 'codi/daily.md', depth: 0, projectName: 'CoDi' },
+            { pageId: 7, title: 'Reglas de negocio', relPath: 'codi/reglas.md', depth: 2, projectName: 'CoDi' },
+          ],
+        },
+      }
+    }
+    if (head === 'page ls --project') {
       return {
         ok: true,
         data: {
@@ -58,17 +69,15 @@ function bita(applyConflict = false): FakeBita {
         meta: { root: '/data/docs' },
       }
     }
-    if (head === 'project repo ls') return { ok: true, data: { repos: [] } }
-    if (head === 'docs page show') return { ok: true, data: { pageId: 7, title: 'Reglas de negocio', relPath: 'codi/reglas.md', projectName: 'CoDi' } }
-    if (head === 'docs propose --branch') {
+    if (head === 'git propose --branch') {
       proposeCount += 1
       return { ok: true, data: { branch: args[3], sha: `sha${proposeCount}`, pageId: Number(args[4]), base: 'main0' } }
     }
-    if (head === 'docs branch apply') {
+    if (head === 'branch apply proposal/meeting-42') {
       if (applyConflict) return { ok: false, errorCode: 'MERGE_CONFLICT', errorMessage: 'conflict in codi/despliegue.md' }
-      return { ok: true, data: { branch: args[3], sha: args[5], appliedSha: `main-${args[5]}` } }
+      return { ok: true, data: { branch: args[2], sha: args[4], appliedSha: `main-${args[4]}` } }
     }
-    if (head === 'docs branch drop') return { ok: true, data: { branch: args[3], dropped: true } }
+    if (head === 'branch drop proposal/meeting-42') return { ok: true, data: { branch: args[2], dropped: true } }
     return { ok: false, errorCode: 'USAGE', errorMessage: `unexpected ${args.join(' ')}` }
   })
 }
@@ -79,7 +88,7 @@ const ANSWER = `{"proposals": [
   {"pageId": 7, "section": "Límites", "markdown": "El tope es de 10 000 MXN.", "title": "Subir el tope", "rationale": "Nuevo tope.", "quotes": [{"startMs": 9000, "channel": "system", "text": "diez mil"}]}
 ]}`
 
-async function generate(fake: FakeBita, value: Meeting, dir: string): Promise<{ file: ProposalsFile | null; prompt: string }> {
+async function generate(fake: FakeTool, value: Meeting, dir: string): Promise<{ file: ProposalsFile | null; prompt: string }> {
   let prompt = ''
   const generator = new ProposalGenerator({}, fake, () => undefined, async (text, dirs) => {
     prompt = text
@@ -108,8 +117,8 @@ test('proposes each change on the meeting branch', async (t) => {
     ['sha1', 'sha2'],
   )
   assert.equal(file.discarded.length, 1)
-  const propose = fake.calls.find((call) => call[0] === 'docs' && call[1] === 'propose')
-  assert.deepEqual(propose, ['docs', 'propose', '--branch', 'proposal/meeting-42', '3', '--md', proposalStore.markdownFile(dir, 1), '--section', 'Despliegue', '--reason', 'Actualizar el despliegue', '--source', 'meeting:42'])
+  const propose = fake.calls.find((call) => call[0] === 'git' && call[1] === 'propose')
+  assert.deepEqual(propose, ['git', 'propose', '--branch', 'proposal/meeting-42', '3', '--md', proposalStore.markdownFile(dir, 1), '--section', 'Despliegue', '--reason', 'Actualizar el despliegue', '--source', 'meeting:42'])
   assert.equal(readFileSync(proposalStore.markdownFile(dir, 1), 'utf8'), 'Se despliega con `make release`.\n')
   assert.deepEqual(
     loadProposals(dir)?.proposals.map((item) => item.sha),
@@ -122,7 +131,7 @@ test('takes the project from the meeting page when the entry had none', async (t
   const { dir, value } = setup(t, undefined)
   const fake = bita()
   const { file } = await generate(fake, value, dir)
-  assert.ok(fake.calls.some((call) => call.join(' ') === 'docs page ls --project CoDi'))
+  assert.ok(fake.calls.some((call) => call.join(' ') === 'page ls --project CoDi'))
   assert.deepEqual(
     file?.proposals.map((item) => item.pageId),
     [3, 7],
@@ -137,11 +146,11 @@ test('accept applies and reject drops the branch when nothing is pending', async
   const accepted = await review.accept(1)
   assert.equal(accepted.status, 'accepted')
   assert.equal(accepted.appliedSha, 'main-sha1')
-  assert.ok(!fake.calls.some((call) => call.slice(0, 3).join(' ') === 'docs branch drop'))
+  assert.ok(!fake.calls.some((call) => call.slice(0, 2).join(' ') === 'branch drop'))
   await assert.rejects(review.accept(1), RecapError)
   const rejected = await review.reject(2)
   assert.equal(rejected.status, 'rejected')
-  assert.deepEqual(fake.calls.at(-1), ['docs', 'branch', 'drop', 'proposal/meeting-42'])
+  assert.deepEqual(fake.calls.at(-1), ['branch', 'drop', 'proposal/meeting-42'])
   assert.equal(loadProposals(dir)?.branchDropped, true)
   await assert.rejects(review.reject(9), RecapError)
 })
@@ -157,8 +166,8 @@ test('a conflict leaves the proposal stale and an edit proposes again', async (t
   const accepted = await new ProposalReview(dir, fake).accept(1, edited)
   assert.equal(accepted.status, 'accepted')
   assert.equal(accepted.sha, 'sha1')
-  assert.deepEqual(fake.calls[0]?.slice(0, 5), ['docs', 'propose', '--branch', 'proposal/meeting-42', '3'])
-  assert.deepEqual(fake.calls[1], ['docs', 'branch', 'apply', 'proposal/meeting-42', '--commit', 'sha1'])
+  assert.deepEqual(fake.calls[0]?.slice(0, 5), ['git', 'propose', '--branch', 'proposal/meeting-42', '3'])
+  assert.deepEqual(fake.calls[1], ['branch', 'apply', 'proposal/meeting-42', '--commit', 'sha1'])
   assert.ok(readFileSync(proposalStore.markdownFile(dir, 1), 'utf8').includes('release-prod'))
 })
 
