@@ -1,7 +1,7 @@
 ---
 description: Termina la grabación y deja la reunión documentada
 argument-hint: [--no-wait para no esperar el resultado]
-allowed-tools: Bash(recap stop:*), Bash(recap status:*), Bash(recap wait:*), Bash(recap show:*), Bash(bita stop:*), Bash(bita ls:*), Bash(bita amend:*), Bash(bita docs page move:*), Bash(bita backlog edit:*)
+allowed-tools: Bash(recap stop:*), Bash(recap status:*), Bash(recap wait:*), Bash(recap show:*), Bash(bita stop:*), Bash(bita ls:*), Bash(bita amend:*), Bash(bita docs page move:*), Bash(bita backlog edit:*), Bash(inkwell page move:*), Bash(inkwell backlog edit:*)
 ---
 
 Detén la grabación activa y deja la reunión documentada.
@@ -31,8 +31,8 @@ El hook de bita detiene la grabación y recap hace lo demás:
 - deja la minuta en la sección «Reunión» de la entrada.
 
 `recap wait` tarda de uno a cinco minutos en una reunión de una hora: córrelo con
-un timeout amplio (15 min). Si `meta.hooksFired` del stop es 0, dilo: la
-grabación sigue y hay que pararla con `recap stop`.
+un timeout amplio (15 min). Si después de un minuto `recap status` sigue
+grabando, el evento no llegó: párala con `recap stop`.
 
 ## Si es una grabación suelta
 
@@ -61,6 +61,9 @@ bita amend <entryId> --project <X>
 bita docs page move <pageId> --project <X>
 bita backlog edit <CLAVE> --project <X>      # una por cada valor de wrapup.backlogKeys
 ```
+
+Si inkwell está instalado, usa `inkwell page move <pageId> --project <X>` e
+`inkwell backlog edit <CLAVE> --project <X>` en lugar de los dos últimos.
 
 Con `--no-wait` en `$ARGUMENTS`, solo para y responde en una línea que el
 procesamiento sigue en segundo plano.

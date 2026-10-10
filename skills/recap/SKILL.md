@@ -5,9 +5,14 @@ description: Graba reuniones con la CLI `recap` y las convierte en minuta (resum
 
 # recap
 
-`recap` graba reuniones en macOS y las procesa localmente. Todo vive en una
-carpeta por reunión bajo `~/Recap` (o la raíz configurada):
-`meeting.json`, la grabación, `transcript.md`, `frames/` y `summary.md`.
+`recap` graba reuniones (en macOS, con Recap.app) y las procesa localmente en
+macOS, Windows y Linux. Todo vive en una carpeta por reunión bajo `~/Recap` (o
+la raíz configurada): `meeting.json`, la grabación, `transcript.md`, `frames/` y
+`summary.md`.
+
+Fuera de macOS no se puede grabar (`start` falla con `CAPTURE_UNAVAILABLE`):
+la reunión se graba con cualquier otra app y se procesa con
+`recap import <archivo> [--title "…"] [--in-person|--remote] --json`.
 
 Todos los comandos aceptan `--json` y devuelven un sobre
 `{schemaVersion, ok, command, data, error}`. Usa `--json` siempre que vayas a
@@ -66,13 +71,15 @@ Errores típicos y qué hacer:
 | `SCREEN_DENIED` | Recap.app sin permiso de grabación de pantalla | Pide activarlo en Configuración > Privacidad y seguridad > Grabación de pantalla y audio del sistema |
 | `MICROPHONE_DENIED` | Sin permiso de micrófono | Igual, en Micrófono |
 | `RECORDER_TIMEOUT` | Un diálogo de permisos quedó esperando | `recap setup` |
-| `DEPENDENCY_MISSING`, `MODEL_MISSING` | Falta ffmpeg, whisper-cli, claude o el modelo | `recap setup` |
+| `DEPENDENCY_MISSING`, `MODEL_MISSING` | Falta ffmpeg, whisper-cli, claude o el modelo | `recap setup --install-deps` |
+| `CAPTURE_UNAVAILABLE` | No hay grabador en este equipo (Windows, Linux, o falta Recap.app) | Graba con otra app y usa `recap import <archivo>`; en mac, `recap setup` |
 
 ## Con bita
 
-Si bita está instalado con el hook de recap (`bita hooks` lo lista), **arranca
-y para las reuniones desde bita**, no desde recap: así el tiempo queda medido y
-la grabación sigue al contador.
+Si `recap status --json` trae `data.bitaLinked: true` (recap está suscrito a
+los eventos de bita desde `recap setup`), **arranca y para las reuniones desde
+bita**, no desde recap: así el tiempo queda medido y la grabación sigue al
+contador.
 
 ```sh
 bita start "<título>" --kind remote-meeting
@@ -91,8 +98,13 @@ Al parar, recap hace todo lo demás sin que nadie lo pida:
 - deja la minuta en la sección «Reunión» de la entrada.
 
 El resultado está en `data.wrapup` de `recap wait`. Si `wrapup.projectResolved`
-es false, pregunta el proyecto y aplícalo con `bita amend`,
-`bita docs page move --project` y `bita backlog edit --project`.
+es false, pregunta el proyecto y aplícalo con `bita amend`, y mueve la página y
+el backlog con inkwell si está instalado (`inkwell page move --project`,
+`inkwell backlog edit --project`) o, si no, con `bita docs page move --project`
+y `bita backlog edit --project`.
+
+Las páginas, las propuestas y el backlog se escriben con inkwell cuando está
+instalado y ya migró los documentos de bita; si no, con `bita docs`/`bita backlog`.
 
 ## En vivo
 
