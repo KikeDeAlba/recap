@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { which } from '@kikedealba/kit/platform'
+import { which, type PlatformContext } from '@kikedealba/kit/platform'
 import { exists, readText } from '../core/fsutil.ts'
 import { isRecord } from '../core/json.ts'
 import { home } from '../core/paths.ts'
 import { exec, spawnDetached } from '../core/proc.ts'
-import { selfCommand } from '../core/self.ts'
+import { selfCommand, stableCommand } from '../core/self.ts'
 import { trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
@@ -40,17 +40,25 @@ export function captureUnavailable(): RecapError {
   return new RecapError('CAPTURE_UNAVAILABLE', 'The recorder (recap-capture) is not available on this machine', { hint })
 }
 
-export function liveWorkerCommand(): string {
-  return JSON.stringify([...selfCommand(), 'live-worker'])
+export async function liveWorkerCommand(ctx?: PlatformContext): Promise<string[]> {
+  return [...(await stableCommand(ctx)), 'live-worker']
+}
+
+export function workerPath(command: readonly string[], env: NodeJS.ProcessEnv = process.env): string | null {
+  if (command[0] === selfCommand()[0]) return null
+  return [path.dirname(process.execPath), ...(env['PATH'] ?? '').split(path.delimiter)].filter((dir, index, all) => dir.length > 0 && all.indexOf(dir) === index).join(path.delimiter)
 }
 
 export function hasCaptureBinary(app: string): boolean {
   return exists(path.join(app, 'Contents', 'MacOS', 'recap-capture'))
 }
 
-export function launchArguments(app: string, dir: string, log: string, modern = hasCaptureBinary(app)): string[] {
+export async function launchArguments(app: string, dir: string, log: string, modern = hasCaptureBinary(app), ctx?: PlatformContext): Promise<string[]> {
   if (!modern) return ['-g', '-n', '-a', app, '--stdout', log, '--stderr', log, '--args', 'record', dir]
-  return ['-g', '-n', '-a', app, '--env', `RECAP_LIVE_WORKER=${liveWorkerCommand()}`, '--stdout', log, '--stderr', log, '--args', 'capture', 'record', dir]
+  const worker = await liveWorkerCommand(ctx)
+  const searchPath = workerPath(worker, ctx?.env)
+  const env = ['--env', `RECAP_LIVE_WORKER=${JSON.stringify(worker)}`, ...(searchPath === null ? [] : ['--env', `PATH=${searchPath}`])]
+  return ['-g', '-n', '-a', app, ...env, '--stdout', log, '--stderr', log, '--args', 'capture', 'record', dir]
 }
 
 export async function launchRecorder(dir: string): Promise<void> {
@@ -58,11 +66,11 @@ export async function launchRecorder(dir: string): Promise<void> {
   if (!launcher) throw captureUnavailable()
   const log = path.join(dir, 'recorder.log')
   if (launcher.kind === 'app') {
-    const result = await exec('/usr/bin/open', launchArguments(launcher.app, dir, log))
+    const result = await exec('/usr/bin/open', await launchArguments(launcher.app, dir, log))
     if (result.status !== 0) throw new RecapError('LAUNCH_FAILED', `Cannot launch ${path.basename(launcher.app)}: ${trimmed(result.stderr)}`)
     return
   }
-  spawnDetached(launcher.binary, ['record', dir, '--live-worker', liveWorkerCommand()], log)
+  spawnDetached(launcher.binary, ['record', dir, '--live-worker', JSON.stringify(await liveWorkerCommand())], log)
 }
 
 export interface PermissionReport {
