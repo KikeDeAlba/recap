@@ -216,7 +216,10 @@ struct RecordCommand: ParsableCommand {
     @Argument(help: "Meeting directory.")
     var dir: String
 
+    @Option(name: .customLong("live-worker"), help: "Live worker to spawn instead of this recap.")
+    var liveWorker: String?
+
     func run() throws {
-        RecordingController(dir: URL(fileURLWithPath: dir)).run()
+        RecordingController(dir: URL(fileURLWithPath: dir), liveWorker: liveWorker).run()
     }
 }

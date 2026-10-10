@@ -1,7 +1,7 @@
 import AVFoundation
 
-final class InPersonRecorder: NSObject, Recorder, AVCaptureAudioDataOutputSampleBufferDelegate {
-    var onFailure: ((Error) -> Void)?
+package final class InPersonRecorder: NSObject, Recorder, AVCaptureAudioDataOutputSampleBufferDelegate {
+    package var onFailure: ((Error) -> Void)?
 
     private let url: URL
     private let queue = DispatchQueue(label: "recap.in-person-recorder")
@@ -9,12 +9,12 @@ final class InPersonRecorder: NSObject, Recorder, AVCaptureAudioDataOutputSample
     private var writer: MediaWriter?
     private let liveTap: LiveTap?
 
-    init(url: URL, liveTap: LiveTap? = nil) {
+    package init(url: URL, liveTap: LiveTap? = nil) {
         self.url = url
         self.liveTap = liveTap
     }
 
-    func start() async throws {
+    package func start() async throws {
         try await Permissions.requestMicrophone()
         guard let device = AVCaptureDevice.default(for: .audio) else {
             throw RecapError("NO_MICROPHONE", "No microphone available")
@@ -39,14 +39,14 @@ final class InPersonRecorder: NSObject, Recorder, AVCaptureAudioDataOutputSample
         guard session.isRunning else { throw RecapError("CAPTURE_SETUP", "The microphone capture session did not start") }
     }
 
-    func stop() async {
+    package func stop() async {
         session.stopRunning()
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
         liveTap?.finish()
         await writer?.finish()
     }
 
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    package func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         writer?.append(sampleBuffer, track: 0)
         liveTap?.append(sampleBuffer, channel: .mic)
     }

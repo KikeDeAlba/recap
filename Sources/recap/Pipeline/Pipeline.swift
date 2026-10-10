@@ -309,7 +309,3 @@ final class ProcessLock {
         try? FileManager.default.removeItem(at: url)
     }
 }
-
-extension String {
-    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
-}

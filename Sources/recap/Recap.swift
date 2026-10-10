@@ -2,7 +2,7 @@ import ArgumentParser
 
 @main
 struct Recap: ParsableCommand {
-    static let version = "0.8.1"
+    static let version = CaptureTool.version
 
     static let configuration = CommandConfiguration(
         commandName: "recap",
@@ -31,6 +31,16 @@ struct Recap: ParsableCommand {
             ProposalsCommand.self,
             ConfigCommand.self,
             LiveWorkerCommand.self,
+            CaptureCommand.self,
         ]
     )
+
+    static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard arguments.first == CaptureCommand.configuration.commandName else {
+            main(nil)
+            return
+        }
+        CaptureCLI.main(Recap.self, arguments: arguments)
+    }
 }

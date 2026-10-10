@@ -2,12 +2,12 @@ import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
 
-final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate {
-    static let videoWidth = 1280
-    static let micTrack = 1
-    static let systemTrack = 2
+package final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate {
+    package static let videoWidth = 1280
+    package static let micTrack = 1
+    package static let systemTrack = 2
 
-    var onFailure: ((Error) -> Void)?
+    package var onFailure: ((Error) -> Void)?
 
     private let url: URL
     private let displayID: CGDirectDisplayID?
@@ -16,13 +16,13 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
     private var writer: MediaWriter?
     private let liveTap: LiveTap?
 
-    init(url: URL, displayID: CGDirectDisplayID?, liveTap: LiveTap? = nil) {
+    package init(url: URL, displayID: CGDirectDisplayID?, liveTap: LiveTap? = nil) {
         self.url = url
         self.displayID = displayID
         self.liveTap = liveTap
     }
 
-    func start() async throws {
+    package func start() async throws {
         try Permissions.requestScreen()
         try await Permissions.requestMicrophone()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -63,7 +63,7 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
         self.stream = stream
     }
 
-    func stop() async {
+    package func stop() async {
         if let stream { try? await stream.stopCapture() }
         stream = nil
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
@@ -71,7 +71,7 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
         await writer?.finish()
     }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    package func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard let writer else { return }
         switch type {
         case .screen:
@@ -90,7 +90,7 @@ final class RemoteRecorder: NSObject, Recorder, SCStreamOutput, SCStreamDelegate
         }
     }
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
+    package func stream(_ stream: SCStream, didStopWithError error: Error) {
         onFailure?(error)
     }
 

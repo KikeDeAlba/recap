@@ -1,24 +1,32 @@
 import Foundation
 
-struct LiveChunk: Equatable {
-    var seq: Int
-    var startMs: Int
-    var endMs: Int
-    var samples: [Float]
-    var hasSpeech: Bool
+package struct LiveChunk: Equatable {
+    package var seq: Int
+    package var startMs: Int
+    package var endMs: Int
+    package var samples: [Float]
+    package var hasSpeech: Bool
+
+    package init(seq: Int, startMs: Int, endMs: Int, samples: [Float], hasSpeech: Bool) {
+        self.seq = seq
+        self.startMs = startMs
+        self.endMs = endMs
+        self.samples = samples
+        self.hasSpeech = hasSpeech
+    }
 }
 
-final class LiveChunker {
-    static let sampleRate = 16_000
-    static let frameSamples = 480
+package final class LiveChunker {
+    package static let sampleRate = 16_000
+    package static let frameSamples = 480
 
-    let minSamples: Int
-    let maxSamples: Int
-    let silenceFrames: Int
-    let minSpeechFrames: Int
-    let minThreshold: Float
-    let maxNoiseFloor: Float
-    let gapToleranceMs: Int
+    package let minSamples: Int
+    package let maxSamples: Int
+    package let silenceFrames: Int
+    package let minSpeechFrames: Int
+    package let minThreshold: Float
+    package let maxNoiseFloor: Float
+    package let gapToleranceMs: Int
 
     private var buffer: [Float] = []
     private var energies: [Float] = []
@@ -27,7 +35,7 @@ final class LiveChunker {
     private var noiseFloor: Float?
     private var nextSeq = 1
 
-    init(minSeconds: Double = 3, maxSeconds: Double = 10, silenceSeconds: Double = 0.6,
+    package init(minSeconds: Double = 3, maxSeconds: Double = 10, silenceSeconds: Double = 0.6,
          minThreshold: Float = 0.006, maxNoiseFloor: Float = 0.015, gapToleranceMs: Int = 1_000) {
         let rate = Double(Self.sampleRate)
         let frame = Double(Self.frameSamples)
@@ -40,11 +48,11 @@ final class LiveChunker {
         self.gapToleranceMs = gapToleranceMs
     }
 
-    var threshold: Float {
+    package var threshold: Float {
         max(minThreshold, (noiseFloor ?? 0) * 3)
     }
 
-    func append(_ samples: [Float], atMs: Int) -> [LiveChunk] {
+    package func append(_ samples: [Float], atMs: Int) -> [LiveChunk] {
         var chunks: [LiveChunk] = []
         if let start = bufferStartMs {
             let expected = start + Self.ms(buffer.count)
@@ -66,7 +74,7 @@ final class LiveChunker {
         return chunks
     }
 
-    func flush() -> [LiveChunk] {
+    package func flush() -> [LiveChunk] {
         cutAll()
     }
 
@@ -124,11 +132,11 @@ final class LiveChunker {
         return chunk
     }
 
-    static func ms(_ samples: Int) -> Int {
+    package static func ms(_ samples: Int) -> Int {
         samples * 1000 / sampleRate
     }
 
-    static func rms(_ samples: ArraySlice<Float>) -> Float {
+    package static func rms(_ samples: ArraySlice<Float>) -> Float {
         guard !samples.isEmpty else { return 0 }
         var sum: Float = 0
         for sample in samples { sum += sample * sample }

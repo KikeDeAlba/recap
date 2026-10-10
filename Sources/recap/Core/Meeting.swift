@@ -1,82 +1,4 @@
-import ArgumentParser
 import Foundation
-
-enum MeetingMode: String, Codable, CaseIterable, ExpressibleByArgument {
-    case remote
-    case inPerson = "in-person"
-
-    var recordingFileName: String {
-        switch self {
-        case .remote: "recording.mov"
-        case .inPerson: "recording.m4a"
-        }
-    }
-}
-
-enum MeetingStatus: String, Codable {
-    case starting
-    case recording
-    case recorded
-    case failed
-    case processing
-    case processed
-}
-
-struct BitaEntrySnapshot: Codable, Equatable {
-    var title: String
-    var projectName: String?
-    var kind: String?
-    var pageIds: [Int]
-}
-
-struct Wrapup: Codable, Equatable {
-    var title: String?
-    var titleChanged = false
-    var project: String?
-    var projectResolved = false
-    var pageId: Int?
-    var pageCreated = false
-    var backlogKeys: [String: String] = [:]
-}
-
-struct VideoCompression: Codable, Equatable {
-    var compressedAt: Date
-    var preset: String
-    var originalBytes: Int64
-}
-
-struct StageState: Codable {
-    var status: String
-    var updatedAt: Date
-    var error: String?
-}
-
-struct Meeting: Codable {
-    var schemaVersion = 1
-    var id: String
-    var title: String
-    var mode: MeetingMode
-    var status: MeetingStatus
-    var createdAt: Date
-    var startedAt: Date?
-    var endedAt: Date?
-    var recorderPid: Int32?
-    var display: UInt32?
-    var bitaEntryId: Int?
-    var bitaDatabasePath: String?
-    var bitaDocsRoot: String?
-    var bitaEntry: BitaEntrySnapshot?
-    var wrapup: Wrapup?
-    var error: String?
-    var stages: [String: StageState] = [:]
-    var video: VideoCompression?
-    var videoRemovedAt: Date?
-
-    var durationSeconds: Int? {
-        guard let startedAt else { return nil }
-        return Int((endedAt ?? Date()).timeIntervalSince(startedAt))
-    }
-}
 
 struct MeetingRecord: Encodable {
     let meeting: Meeting
@@ -134,42 +56,7 @@ struct MeetingRecord: Encodable {
     }
 }
 
-enum MeetingFile {
-    static let name = "meeting.json"
-
-    static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-
-    static func load(_ dir: URL) throws -> Meeting {
-        let url = dir.appending(path: name)
-        do {
-            return try decoder.decode(Meeting.self, from: Data(contentsOf: url))
-        } catch {
-            throw RecapError("MEETING_UNREADABLE", "Cannot read \(url.path): \(error.localizedDescription)")
-        }
-    }
-
-    static func save(_ meeting: Meeting, to dir: URL) throws {
-        try encoder.encode(meeting).write(to: dir.appending(path: name), options: .atomic)
-    }
-
-    static func update(_ dir: URL, _ change: (inout Meeting) -> Void) throws -> Meeting {
-        var meeting = try load(dir)
-        change(&meeting)
-        try save(meeting, to: dir)
-        return meeting
-    }
-
+extension MeetingFile {
     static func reconcile(_ meeting: Meeting, dir: URL) -> Meeting {
         guard meeting.status == .recording || meeting.status == .starting else { return meeting }
         if let pid = meeting.recorderPid, ProcessCheck.isAlive(pid) { return meeting }

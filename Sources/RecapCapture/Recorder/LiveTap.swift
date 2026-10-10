@@ -1,7 +1,7 @@
 import AVFoundation
 import CoreMedia
 
-final class LiveTap {
+package final class LiveTap {
     private final class ChannelState {
         let chunker: LiveChunker
         var converter: AVAudioConverter?
@@ -24,7 +24,7 @@ final class LiveTap {
     private let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(LiveChunker.sampleRate),
                                              channels: 1, interleaved: false)!
 
-    init(meetingDir: URL, maxChunkSeconds: Int) throws {
+    package init(meetingDir: URL, maxChunkSeconds: Int) throws {
         self.meetingDir = meetingDir
         self.maxChunkSeconds = maxChunkSeconds
         chunksDir = LiveFiles.chunks(meetingDir)
@@ -32,14 +32,14 @@ final class LiveTap {
         try FileManager.default.createDirectory(at: chunksDir, withIntermediateDirectories: true)
     }
 
-    func mark(_ pts: CMTime) {
+    package func mark(_ pts: CMTime) {
         guard pts.isValid else { return }
         originLock.lock()
         if origin == nil { origin = pts }
         originLock.unlock()
     }
 
-    func append(_ sampleBuffer: CMSampleBuffer, channel: Channel) {
+    package func append(_ sampleBuffer: CMSampleBuffer, channel: Channel) {
         guard sampleBuffer.isValid, sampleBuffer.numSamples > 0 else { return }
         let pts = sampleBuffer.presentationTimeStamp
         guard pts.isValid else { return }
@@ -53,7 +53,7 @@ final class LiveTap {
         }
     }
 
-    func finish() {
+    package func finish() {
         queue.sync {
             for (channel, state) in channels {
                 store(state.chunker.flush(), channel: channel)
@@ -112,7 +112,7 @@ final class LiveTap {
             do {
                 var entry = ChunkIndexEntry(file: nil, channel: channel, seq: chunk.seq, startMs: chunk.startMs, endMs: chunk.endMs)
                 if chunk.hasSpeech {
-                    let name = String(format: "%@-%05d.wav", channel.rawValue, chunk.seq)
+                    let name = LiveFiles.chunkFileName(channel: channel, seq: chunk.seq)
                     try WavFile.writeAtomically(chunk.samples, sampleRate: LiveChunker.sampleRate,
                                                 to: chunksDir.appending(path: name))
                     entry.file = name

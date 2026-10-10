@@ -1,52 +1,5 @@
 import Foundation
 
-struct LiveConfig: Codable, Equatable {
-    var enabled: Bool?
-    var openWindow: Bool?
-    var proposals: Bool?
-    var maxChunkSeconds: Int?
-    var assistModel: String?
-    var autoAsk: Bool?
-    var autoAskModel: String?
-    var autoAskMinSeconds: Int?
-    var autoAskConcurrency: Int?
-}
-
-struct LiveSettings: Equatable {
-    static let chunkSecondsRange = 5...60
-    static let autoAskSecondsRange = 3...120
-    static let autoAskConcurrencyRange = 1...6
-    static let defaultMaxChunkSeconds = 10
-    static let defaultAutoAskMinSeconds = 5
-    static let defaultAutoAskConcurrency = 3
-    static let defaultAutoAskModel = "haiku"
-
-    var enabled: Bool
-    var openWindow: Bool
-    var proposals: Bool
-    var maxChunkSeconds: Int
-    var assistModel: String?
-    var autoAsk: Bool
-    var autoAskModel: String
-    var autoAskMinSeconds: Int
-    var autoAskConcurrency: Int
-
-    init(_ config: LiveConfig?) {
-        enabled = config?.enabled ?? true
-        openWindow = config?.openWindow ?? true
-        proposals = config?.proposals ?? true
-        let seconds = config?.maxChunkSeconds ?? Self.defaultMaxChunkSeconds
-        maxChunkSeconds = min(max(seconds, Self.chunkSecondsRange.lowerBound), Self.chunkSecondsRange.upperBound)
-        assistModel = config?.assistModel.flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
-        autoAsk = config?.autoAsk ?? true
-        autoAskModel = config?.autoAskModel.flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed } ?? Self.defaultAutoAskModel
-        let autoSeconds = config?.autoAskMinSeconds ?? Self.defaultAutoAskMinSeconds
-        autoAskMinSeconds = min(max(autoSeconds, Self.autoAskSecondsRange.lowerBound), Self.autoAskSecondsRange.upperBound)
-        let concurrency = config?.autoAskConcurrency ?? Self.defaultAutoAskConcurrency
-        autoAskConcurrency = min(max(concurrency, Self.autoAskConcurrencyRange.lowerBound), Self.autoAskConcurrencyRange.upperBound)
-    }
-}
-
 enum ConfigValue: Encodable, Equatable {
     case bool(Bool)
     case int(Int)

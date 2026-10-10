@@ -1,14 +1,14 @@
 import AVFoundation
 import CoreGraphics
 
-protocol Recorder: AnyObject {
+package protocol Recorder: AnyObject {
     var onFailure: ((Error) -> Void)? { get set }
     func start() async throws
     func stop() async
 }
 
-enum Permissions {
-    static func requestMicrophone() async throws {
+package enum Permissions {
+    package static func requestMicrophone() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return
@@ -21,14 +21,14 @@ enum Permissions {
                          "Recap has no microphone access. Enable it in System Settings > Privacy & Security > Microphone.")
     }
 
-    static func requestScreen() throws {
+    package static func requestScreen() throws {
         if CGPreflightScreenCaptureAccess() { return }
         CGRequestScreenCaptureAccess()
         throw RecapError("SCREEN_DENIED",
                          "Recap has no screen recording access. Enable it in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.")
     }
 
-    static var microphoneStatus: String {
+    package static var microphoneStatus: String {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: "granted"
         case .notDetermined: "not-determined"
@@ -38,7 +38,7 @@ enum Permissions {
         }
     }
 
-    static var screenStatus: String {
+    package static var screenStatus: String {
         CGPreflightScreenCaptureAccess() ? "granted" : "denied"
     }
 }

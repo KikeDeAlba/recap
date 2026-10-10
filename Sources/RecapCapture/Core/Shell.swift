@@ -1,18 +1,24 @@
 import Darwin
 import Foundation
 
-struct ShellResult {
-    let status: Int32
-    let stdout: String
-    let stderr: String
+package struct ShellResult {
+    package let status: Int32
+    package let stdout: String
+    package let stderr: String
 
-    var ok: Bool { status == 0 }
+    package init(status: Int32, stdout: String, stderr: String) {
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+
+    package var ok: Bool { status == 0 }
 }
 
-enum Shell {
-    static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+package enum Shell {
+    package static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 
-    static func which(_ name: String) -> URL? {
+    package static func which(_ name: String) -> URL? {
         if name.contains("/") {
             return FileManager.default.isExecutableFile(atPath: name) ? URL(fileURLWithPath: name) : nil
         }
@@ -25,13 +31,13 @@ enum Shell {
         return nil
     }
 
-    static func require(_ name: String, hint: String) throws -> URL {
+    package static func require(_ name: String, hint: String) throws -> URL {
         guard let url = which(name) else { throw RecapError("DEPENDENCY_MISSING", "\(name) not found. \(hint)") }
         return url
     }
 
     @discardableResult
-    static func run(_ executable: URL, _ arguments: [String], stdin: Data? = nil,
+    package static func run(_ executable: URL, _ arguments: [String], stdin: Data? = nil,
                     environment: [String: String]? = nil, cwd: URL? = nil) throws -> ShellResult {
         let process = Process()
         process.executableURL = executable
@@ -69,7 +75,7 @@ enum Shell {
                            stderr: String(decoding: errData, as: UTF8.self))
     }
 
-    static func spawnDetached(_ executable: URL, _ arguments: [String], log: URL) throws -> pid_t {
+    package static func spawnDetached(_ executable: URL, _ arguments: [String], log: URL) throws -> pid_t {
         FileManager.default.createFile(atPath: log.path, contents: nil)
         var fileActions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&fileActions)
