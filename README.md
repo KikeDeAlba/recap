@@ -7,6 +7,57 @@ Record meetings on macOS and turn them into a transcript, a summary, agreements 
 | Remote (Meet, Zoom, Teams) | `--remote` | Screen (1280 px, 2 fps), system audio and microphone, as separate tracks | Screen & System Audio Recording, Microphone |
 | In-person | `--in-person` | Microphone only | Microphone |
 
+## Instalación con npm (núcleo en TypeScript)
+
+Desde la 0.9 la CLI `recap` es un paquete de npm, `@kikedealba/recap`, que corre
+en macOS, Windows y Linux. Lo único que sigue siendo exclusivo de macOS es la
+grabación, que hace `Recap.app` (el grabador nativo `recap-capture`).
+
+```sh
+npm install -g @kikedealba/recap      # o: pnpm add -g @kikedealba/recap
+recap setup --install-deps
+```
+
+Requisitos: Node 24 o superior, ffmpeg, whisper.cpp (`whisper-cli`) y
+[Claude Code](https://claude.com/claude-code) para las minutas.
+
+`recap setup` hace todo lo demás:
+
+- con `--install-deps` instala ffmpeg y whisper-cpp con Homebrew en macOS y
+  ffmpeg con winget en Windows; en Linux muestra el comando (`sudo apt install
+  ffmpeg`) y cómo conseguir whisper.cpp;
+- descarga los modelos de whisper a `~/.local/share/recap/models`
+  (`--skip-models` lo omite);
+- en macOS baja `Recap.app` del último release de GitHub a `~/Applications` si
+  no está (`--skip-app` lo omite; `RECAP_APP` apunta a otra copia) y pide los
+  permisos de micrófono y pantalla (`--skip-permissions` solo los reporta);
+- registra recap en el registro de herramientas de
+  [kit](https://github.com/KikeDeAlba/kit) (`~/.config/kikedealba/tools.d`) con
+  sus capacidades y, si bita está instalado, la suscripción a sus eventos
+  `start`, `stop`, `cancel` y `amend` de las entradas `remote-meeting` e
+  `in-person-meeting`. Reemplaza al viejo `bita hooks add` y quita ese hook si
+  lo encuentra, para que no se dispare dos veces;
+- instala la skill y los comandos en los agentes que encuentre: Claude Code,
+  opencode, Codex y Gemini CLI (`--agents codex,gemini`, `--agents all` o
+  `--agents none`). Si el plugin de Claude Code ya está instalado, no lo duplica.
+
+En Windows y Linux `recap start` falla con `CAPTURE_UNAVAILABLE`: graba con la
+app que quieras y procesa el archivo con
+
+```sh
+recap import grabacion.m4a --title "Revisión semanal"     # presencial por omisión
+recap import llamada.mov --remote                         # video con dos pistas de audio
+```
+
+Los archivos en disco, los comandos, las opciones y el sobre `--json` son los
+mismos que los del `recap` en Swift, así que las dos versiones leen las mismas
+reuniones. Cuando [inkwell](https://github.com/KikeDeAlba/inkwell) está
+instalado y ya migró los documentos de bita, las páginas, las propuestas y el
+backlog se escriben con inkwell; si no, con `bita docs` y `bita backlog`.
+
+Para trabajar en el paquete: `pnpm install`, `pnpm test`, `pnpm typecheck` y
+`node src/bin/recap.ts <comando>`.
+
 ## Requirements
 
 - macOS 15 or later (ScreenCaptureKit microphone capture), Apple Silicon recommended
