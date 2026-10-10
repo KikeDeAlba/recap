@@ -1,13 +1,13 @@
 import AVFoundation
 import CoreMedia
 
-final class MediaWriter {
-    enum Track {
+package final class MediaWriter {
+    package enum Track {
         case video(width: Int, height: Int)
         case audio(channels: Int, bitRate: Int)
     }
 
-    var onFailure: ((Error) -> Void)?
+    package var onFailure: ((Error) -> Void)?
 
     private let writer: AVAssetWriter
     private let inputs: [AVAssetWriterInput]
@@ -16,7 +16,7 @@ final class MediaWriter {
     private var failed = false
     private var trackEnds: [Int: CMTime] = [:]
 
-    init(url: URL, fileType: AVFileType, tracks: [Track]) throws {
+    package init(url: URL, fileType: AVFileType, tracks: [Track]) throws {
         try? FileManager.default.removeItem(at: url)
         writer = try AVAssetWriter(outputURL: url, fileType: fileType)
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
@@ -32,9 +32,9 @@ final class MediaWriter {
         }
     }
 
-    var hasSamples: Bool { sessionStart != nil }
+    package var hasSamples: Bool { sessionStart != nil }
 
-    func append(_ sampleBuffer: CMSampleBuffer, track index: Int) {
+    package func append(_ sampleBuffer: CMSampleBuffer, track index: Int) {
         guard !failed, sampleBuffer.isValid, sampleBuffer.numSamples > 0 else { return }
         let pts = sampleBuffer.presentationTimeStamp
         guard pts.isValid else { return }
@@ -76,7 +76,7 @@ final class MediaWriter {
         return status == noErr ? retimed : nil
     }
 
-    func finish() async {
+    package func finish() async {
         guard writer.status == .writing else { return }
         guard sessionStart != nil else {
             writer.cancelWriting()

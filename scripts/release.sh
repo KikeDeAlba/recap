@@ -17,6 +17,13 @@ asset="Recap-${version}-macos-arm64.zip"
 
 ./scripts/bundle.sh
 
+for binary in recap recap-capture; do
+  if [[ ! -x "build/Recap.app/Contents/MacOS/$binary" ]]; then
+    echo "error: Recap.app is missing $binary" >&2
+    exit 1
+  fi
+done
+
 rm -rf dist
 mkdir -p dist
 ditto -c -k --sequesterRsrc --keepParent build/Recap.app "dist/$asset"

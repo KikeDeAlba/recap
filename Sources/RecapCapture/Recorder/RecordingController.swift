@@ -1,19 +1,21 @@
 import AppKit
 import Foundation
 
-final class RecordingController {
+package final class RecordingController {
     private let dir: URL
     private var recorder: Recorder?
     private var signalSources: [DispatchSourceSignal] = []
     private var stopRequested = false
     private var finishing = false
     private var started = false
+    private let liveWorker: String?
 
-    init(dir: URL) {
+    package init(dir: URL, liveWorker: String? = nil) {
         self.dir = dir
+        self.liveWorker = liveWorker
     }
 
-    func run() -> Never {
+    package func run() -> Never {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         installSignalHandlers()
@@ -61,15 +63,17 @@ final class RecordingController {
     }
 
     private func startLiveWorker() {
-        guard let executable = Paths.executable else {
-            log("live worker not started: cannot locate the recap executable")
-            return
-        }
         do {
-            let pid = try Shell.spawnDetached(executable, ["live-worker", dir.path], log: LiveFiles.workerLog(dir))
+            guard let launch = try LiveWorkerLaunch.resolve(option: liveWorker,
+                                                            environment: ProcessInfo.processInfo.environment,
+                                                            executable: Paths.executable) else {
+                log("live worker disabled")
+                return
+            }
+            let pid = try Shell.spawnDetached(launch.executable, launch.arguments(for: dir), log: LiveFiles.workerLog(dir))
             log("live worker \(pid)")
         } catch {
-            log("live worker not started: \(error)")
+            log("live worker not started: \((error as? RecapError)?.message ?? String(describing: error))")
         }
     }
 
@@ -121,8 +125,8 @@ final class RecordingController {
     }
 }
 
-enum RecorderLauncher {
-    static func launch(dir: URL) throws {
+package enum RecorderLauncher {
+    package static func launch(dir: URL) throws {
         let log = dir.appending(path: "recorder.log")
         if let app = Paths.appBundle {
             let open = URL(fileURLWithPath: "/usr/bin/open")

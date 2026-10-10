@@ -31,6 +31,7 @@ struct Recap: ParsableCommand {
             ProposalsCommand.self,
             ConfigCommand.self,
             LiveWorkerCommand.self,
+            CaptureCommand.self,
         ]
     )
 }

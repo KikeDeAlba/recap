@@ -9,11 +9,13 @@ version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/recap/Recap
 app="build/Recap.app"
 
 swift build -c "$configuration" --product recap
-binary="$(swift build -c "$configuration" --show-bin-path)/recap"
+swift build -c "$configuration" --product recap-capture
+bin_path="$(swift build -c "$configuration" --show-bin-path)"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$binary" "$app/Contents/MacOS/recap"
+cp "$bin_path/recap" "$app/Contents/MacOS/recap"
+cp "$bin_path/recap-capture" "$app/Contents/MacOS/recap-capture"
 sed "s/__VERSION__/$version/g" Resources/Info.plist > "$app/Contents/Info.plist"
 find Resources -type f ! -name Info.plist -exec cp {} "$app/Contents/Resources/" \;
 
@@ -26,6 +28,7 @@ if [[ -z "$identity" ]]; then
   echo "warning: no Apple Development identity found; signing ad-hoc, permissions may be requested again after each build" >&2
 fi
 
+codesign --force --sign "$identity" --identifier com.kikedealba.recap-capture "$app/Contents/MacOS/recap-capture"
 codesign --force --sign "$identity" --identifier com.kikedealba.recap "$app"
 codesign --verify --strict "$app"
 echo "$app ($version, signed with: $identity)"

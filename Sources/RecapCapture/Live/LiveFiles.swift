@@ -1,50 +1,62 @@
 import Darwin
 import Foundation
 
-enum LiveFiles {
-    static let directoryName = "live"
-    static let chunksDirectoryName = "chunks"
+package enum LiveFiles {
+    package static let directoryName = "live"
+    package static let chunksDirectoryName = "chunks"
 
-    static func dir(_ meetingDir: URL) -> URL { meetingDir.appending(path: directoryName) }
-    static func chunks(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: chunksDirectoryName) }
-    static func chunkIndex(_ meetingDir: URL) -> URL { chunks(meetingDir).appending(path: "index.jsonl") }
-    static func transcript(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "transcript.jsonl") }
-    static func answers(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "answers.jsonl") }
-    static func workerLock(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker.pid") }
-    static func workerState(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker-state.json") }
-    static func detectorState(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "detector-state.json") }
-    static func asking(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "asking.json") }
-    static func askingDir(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "asking") }
-    static func workerLog(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker.log") }
+    package static func dir(_ meetingDir: URL) -> URL { meetingDir.appending(path: directoryName) }
+    package static func chunks(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: chunksDirectoryName) }
+    package static func chunkIndex(_ meetingDir: URL) -> URL { chunks(meetingDir).appending(path: "index.jsonl") }
+    package static func transcript(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "transcript.jsonl") }
+    package static func answers(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "answers.jsonl") }
+    package static func workerLock(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker.pid") }
+    package static func workerState(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker-state.json") }
+    package static func detectorState(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "detector-state.json") }
+    package static func asking(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "asking.json") }
+    package static func askingDir(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "asking") }
+    package static func workerLog(_ meetingDir: URL) -> URL { dir(meetingDir).appending(path: "worker.log") }
+
+    package static func chunkFileName(channel: Channel, seq: Int) -> String {
+        String(format: "%@-%05d.wav", channel.rawValue, seq)
+    }
 }
 
-struct ChunkIndexEntry: Codable, Equatable {
-    var file: String?
-    var channel: Channel
-    var seq: Int
-    var startMs: Int
-    var endMs: Int
+package struct ChunkIndexEntry: Codable, Equatable {
+    package var file: String?
+    package var channel: Channel
+    package var seq: Int
+    package var startMs: Int
+    package var endMs: Int
+
+    package init(file: String?, channel: Channel, seq: Int, startMs: Int, endMs: Int) {
+        self.file = file
+        self.channel = channel
+        self.seq = seq
+        self.startMs = startMs
+        self.endMs = endMs
+    }
 }
 
-enum JSONLines {
-    static let encoder: JSONEncoder = {
+package enum JSONLines {
+    package static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
 
-    static let decoder: JSONDecoder = {
+    package static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
 
-    static func line<T: Encodable>(_ value: T) throws -> String {
+    package static func line<T: Encodable>(_ value: T) throws -> String {
         String(decoding: try encoder.encode(value), as: UTF8.self)
     }
 
-    static func append<T: Encodable>(_ values: [T], to url: URL) throws {
+    package static func append<T: Encodable>(_ values: [T], to url: URL) throws {
         guard !values.isEmpty else { return }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let text = try values.map { try line($0) + "\n" }.joined()
@@ -60,20 +72,20 @@ enum JSONLines {
         }
     }
 
-    static func read<T: Decodable>(_ type: T.Type, from url: URL) -> [T] {
+    package static func read<T: Decodable>(_ type: T.Type, from url: URL) -> [T] {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         return parse(type, text)
     }
 
-    static func parse<T: Decodable>(_ type: T.Type, _ text: String) -> [T] {
+    package static func parse<T: Decodable>(_ type: T.Type, _ text: String) -> [T] {
         text.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
             try? decoder.decode(T.self, from: Data(line.utf8))
         }
     }
 }
 
-enum WavFile {
-    static func encode(_ samples: [Float], sampleRate: Int) -> Data {
+package enum WavFile {
+    package static func encode(_ samples: [Float], sampleRate: Int) -> Data {
         var data = Data()
         let dataBytes = samples.count * 2
         func append<T: FixedWidthInteger>(_ value: T) {
@@ -101,7 +113,7 @@ enum WavFile {
         return data
     }
 
-    static func writeAtomically(_ samples: [Float], sampleRate: Int, to url: URL) throws {
+    package static func writeAtomically(_ samples: [Float], sampleRate: Int, to url: URL) throws {
         let temporary = url.deletingLastPathComponent().appending(path: ".\(url.lastPathComponent).tmp")
         try encode(samples, sampleRate: sampleRate).write(to: temporary)
         guard rename(temporary.path, url.path) == 0 else {

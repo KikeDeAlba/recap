@@ -20,10 +20,11 @@ install: bundle
 	rm -rf "$(PREFIX_APP)/Recap.app"
 	cp -R build/Recap.app "$(PREFIX_APP)/Recap.app"
 	ln -sf "$(PREFIX_APP)/Recap.app/Contents/MacOS/recap" "$(PREFIX_BIN)/recap"
-	@echo "Installed $(PREFIX_APP)/Recap.app and $(PREFIX_BIN)/recap"
+	ln -sf "$(PREFIX_APP)/Recap.app/Contents/MacOS/recap-capture" "$(PREFIX_BIN)/recap-capture"
+	@echo "Installed $(PREFIX_APP)/Recap.app, $(PREFIX_BIN)/recap and $(PREFIX_BIN)/recap-capture"
 
 uninstall:
-	rm -rf "$(PREFIX_APP)/Recap.app" "$(PREFIX_BIN)/recap"
+	rm -rf "$(PREFIX_APP)/Recap.app" "$(PREFIX_BIN)/recap" "$(PREFIX_BIN)/recap-capture"
 
 clean:
 	rm -rf .build build
