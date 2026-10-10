@@ -7,6 +7,57 @@ Record meetings on macOS and turn them into a transcript, a summary, agreements 
 | Remote (Meet, Zoom, Teams) | `--remote` | Screen (1280 px, 2 fps), system audio and microphone, as separate tracks | Screen & System Audio Recording, Microphone |
 | In-person | `--in-person` | Microphone only | Microphone |
 
+## Instalación con npm (núcleo en TypeScript)
+
+Desde la 0.9 la CLI `recap` es un paquete de npm, `@kikedealba/recap`, que corre
+en macOS, Windows y Linux. Lo único que sigue siendo exclusivo de macOS es la
+grabación, que hace `Recap.app` (el grabador nativo `recap-capture`).
+
+```sh
+npm install -g @kikedealba/recap      # o: pnpm add -g @kikedealba/recap
+recap setup --install-deps
+```
+
+Requisitos: Node 24 o superior, ffmpeg, whisper.cpp (`whisper-cli`) y
+[Claude Code](https://claude.com/claude-code) para las minutas.
+
+`recap setup` hace todo lo demás:
+
+- con `--install-deps` instala ffmpeg y whisper-cpp con Homebrew en macOS y
+  ffmpeg con winget en Windows; en Linux muestra el comando (`sudo apt install
+  ffmpeg`) y cómo conseguir whisper.cpp;
+- descarga los modelos de whisper a `~/.local/share/recap/models`
+  (`--skip-models` lo omite);
+- en macOS baja `Recap.app` del último release de GitHub a `~/Applications` si
+  no está (`--skip-app` lo omite; `RECAP_APP` apunta a otra copia) y pide los
+  permisos de micrófono y pantalla (`--skip-permissions` solo los reporta);
+- registra recap en el registro de herramientas de
+  [kit](https://github.com/KikeDeAlba/kit) (`~/.config/kikedealba/tools.d`) con
+  sus capacidades y, si bita está instalado, la suscripción a sus eventos
+  `start`, `stop`, `cancel` y `amend` de las entradas `remote-meeting` e
+  `in-person-meeting`. Reemplaza al viejo `bita hooks add` y quita ese hook si
+  lo encuentra, para que no se dispare dos veces;
+- instala la skill y los comandos en los agentes que encuentre: Claude Code,
+  opencode, Codex y Gemini CLI (`--agents codex,gemini`, `--agents all` o
+  `--agents none`). Si el plugin de Claude Code ya está instalado, no lo duplica.
+
+En Windows y Linux `recap start` falla con `CAPTURE_UNAVAILABLE`: graba con la
+app que quieras y procesa el archivo con
+
+```sh
+recap import grabacion.m4a --title "Revisión semanal"     # presencial por omisión
+recap import llamada.mov --remote                         # video con dos pistas de audio
+```
+
+Los archivos en disco, los comandos, las opciones y el sobre `--json` son los
+mismos que los del `recap` en Swift, así que las dos versiones leen las mismas
+reuniones. Cuando [inkwell](https://github.com/KikeDeAlba/inkwell) está
+instalado y ya migró los documentos de bita, las páginas, las propuestas y el
+backlog se escriben con inkwell; si no, con `bita docs` y `bita backlog`.
+
+Para trabajar en el paquete: `pnpm install`, `pnpm test`, `pnpm typecheck` y
+`node src/bin/recap.ts <comando>`.
+
 ## Requirements
 
 - macOS 15 or later (ScreenCaptureKit microphone capture), Apple Silicon recommended
@@ -268,6 +319,55 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
 
 Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`.
 
+## recap-capture
+
+`recap-capture` is the capture half of recap as a standalone executable, for tools that want to record a meeting without the rest of recap. It ships inside `Recap.app` next to `recap` (`Recap.app/Contents/MacOS/recap-capture`), `make install` links it into `~/.local/bin`, and its code lives in the `RecapCapture` library target that `recap` itself uses, so both record exactly the same way.
+
+```sh
+recap-capture record <meetingDir> [--live-worker <command>]   # record until SIGINT or SIGTERM
+recap-capture permissions [--request] [--json]                # {microphone, screen}: granted, denied, not-determined, restricted
+recap-capture capabilities --json                             # kit envelope: name, version, capabilities, emits
+recap-capture --version
+```
+
+`--json` prints one line with the same envelope as `recap` (`schemaVersion`, `ok`, `command`, `generatedAt`, `data` or `error {code, message}`). Capabilities: `capture.remote`, `capture.in-person` and `capture.live-chunks`. A usage error with `--json` prints an error envelope with code `USAGE` and exits with 64.
+
+### Launching it
+
+macOS grants the microphone and screen permissions to the app that is running, so record through the bundle:
+
+```sh
+open -g -n -a Recap.app --stdout <meetingDir>/recorder.log --stderr <meetingDir>/recorder.log \
+  --args capture record <meetingDir>
+```
+
+`recap capture <command>` runs the same commands as `recap-capture <command>`, with the same envelopes; that is how the `open` call above, which always starts the bundle's main executable, reaches them. `permissions --request` only shows the system prompts this way; running `recap-capture` directly from a terminal attributes the permissions to the terminal. macOS applies a newly granted screen permission on the next launch, so the report that follows the request still says `denied` for it.
+
+### On-disk contract
+
+The caller creates `<meetingDir>/meeting.json` and `recap-capture record` updates it in place (pretty-printed, sorted keys, ISO 8601 dates):
+
+| Key | Who writes it | Meaning |
+|---|---|---|
+| `schemaVersion`, `id`, `title`, `createdAt`, `stages` | caller | required to read the file; `stages` can be `{}` |
+| `mode` | caller | `remote` or `in-person` |
+| `status` | caller (`starting`), recorder | `recording` once capture starts, `recorded` after a clean stop, `failed` when it cannot start |
+| `display` | caller, optional | display ID to record in remote mode; the main display otherwise |
+| `recorderPid` | recorder | the recorder's PID while it runs, removed when it stops |
+| `startedAt`, `endedAt` | recorder | when the capture started and stopped |
+| `error` | recorder | why it failed or stopped early |
+
+Every other key, including ones recap does not know, is kept. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
+
+When `live.enabled` is on (the default, see Configuration), it also cuts the audio into 16 kHz mono 16-bit WAV chunks under `live/chunks/`, named `<channel>-<seq, 5 digits>.wav` with `channel` `mic` or `system`, and appends one line per chunk to `live/chunks/index.jsonl`:
+
+```json
+{"channel":"mic","endMs":9870,"file":"mic-00001.wav","seq":1,"startMs":0}
+{"channel":"system","endMs":12000,"seq":2,"startMs":9870}
+```
+
+Offsets are milliseconds from the start of the recording; chunks without speech have no `file` and no WAV. Then it spawns the live worker, detached, with its output in `live/worker.log`. `--live-worker` (or `RECAP_LIVE_WORKER` when the option is absent) picks it: an executable runs as `<executable> live-worker <meetingDir>`, a JSON array such as `["node", "/path/recap.js", "live-worker"]` is the whole command with `<meetingDir>` appended, and `none` turns it off. Use absolute paths: an app started by `open` gets the minimal launchd `PATH`, and bare names are only searched there and in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. `open` does not pass the caller's environment either; `recap start` forwards `RECAP_LIVE_WORKER` with `open --env`, and other callers should do the same or use `--live-worker`. By default `recap-capture` spawns the `recap` next to it and `recap` spawns itself, which is the behavior of `recap start`.
+
 ## Development
 
 ```sh
@@ -282,7 +382,7 @@ make release                      # dist/Recap-<version>-macos-arm64.zip and its
 ./scripts/release.sh --publish    # from main: create or update the v<version> GitHub release
 ```
 
-The version comes from `Recap.version` in `Sources/recap/Recap.swift`. Releases are built and signed locally with an Apple Development identity, so macOS keeps the permissions across updates; they are not notarized. `bita setup` downloads the `*-macos-arm64.zip` asset of the latest release.
+The version comes from `CaptureTool.version` in `Sources/RecapCapture/Commands/CaptureCommands.swift`, which `recap` and `recap-capture` share. Releases are built and signed locally with an Apple Development identity, so macOS keeps the permissions across updates; they are not notarized. `bita setup` downloads the `*-macos-arm64.zip` asset of the latest release.
 
 ## License
 

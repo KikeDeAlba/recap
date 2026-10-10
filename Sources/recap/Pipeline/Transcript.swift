@@ -1,17 +1,5 @@
 import Foundation
 
-enum Channel: String, Codable {
-    case mic
-    case system
-
-    var speakerLabel: String {
-        switch self {
-        case .mic: "Sala"
-        case .system: "Remotos"
-        }
-    }
-}
-
 struct Segment: Codable, Equatable {
     var startMs: Int
     var endMs: Int

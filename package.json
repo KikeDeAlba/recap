@@ -1,0 +1,59 @@
+{
+  "name": "@kikedealba/recap",
+  "version": "0.9.0",
+  "description": "Meeting recorder CLI: local transcription with whisper.cpp, minutes written by Claude Code, live answers and bita integration.",
+  "license": "MIT",
+  "author": "Jesus Enrique De Alba Gaytan",
+  "homepage": "https://github.com/KikeDeAlba/recap#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KikeDeAlba/recap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KikeDeAlba/recap/issues"
+  },
+  "keywords": [
+    "meetings",
+    "recording",
+    "transcription",
+    "minutes",
+    "whisper",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "opencode"
+  ],
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "recap": "dist/bin/recap.js"
+  },
+  "files": [
+    "dist",
+    "Resources/*.md",
+    "skills",
+    "commands",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "recap": "node src/bin/recap.ts"
+  },
+  "dependencies": {
+    "@kikedealba/kit": "^0.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.2"
+  }
+}

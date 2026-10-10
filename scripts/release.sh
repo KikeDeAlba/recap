@@ -12,7 +12,7 @@ for argument in "$@"; do
   esac
 done
 
-version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/recap/Recap.swift)"
+version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/RecapCapture/Commands/CaptureCommands.swift)"
 asset="Recap-${version}-macos-arm64.zip"
 
 ./scripts/bundle.sh
