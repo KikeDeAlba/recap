@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { PACKAGE_ROOT } from '../version.ts'
+import type { PlatformContext } from '@kikedealba/kit/platform'
+import { stableBin } from '@kikedealba/kit/registry'
+import { PACKAGE_ROOT, VERSION } from '../version.ts'
 import { spawnDetached } from './proc.ts'
 
 export function binEntry(): string {
@@ -10,6 +12,10 @@ export function binEntry(): string {
 
 export function selfCommand(): string[] {
   return [process.execPath, binEntry()]
+}
+
+export function stableCommand(ctx?: PlatformContext): Promise<string[]> {
+  return stableBin('recap', VERSION, selfCommand(), ctx)
 }
 
 export function spawnSelf(args: readonly string[], logPath: string): number {
