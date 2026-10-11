@@ -60,8 +60,7 @@ el micrófono. Si el contexto no deja claro cuál es, pregunta con una sola lín
 
    `stop` lanza el procesamiento en segundo plano (transcripción, capturas,
    minuta y cierre). Tarda de uno a cinco minutos por hora de reunión: corre
-   `recap wait` con un timeout amplio. El monitor del plugin de Claude Code
-   avisa en la sesión cuando termina, así que no hace falta sondear.
+   `recap wait` con un timeout amplio en vez de sondear.
 5. **Cierre automático** (con bita e inkwell): recap le pone título y proyecto
    al cronómetro, crea o completa la página en inkwell, pasa pendientes y
    hallazgos al backlog y deja la minuta en la nota de la entrada. El
