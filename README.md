@@ -37,9 +37,14 @@ Requisitos: Node 24 o superior, ffmpeg, whisper.cpp (`whisper-cli`) y
   `start`, `stop`, `cancel` y `amend` de las entradas `remote-meeting` e
   `in-person-meeting`. Reemplaza al viejo `bita hooks add` y quita ese hook si
   lo encuentra, para que no se dispare dos veces;
-- instala la skill y los comandos en los agentes que encuentre: Claude Code,
-  opencode, Codex y Gemini CLI (`--agents codex,gemini`, `--agents all` o
-  `--agents none`). Si el plugin de Claude Code ya está instalado, no lo duplica.
+- en Claude Code agrega o actualiza el marketplace `KikeDeAlba/recap` e instala
+  o actualiza el plugin `recap@recap` (`claude plugin marketplace add|update` y
+  `claude plugin install|update --scope user`), así el plugin queda en la misma
+  versión que la CLI; también quita los archivos sueltos que versiones viejas
+  dejaron en `~/.claude`;
+- en opencode, Codex y Gemini CLI instala la skill y las skills de usuario en el
+  formato de cada uno (`--agents codex,gemini`, `--agents all` o
+  `--agents none`).
 
 En Windows y Linux `recap start` falla con `CAPTURE_UNAVAILABLE`: graba con la
 app que quieras y procesa el archivo con
@@ -133,26 +138,47 @@ recap prompt <meeting>                 # print the summary prompt with transcrip
 recap save-summary <meeting> file.md   # store minutes written elsewhere
 ```
 
-## Claude Code plugin
+## Plugin de Claude Code
 
-The repository is also a Claude Code plugin marketplace:
+El repositorio también es un marketplace de plugins de Claude Code. `recap setup`
+lo instala y lo mantiene al día; a mano sería:
 
 ```
-/plugin marketplace add KikeDeAlba/recap
-/plugin install recap@recap
+claude plugin marketplace add KikeDeAlba/recap
+claude plugin install recap@recap --scope user
+claude plugin marketplace update recap && claude plugin update recap@recap   # al actualizar la CLI
 ```
 
-| Command | What it does |
-|---|---|
-| `/recap-start [remota\|presencial] [título]` | Starts a recording; infers the mode from the arguments or the conversation and asks when it cannot |
-| `/recap-stop [--wait]` | Stops the recording; with `--wait` it processes in the foreground and shows agreements and action items |
-| `/recap-status` | Shows whether a recording is running and how far processing got |
-| `/recap-list [meeting]` | Lists meetings or shows one meeting's minutes |
-| `/recap-summarize [meeting] [instructions]` | Rewrites the minutes inside the session, following extra instructions, and stores them with `recap save-summary` |
-| `/recap-ask [question]` | Answers the last question of the meeting being recorded, or the one given, from the inkwell pages and the project repositories |
-| `/recap-proposals [meeting]` | Reviews the documentation changes proposed by a meeting and accepts, edits or rejects them |
+Trae tres cosas:
 
-The `recap` skill lets Claude answer questions such as "¿qué acordamos en la reunión de ayer?" from the stored minutes and transcripts. The commands call `recap`, so it must be on the `PATH` of the shell Claude Code runs.
+- **La skill `recap`**, que Claude carga sola cuando la conversación trata de
+  reuniones ("¿qué acordamos en la reunión de ayer?"). Es la única fuente del
+  flujo de una reunión; bita y tally enlazan a ella. Lo largo (cierre con bita e
+  inkwell, en vivo, propuestas, espacio) vive en archivos aparte que se leen
+  solo cuando hacen falta.
+- **Skills de usuario** con `disable-model-invocation: true`: no ocupan contexto
+  y solo corren cuando las escribes.
+
+  | Skill | Qué hace |
+  |---|---|
+  | `/recap:recap-start [remota\|presencial] [título]` | Empieza a grabar; saca el modo de los argumentos o de la conversación y pregunta si no puede |
+  | `/recap:recap-stop [--no-wait]` | Para la grabación (por bita si la sigue un cronómetro), espera el procesamiento y muestra el resultado |
+  | `/recap:recap-status` | Dice si se está grabando y en qué va el procesamiento |
+  | `/recap:recap-list [reunión]` | Lista las reuniones o muestra la minuta de una |
+  | `/recap:recap-summarize [reunión] [indicaciones]` | Rehace la minuta dentro de la sesión y la guarda con `recap save-summary` |
+  | `/recap:recap-ask [pregunta]` | Responde la última pregunta de la reunión en curso, o la que le pases, con las páginas de inkwell y los repos del proyecto |
+  | `/recap:recap-proposals [reunión]` | Revisa los cambios a la documentación que propuso una reunión |
+
+- **Un monitor** (`monitors/monitors.json`) que corre `recap watch` en segundo
+  plano en cada sesión interactiva. Revisa las carpetas de reuniones cada 5 s,
+  sin llamar al modelo, y escribe una sola línea cuando una reunión termina de
+  procesarse o falla; esa línea le llega a Claude como notificación. No corre
+  con `claude -p`. Si `recap` no está en el `PATH`, no hace nada. Para apagarlo,
+  define `RECAP_MONITOR=off` en el entorno de Claude Code (por ejemplo en
+  `"env"` de `~/.claude/settings.json`).
+
+Las skills llaman a `recap`, así que tiene que estar en el `PATH` del shell que
+usa Claude Code.
 
 ## Live assistant
 
