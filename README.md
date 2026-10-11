@@ -204,7 +204,7 @@ bita-desktop drives this from its floating window: it opens while recording (`li
 
 #### Detected questions
 
-With `live.autoAsk` on (the default), the live worker also looks for questions on its own queue, so transcription never waits for it:
+With `live.autoAsk` on (the default), the live worker also looks for questions on its own queue, so transcription never waits for it. The worker rereads `live.autoAsk` whenever the config file changes, so turning it off mid-meeting (from Den or `recap config set live.autoAsk false`) stops the detection at once and cancels the queued and running auto answers; turning it back on only looks at what is said from then on:
 
 - It keeps a cursor in `live/detector-state.json` (`{"detectedThroughMs": …, "examinedSegments": …}`): the transcript lines already examined and the end of the last one. While there are lines past the cursor, and at most once every `live.autoAskMinSeconds` (default 5, 3–120), it sends the new lines, plus up to 60 s before the cursor marked as already reviewed, with the project and its page titles to `claude -p --model <live.autoAskModel>` (default `haiku`) with no tools and the same isolation flags as the pipeline (`Resources/detect-prompt.md`). The answer is strict JSON with every distinct question in the new part: `{"questions": [{"question": "…", "at": "HH:MM:SS"}]}` or `{"questions": []}` (the older `{"question": …}` form is still accepted). A follow-up that only refines the previous question is merged into it.
 - The cursor moves only after a successful call, so lines are never lost to a failed call or to answers in progress; it is retried on the next interval even if the transcript does not grow.
