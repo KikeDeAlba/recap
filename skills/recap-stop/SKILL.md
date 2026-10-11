@@ -69,5 +69,4 @@ inkwell backlog edit <CLAVE> --project <X>   # una por cada valor de wrapup.back
 El tiempo de la reunión se vuelca a Jira después con tally, no desde aquí.
 
 Con `--no-wait` en `$ARGUMENTS`, solo para y responde en una línea que el
-procesamiento sigue en segundo plano. El monitor del plugin avisa en la sesión
-cuando la reunión termine de procesarse.
+procesamiento sigue en segundo plano y que `recap status` dice cuándo termina.

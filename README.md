@@ -169,13 +169,9 @@ Trae tres cosas:
   | `/recap:recap-ask [pregunta]` | Responde la última pregunta de la reunión en curso, o la que le pases, con las páginas de inkwell y los repos del proyecto |
   | `/recap:recap-proposals [reunión]` | Revisa los cambios a la documentación que propuso una reunión |
 
-- **Un monitor** (`monitors/monitors.json`) que corre `recap watch` en segundo
-  plano en cada sesión interactiva. Revisa las carpetas de reuniones cada 5 s,
-  sin llamar al modelo, y escribe una sola línea cuando una reunión termina de
-  procesarse o falla; esa línea le llega a Claude como notificación. No corre
-  con `claude -p`. Si `recap` no está en el `PATH`, no hace nada. Para apagarlo,
-  define `RECAP_MONITOR=off` en el entorno de Claude Code (por ejemplo en
-  `"env"` de `~/.claude/settings.json`).
+- **Sin monitor.** El plugin no arranca nada en segundo plano. `recap watch`
+  sigue disponible a mano: escribe una línea cuando una reunión termina de
+  procesarse o falla (`RECAP_MONITOR=off` lo apaga).
 
 Las skills llaman a `recap`, así que tiene que estar en el `PATH` del shell que
 usa Claude Code.

@@ -43,7 +43,7 @@ test('every skill has valid frontmatter and the user skills are hidden from the 
   assert.equal(integration().commands, undefined)
 })
 
-test('the plugin manifests carry the package version and a valid monitor', () => {
+test('the plugin manifests carry the package version and no monitor', () => {
   const { version } = readJson('package.json') as { version: string }
   assert.equal((readJson('.claude-plugin/plugin.json') as { version: string }).version, version)
   const market = readJson('.claude-plugin/marketplace.json') as { name: string; plugins: { name: string; version: string; source: string }[] }
@@ -51,13 +51,7 @@ test('the plugin manifests carry the package version and a valid monitor', () =>
   assert.deepEqual(market.plugins.map((plugin) => [plugin.name, plugin.version, plugin.source]), [[CLAUDE_PLUGIN.plugin, version, './']])
   const swift = readFileSync(path.join(PACKAGE_ROOT, 'Sources', 'RecapCapture', 'Commands', 'CaptureCommands.swift'), 'utf8')
   assert.ok(swift.includes(`static let version = "${version}"`))
-  const monitors = readJson('monitors/monitors.json') as Record<string, unknown>[]
-  assert.equal(monitors.length, 1)
-  for (const monitor of monitors) {
-    assert.deepEqual(Object.keys(monitor).sort(), ['command', 'description', 'name'])
-    assert.match(String(monitor['command']), /recap watch/)
-    assert.doesNotMatch(String(monitor['command']), /user_config/)
-  }
+  assert.ok(!existsSync(path.join(PACKAGE_ROOT, 'monitors')))
 })
 
 test('installing for Claude Code adds or updates the plugin and removes the legacy files', { skip: process.platform === 'win32' && 'needs symlinks' }, async (t) => {
