@@ -1,6 +1,6 @@
 ---
 name: recap-summarize
-description: Rehace la minuta de una reunión dentro de la sesión, con indicaciones
+description: Rehace la minuta de una reunión con indicaciones
 argument-hint: [id o "last"] [indicaciones, p. ej. "enfócate en los riesgos"]
 allowed-tools: Bash(recap prompt:*), Bash(recap save-summary:*), Bash(recap show:*), Read, Write
 disable-model-invocation: true

@@ -1,6 +1,6 @@
 ---
 name: recap-ask
-description: Responde la última pregunta de la reunión en curso con las páginas y repos del proyecto
+description: Responde la última pregunta de la reunión en curso
 argument-hint: [pregunta, opcional]
 allowed-tools: Bash(recap ask:*)
 disable-model-invocation: true
