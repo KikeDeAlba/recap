@@ -1,7 +1,9 @@
 ---
+name: recap-stop
 description: Termina la grabación y deja la reunión documentada
 argument-hint: [--no-wait para no esperar el resultado]
 allowed-tools: Bash(recap stop:*), Bash(recap status:*), Bash(recap wait:*), Bash(recap show:*), Bash(bita stop:*), Bash(bita ls:*), Bash(bita amend:*), Bash(inkwell page move:*), Bash(inkwell backlog edit:*)
+disable-model-invocation: true
 ---
 
 Detén la grabación activa y deja la reunión documentada.
@@ -22,13 +24,10 @@ bita stop <id> --json
 recap wait --bita-entry <id> --json
 ```
 
-El evento de bita detiene la grabación y recap hace lo demás:
-
-- transcribe y escribe la minuta;
-- le pone al cronómetro un título real y, si no tenía, su proyecto (`bita amend`);
-- crea o completa la página en inkwell;
-- pasa los pendientes y hallazgos al backlog de inkwell;
-- deja la minuta en la sección «Reunión» de la nota de la entrada (`inkwell note save`).
+El evento de bita detiene la grabación y recap hace lo demás: transcribe,
+escribe la minuta, le pone título y proyecto al cronómetro (`bita amend`),
+crea o completa la página en inkwell, pasa pendientes y hallazgos al backlog
+de inkwell y deja la minuta en la nota de la entrada.
 
 Sin inkwell, las etapas `proposals` y `wrapup` quedan en `skipped` con su
 motivo (`stages.wrapup.reason`) y la minuta se queda en la carpeta de la
@@ -70,4 +69,5 @@ inkwell backlog edit <CLAVE> --project <X>   # una por cada valor de wrapup.back
 El tiempo de la reunión se vuelca a Jira después con tally, no desde aquí.
 
 Con `--no-wait` en `$ARGUMENTS`, solo para y responde en una línea que el
-procesamiento sigue en segundo plano.
+procesamiento sigue en segundo plano. El monitor del plugin avisa en la sesión
+cuando la reunión termine de procesarse.

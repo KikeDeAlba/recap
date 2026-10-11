@@ -6,21 +6,26 @@ description: Graba reuniones con la CLI `recap` y las convierte en minuta (resum
 # recap
 
 `recap` graba reuniones (en macOS, con Recap.app) y las procesa localmente en
-macOS, Windows y Linux. Todo vive en una carpeta por reunión bajo `~/Recap` (o
-la raíz configurada): `meeting.json`, la grabación, `transcript.md`, `frames/` y
+macOS, Windows y Linux. Cada reunión es una carpeta bajo `~/Recap` (o la raíz
+configurada) con `meeting.json`, la grabación, `transcript.md`, `frames/` y
 `summary.md`.
 
-Fuera de macOS no se puede grabar (`start` falla con `CAPTURE_UNAVAILABLE`):
-la reunión se graba con cualquier otra app y se procesa con
-`recap import <archivo> [--title "…"] [--in-person|--remote] --json`.
+Quién hace qué: bita mide el tiempo, recap graba y escribe la minuta, inkwell
+guarda la documentación, tally vuelca el tiempo a Jira y atl habla con Jira y
+Confluence. Este es el único lugar donde se describe el flujo de una reunión;
+las demás herramientas enlazan aquí.
 
 Todos los comandos aceptan `--json` y devuelven un sobre
 `{schemaVersion, ok, command, data, error}`. Usa `--json` siempre que vayas a
 leer el resultado; el texto plano es para mostrarlo tal cual.
 
-## Modos
+Fuera de macOS no se puede grabar (`start` falla con `CAPTURE_UNAVAILABLE`):
+la reunión se graba con otra app y se procesa con
+`recap import <archivo> [--title "…"] [--in-person|--remote] --json`.
 
-Hay que elegir el modo siempre; no tiene valor por defecto.
+## Modo
+
+Hay que elegirlo siempre; no tiene valor por defecto.
 
 | Modo | Flag | Cuándo |
 |---|---|---|
@@ -28,154 +33,49 @@ Hay que elegir el modo siempre; no tiene valor por defecto.
 | Presencial | `--in-person` | En sala, en oficina, en persona, junta física, comida, "aquí con" |
 
 En remota se graba pantalla, audio del sistema y micrófono; en presencial solo
-el micrófono, sin pantalla ni capturas. Si el contexto no deja claro cuál es,
-pregunta con una sola línea ("¿remota o presencial?") antes de arrancar.
+el micrófono. Si el contexto no deja claro cuál es, pregunta con una sola línea
+("¿remota o presencial?") antes de arrancar.
 
-## Ciclo
+## Flujo de una reunión
 
-```sh
-recap start --remote "Planeación sprint 42"
-recap status
-recap stop
-```
+1. **Ver el estado**: `recap status --json`. Si ya se está grabando
+   (`ALREADY_RECORDING` al arrancar), no arranques otra: avísalo.
+2. **Arrancar.** Si `data.bitaLinked` es true, recap sigue a los cronómetros
+   de bita: arranca por bita para que el tiempo también quede medido.
 
-- `start` falla con `ALREADY_RECORDING` si ya hay una grabación activa: no
-  arranques otra, avísalo.
-- `stop` cierra el archivo y lanza el procesamiento en segundo plano
-  (transcripción, capturas y minuta). Tarda de segundos a unos minutos según la
-  duración. `recap status` y `recap show <id>` dicen en qué etapa va.
-- `recap discard` descarta la grabación activa y borra su carpeta. Solo si el
-  usuario lo pide explícitamente.
+   ```sh
+   bita start "<título>" --kind remote-meeting      # o --kind in-person-meeting
+   recap start --remote "<título>"                  # solo si bitaLinked es false
+   ```
 
-## Liberar espacio
+3. **Durante la reunión**: `recap ask --active --json` responde la última
+   pregunta con las páginas de inkwell y los repos del proyecto. Detalle en
+   [live.md](live.md).
+4. **Parar.** Con cronómetro, para el cronómetro y espera; sin él, para recap:
 
-Solo si el usuario lo pide; todos aceptan `<id>` o `--bita-entry <id>` y `--json`.
+   ```sh
+   bita stop <id> --json && recap wait --bita-entry <id> --json
+   recap stop --json && recap wait --json
+   ```
 
-```sh
-recap compress-video <id> --preset light|medium|max   # recomprime el video en HEVC (solo remotas)
-recap strip-video <id>                                 # quita el video y deja recording.m4a con ambas pistas de audio
-recap prune <id> --intermediates                       # borra mic.wav, system.wav, transcript-mic/system.json y live/chunks
-recap delete <id>                                      # borra la carpeta completa de la reunión
-```
+   `stop` lanza el procesamiento en segundo plano (transcripción, capturas,
+   minuta y cierre). Tarda de uno a cinco minutos por hora de reunión: corre
+   `recap wait` con un timeout amplio. El monitor del plugin de Claude Code
+   avisa en la sesión cuando termina, así que no hace falta sondear.
+5. **Cierre automático** (con bita e inkwell): recap le pone título y proyecto
+   al cronómetro, crea o completa la página en inkwell, pasa pendientes y
+   hallazgos al backlog y deja la minuta en la nota de la entrada. El
+   resultado viene en `data.wrapup` de `recap wait`; si
+   `wrapup.projectResolved` es false, pregunta el proyecto. Detalle y
+   correcciones en [wrapup.md](wrapup.md).
+6. **Después**: los cambios que la reunión propuso a la documentación se
+   revisan con `/recap-proposals` ([proposals.md](proposals.md)), y el tiempo
+   de la reunión llega a Jira con tally, no desde recap.
 
-`compress-video` y `strip-video` aceptan `--prune-intermediates`. Fallan con
-`NOT_REMOTE` en reuniones presenciales, `NO_VIDEO` si ya no hay video,
-`MEETING_ACTIVE` mientras se graba y `NOT_SMALLER` si la compresión no ahorra
-espacio (el original se conserva). `recap list --json` trae `storage` y
-`hasVideo` de cada reunión.
-
-Errores típicos y qué hacer:
-
-| Código | Causa | Acción |
-|---|---|---|
-| `SCREEN_DENIED` | Recap.app sin permiso de grabación de pantalla | Pide activarlo en Configuración > Privacidad y seguridad > Grabación de pantalla y audio del sistema |
-| `MICROPHONE_DENIED` | Sin permiso de micrófono | Igual, en Micrófono |
-| `RECORDER_TIMEOUT` | Un diálogo de permisos quedó esperando | `recap setup` |
-| `DEPENDENCY_MISSING`, `MODEL_MISSING` | Falta ffmpeg, whisper-cli, claude o el modelo | `recap setup --install-deps` |
-| `CAPTURE_UNAVAILABLE` | No hay grabador en este equipo (Windows, Linux, o falta Recap.app) | Graba con otra app y usa `recap import <archivo>`; en mac, `recap setup` |
-
-## Con bita e inkwell
-
-Cada herramienta hace una sola cosa:
-
-- **bita** lleva el tiempo (cronómetros). recap solo le pide `projects`,
-  `project repo ls`, `entries get` y `amend` (título y proyecto).
-- **inkwell** guarda la documentación: páginas, backlog, propuestas, historial
-  y la nota de cada entrada de bita (`inkwell note …`).
-- **tally** vuelca a Jira el tiempo de bita (`tally summary --pending`); recap
-  no toca Jira.
-
-Si `recap status --json` trae `data.bitaLinked: true` (recap está suscrito a
-los eventos de bita desde `recap setup`), **arranca y para las reuniones desde
-bita**, no desde recap: así el tiempo queda medido y la grabación sigue al
-cronómetro.
-
-```sh
-bita start "<título>" --kind remote-meeting
-bita start "<título>" --kind in-person-meeting
-bita stop <id> --json                 # sin escribir la página: eso lo hace recap
-recap wait --bita-entry <id> --json   # espera a que todo quede listo
-```
-
-Cambiar el título o el proyecto del cronómetro mientras se graba (`bita amend`)
-no corta ni duplica la grabación: recap solo actualiza los datos de la reunión.
-Solo un cambio de tipo (`--kind`) que cruce la línea de reunión la arranca o la
-detiene.
-
-Al parar, recap hace todo lo demás sin que nadie lo pida:
-
-- transcribe y escribe la minuta;
-- le pone al cronómetro un título real, si el que tenía era genérico (`bita amend`);
-- le asigna el proyecto si no tenía y la conversación lo deja claro (`bita amend`);
-- crea la página en inkwell, ligada a la entrada (`inkwell page new --from-entry`),
-  o agrega una sección a la que ya tenía (`inkwell page ls --entry`), y la escribe;
-- pasa pendientes y hallazgos al backlog de inkwell (`inkwell backlog add`);
-- deja la minuta en la sección «Reunión» de la nota de la entrada
-  (`inkwell note save <entrada> --section Reunión --md …`).
-
-El resultado está en `data.wrapup` de `recap wait`. Si `wrapup.projectResolved`
-es false, pregunta el proyecto, aplícalo con `bita amend <id> --project …` y
-mueve la página y el backlog con `inkwell page move --project` e
-`inkwell backlog edit --project`.
-
-**Sin inkwell** la reunión igual queda procesada: las etapas `proposals` y
-`wrapup` quedan en `skipped` con el motivo en `stages.<etapa>.reason` y la pista
-`npm i -g @kikedealba/inkwell && inkwell setup`; la minuta se queda en
-`summary.md` de la carpeta de la reunión. Si inkwell es viejo y no tiene la
-capacidad `docs.entry-notes`, se escribe la página y el backlog pero la minuta
-no pasa a la nota (queda anotado en `process.log`). Después de instalar o
-actualizar inkwell, `recap process <id> --from proposals` lo completa.
-
-## En vivo
-
-Mientras se graba, recap transcribe por tramos de 5 a 20 s en
-`live/transcript.jsonl` (una línea `{startMs, endMs, channel, text}`; `mic` es
-Sala y `system` Remotos). Es aproximada: la transcripción de después del stop
-(`transcript.md`) sigue siendo la fuente de verdad.
-
-Para responder una pregunta que hicieron en la reunión, con las páginas de
-inkwell y los repos del proyecto (`bita project repo ls`); sin inkwell responde
-solo con los repos:
-
-```sh
-recap ask --active --json                              # la última pregunta de la transcripción
-recap ask --active --question "¿cómo se despliega X?" --json
-recap ask --meeting <id> --question "..." --json-stream   # eventos question/progress/delta/source/done
-recap ask --sources --project <p> --json               # qué consultaría, sin llamar a claude
-```
-
-La respuesta lleva `found` y `sources` (página, `archivo:línea` o commit) y se
-guarda en `live/answers.jsonl`. Con `found: false` no está documentado: no lo
-completes por tu cuenta. Se configura con `recap config get|set`
-(`live.enabled`, `live.openWindow`, `live.proposals`, `live.maxChunkSeconds`,
-`live.assistModel`, `live.autoAsk`, `live.autoAskModel`,
-`live.autoAskMinSeconds`).
-
-Con `live.autoAsk` (encendido por omisión), el live-worker detecta solo las
-preguntas técnicas de la reunión y las responde sin que nadie las pida: esas
-respuestas llevan `auto: true` en `live/answers.jsonl`. Mientras se responde
-algo, `live/asking.json` dice qué pregunta va (`{question, startedAt, auto}`);
-solo corre una respuesta a la vez y una manual detiene a la automática.
-
-## Cambios propuestos a la documentación
-
-Si la reunión está ligada a bita e inkwell está instalado, la etapa `proposals`
-(antes de `wrapup`) detecta los cambios explícitos y firmes a páginas de inkwell
-que ya existen y los deja en la rama `proposal/meeting-<entrada>` de sus docs
-(`inkwell git propose`), sin tocar `main`. Ideas,
-dudas y lo que se corrigió después no entran.
-
-```sh
-recap proposals ls <id> --json            # o --bita-entry <id>
-recap proposals show <id> <n> --json      # markdown, citas y diff
-recap proposals accept <id> <n> [--md <archivo editado>] --json
-recap proposals reject <id> <n> --json
-```
-
-Acepta o rechaza **solo cuando el usuario lo pida**. Si `accept` deja la
-propuesta en `stale`, la página cambió desde entonces: edítala sobre la versión
-actual y acéptala con `--md`. Cuando no queda ninguna pendiente, recap borra la
-rama. Usa `/recap-proposals` para revisarlas en la sesión.
+Cambiar el título o el proyecto del cronómetro mientras se graba
+(`bita amend`) no corta la grabación; solo un cambio de `--kind` que cruce la
+línea de reunión la arranca o la detiene. `recap discard` borra la grabación
+activa: solo si el usuario lo pide.
 
 ## Consultar reuniones
 
@@ -188,17 +88,35 @@ recap show <id> --path
 Para responder qué se habló o qué se acordó, lee `summary.md` de las reuniones
 que apliquen. Si hace falta precisión (una cifra, quién dijo qué), ve a
 `transcript.md`, que lleva el minuto de cada párrafo. Cita la reunión y el
-minuto en la respuesta. En reuniones remotas, **Sala** es el micrófono local y
-**Remotos** el audio de la llamada; no hay separación por persona.
+minuto. En remotas, **Sala** es el micrófono local y **Remotos** el audio de la
+llamada; no hay separación por persona.
 
 ## Regenerar la minuta
 
 - Sin intervención: `recap process <id> --from summarize`.
-- Dentro de la sesión, cuando el usuario quiere dirigir el enfoque o corregir
-  algo: usa `/recap-summarize`.
+- Dentro de la sesión, cuando el usuario quiere dirigir el enfoque: `/recap-summarize`.
+- Si una etapa falló, `recap process <id>` retoma desde ahí.
+
+## Errores típicos
+
+| Código | Causa | Acción |
+|---|---|---|
+| `SCREEN_DENIED` | Recap.app sin permiso de grabación de pantalla | Configuración > Privacidad y seguridad > Grabación de pantalla y audio del sistema |
+| `MICROPHONE_DENIED` | Sin permiso de micrófono | Igual, en Micrófono |
+| `RECORDER_TIMEOUT` | Un diálogo de permisos quedó esperando | `recap setup` |
+| `DEPENDENCY_MISSING`, `MODEL_MISSING` | Falta ffmpeg, whisper-cli, claude o el modelo | `recap setup --install-deps` |
+| `CAPTURE_UNAVAILABLE` | No hay grabador en este equipo | Graba con otra app y usa `recap import <archivo>`; en mac, `recap setup` |
+
+## Más detalle, bajo demanda
+
+- [wrapup.md](wrapup.md): qué hace el cierre con bita e inkwell, sin inkwell, y cómo corregir el proyecto.
+- [live.md](live.md): transcripción en vivo, `recap ask` y su configuración.
+- [proposals.md](proposals.md): cambios propuestos a la documentación.
+- [storage.md](storage.md): liberar espacio (comprimir, quitar video, borrar).
 
 ## Lo que no hace
 
 - No separa hablantes por persona: los nombres salen del contexto.
 - No sube nada a la nube salvo la transcripción que lee Claude al resumir, al
   responder con `recap ask` y al buscar cambios propuestos.
+- No toca Jira.

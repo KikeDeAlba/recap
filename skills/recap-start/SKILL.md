@@ -1,7 +1,9 @@
 ---
+name: recap-start
 description: Empieza a grabar una reunión (remota o presencial)
 argument-hint: [remota|presencial] [título]
 allowed-tools: Bash(recap start:*), Bash(recap status:*), Bash(recap import:*), Bash(bita start:*)
+disable-model-invocation: true
 ---
 
 Estado actual:

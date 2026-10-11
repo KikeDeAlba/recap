@@ -12,6 +12,7 @@ import { proposalsCommand } from './commands/proposals.ts'
 import { listCommand, processCommand, promptCommand, saveSummaryCommand, showCommand, waitCommand } from './commands/query.ts'
 import { discardCommand, importCommand, startCommand, statusCommand, stopCommand } from './commands/recording.ts'
 import { setupCommand } from './commands/setup.ts'
+import { watchCommand } from './commands/watch.ts'
 import { output } from './output.ts'
 
 type Command = (argv: string[]) => Promise<number>
@@ -46,6 +47,7 @@ const COMMANDS: Record<string, Command> = {
   ask: askCommand,
   proposals: proposalsCommand,
   config: configCommand,
+  watch: watchCommand,
   'live-worker': liveWorkerCommand,
   capabilities: capabilitiesCommand,
 }
@@ -69,6 +71,7 @@ export function help(): string {
     '  recap proposals ls|show|accept|reject <meeting> [n] [--bita-entry id] [--md file]',
     '  recap compress-video <meeting> --preset light|medium|max | strip-video <meeting> | prune <meeting> --intermediates | delete <meeting>',
     '  recap config get [key] | config set <key> <value>',
+    '  recap watch [--interval s]: one line per meeting that finishes processing; RECAP_MONITOR=off turns it off',
     '  recap setup [--install-deps] [--skip-models] [--skip-permissions] [--skip-bita] [--skip-app] [--agents detected|all|none|claude,opencode,codex,gemini]',
     '  recap capabilities',
     '',

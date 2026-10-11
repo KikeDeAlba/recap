@@ -1,0 +1,7 @@
+[
+  {
+    "name": "meetings",
+    "command": "command -v recap >/dev/null 2>&1 || exit 0; exec recap watch 2>/dev/null",
+    "description": "recap meetings that finish processing"
+  }
+]

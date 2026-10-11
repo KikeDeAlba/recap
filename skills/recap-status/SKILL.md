@@ -1,6 +1,8 @@
 ---
+name: recap-status
 description: Muestra si se está grabando y en qué va la última reunión
 allowed-tools: Bash(recap status:*)
+disable-model-invocation: true
 ---
 
 !`recap status --json`
