@@ -1,6 +1,6 @@
 ---
 name: recap
-description: Graba reuniones con la CLI `recap` y las convierte en minuta (resumen, acuerdos, pendientes y preguntas abiertas). Úsala cuando el usuario quiera empezar o terminar de grabar una reunión, saber si se está grabando, regenerar la minuta, o consultar qué se habló, qué se acordó o qué quedó pendiente en reuniones pasadas. Frases que la disparan: "graba la reunión", "empieza a grabar la junta", "ya terminó la reunión", "para la grabación", "¿se está grabando?", "¿qué acordamos en la reunión de ayer?", "pendientes de la junta con X", "rehaz la minuta".
+description: Graba reuniones con la CLI recap y las vuelve minuta con acuerdos y pendientes. Frases como "graba la reunión", "ya terminó la reunión", "¿se está grabando?", "¿qué acordamos en la reunión de ayer?".
 ---
 
 # recap

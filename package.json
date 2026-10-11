@@ -1,6 +1,6 @@
 {
   "name": "@kikedealba/recap",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Meeting recorder CLI: local transcription with whisper.cpp, minutes written by Claude Code, live answers, bita timers and inkwell docs.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
