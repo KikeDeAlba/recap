@@ -1,9 +1,17 @@
-import { loadConfig } from '../../core/config.ts'
+import { loadConfig, type Config } from '../../core/config.ts'
 import { isoNow } from '../../core/dates.ts'
 import { isDirectory } from '../../core/fsutil.ts'
 import { MeetingStore } from '../../core/meeting.ts'
 import { describeError } from '../../errors.ts'
 import { LiveWorker, makeLiveDetector } from '../../live/worker.ts'
+
+function currentConfig(fallback: Config): Config {
+  try {
+    return loadConfig()
+  } catch {
+    return fallback
+  }
+}
 
 export async function liveWorkerCommand(argv: string[]): Promise<number> {
   const log = (message: string) => process.stderr.write(`${isoNow()} ${message}\n`)
@@ -12,7 +20,7 @@ export async function liveWorkerCommand(argv: string[]): Promise<number> {
     if (!reference) throw new Error('Usage: recap live-worker <meeting dir or id>')
     const config = loadConfig()
     const dir = isDirectory(reference) ? reference : new MeetingStore(config).resolve(reference).dir
-    const worker = new LiveWorker(dir, config, log, { detectorFactory: (meetingDir, meeting) => makeLiveDetector(meetingDir, meeting, config, log) })
+    const worker = new LiveWorker(dir, config, log, { detectorFactory: (meetingDir, meeting) => makeLiveDetector(meetingDir, meeting, currentConfig(config), log) })
     await worker.run()
     return 0
   } catch (error) {
