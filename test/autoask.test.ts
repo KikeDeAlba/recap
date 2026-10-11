@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { test } from 'node:test'
 import { boardEntries, decodeAskingState, encodeAskingState, isValidAskId, makeAskId, performAsk, pruneBoard, readLegacyAsking, removeBoard, writeBoard } from '../src/live/asking.ts'
 import { emptyContext } from '../src/live/context.ts'
@@ -12,7 +13,8 @@ import { decodeAnswer, encodeAnswer, type Answer } from '../src/live/stream.ts'
 import { loadResource } from '../src/pipeline/resources.ts'
 import type { Segment } from '../src/pipeline/transcript.ts'
 import { RecapError } from '../src/errors.ts'
-import { meetingDir } from './helpers.ts'
+import { DetectorSwitch, autoAskWatcher } from '../src/live/worker.ts'
+import { meetingDir, tempDir } from './helpers.ts'
 
 const seg = (startMs: number, endMs: number, channel: 'mic' | 'system', text: string): Segment => ({ startMs, endMs, channel, text })
 
@@ -387,4 +389,96 @@ test('asking states and answers keep the Swift encoding', () => {
 test('auto ask arguments carry the origin and the ask id', () => {
   assert.deepEqual(autoAskArguments('/m', '¿q?'), ['ask', '--dir', '/m', '--question', '¿q?', '--auto', '--json'])
   assert.deepEqual(autoAskArguments('/m', '¿q?', { questionMs: 65_400, channel: 'system' }, 'abc'), ['ask', '--dir', '/m', '--question', '¿q?', '--auto', '--json', '--question-ms', '65400', '--channel', 'system', '--ask-id', 'abc'])
+})
+
+function switchedDetector(dir: string, value: ReturnType<typeof meetingDir>['meeting'], recorder: Recorder, cancels: { count: number }, now: () => number = Date.now) {
+  return new QuestionDetector(dir, value, 3, {
+    now,
+    template: () => '{{transcript}}',
+    context: () => emptyContext(),
+    complete: async (prompt) => {
+      recorder.prompts.push(prompt)
+      return '{"questions": [{"question": "¿cómo se despliega?", "at": "00:00:01"}]}'
+    },
+    enqueue: (question) => {
+      recorder.asked.push(question)
+    },
+    cancelAsks: () => {
+      cancels.count += 1
+    },
+    log: () => undefined,
+  })
+}
+
+test('turning live.autoAsk off mid-meeting stops detection and cancels the pending asks', async (t) => {
+  const { dir, meeting: value } = meetingDir(t)
+  const recorder = new Recorder()
+  const cancels = { count: 0 }
+  const lines: string[] = []
+  let enabled = true
+  const switcher = new DetectorSwitch(dir, value, (d, m) => switchedDetector(d, m, recorder, cancels), () => enabled, (line) => lines.push(line))
+  appendLines([seg(0, 2_000, 'system', '¿Cómo se despliega?')], liveFiles.transcript(dir))
+  await switcher.sync()
+  assert.ok(switcher.current?.tick())
+  assert.ok(await switcher.current?.waitUntilIdle(5))
+  assert.deepEqual(recorder.asked, ['¿cómo se despliega?'])
+  enabled = false
+  await switcher.sync()
+  assert.equal(switcher.current, null)
+  assert.equal(cancels.count, 1)
+  assert.ok(lines.includes('question detector off'))
+  appendLines([seg(3_000, 5_000, 'system', '¿Dónde está el pipeline?')], liveFiles.transcript(dir))
+  await switcher.sync()
+  assert.equal(switcher.current, null)
+  assert.equal(recorder.prompts.length, 1)
+})
+
+test('turning live.autoAsk on mid-meeting only examines what is said afterwards', async (t) => {
+  const { dir, meeting: value } = meetingDir(t)
+  const recorder = new Recorder()
+  let enabled = false
+  let made = 0
+  let clock = 0
+  const switcher = new DetectorSwitch(dir, value, (d, m) => {
+    made += 1
+    return switchedDetector(d, m, recorder, { count: 0 }, () => clock)
+  }, () => enabled, () => undefined)
+  await switcher.sync()
+  assert.equal(made, 0)
+  appendLines([seg(0, 2_000, 'system', 'Pregunta vieja')], liveFiles.transcript(dir))
+  enabled = true
+  await switcher.sync()
+  assert.equal(made, 1)
+  assert.deepEqual(loadCursor(dir), { detectedThroughMs: 2_000, examinedSegments: 1 })
+  assert.equal(switcher.current?.tick(), true)
+  assert.ok(await switcher.current?.waitUntilIdle(5))
+  assert.equal(recorder.prompts.length, 0)
+  appendLines([seg(3_000, 5_000, 'system', 'Pregunta nueva')], liveFiles.transcript(dir))
+  switcher.current?.transcriptGrew()
+  clock += 10_000
+  assert.equal(switcher.current?.tick(), true)
+  assert.ok(await switcher.current?.waitUntilIdle(5))
+  assert.equal(recorder.prompts.length, 1)
+  assert.match(recorder.prompts[0] ?? '', /Pregunta nueva/)
+  assert.doesNotMatch(recorder.prompts[0] ?? '', /Pregunta vieja/)
+})
+
+test('the auto ask watcher rereads live.autoAsk only when the config file changes', (t) => {
+  const dir = tempDir(t)
+  const file = path.join(dir, 'config.json')
+  writeFileSync(file, JSON.stringify({ live: { autoAsk: true } }))
+  const previous = process.env['RECAP_CONFIG_PATH']
+  process.env['RECAP_CONFIG_PATH'] = file
+  t.after(() => {
+    if (previous === undefined) delete process.env['RECAP_CONFIG_PATH']
+    else process.env['RECAP_CONFIG_PATH'] = previous
+  })
+  const enabled = autoAskWatcher({ live: { autoAsk: true } }, file)
+  assert.equal(enabled(), true)
+  writeFileSync(file, JSON.stringify({ live: { autoAsk: false } }))
+  utimesSync(file, new Date(), new Date(Date.now() + 5_000))
+  assert.equal(enabled(), false)
+  writeFileSync(file, '{broken')
+  utimesSync(file, new Date(), new Date(Date.now() + 10_000))
+  assert.equal(enabled(), false)
 })

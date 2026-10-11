@@ -548,7 +548,7 @@ final class AutoAskProcess {
 enum LiveQuestionDetector {
     static func make(dir: URL, meeting: Meeting, config: Config, log: @escaping (String) -> Void) -> QuestionDetector? {
         let settings = config.liveSettings
-        guard settings.autoAsk, let executable = Paths.executable else { return nil }
+        guard let executable = Paths.executable else { return nil }
         let runner = AutoAskProcess(dir: dir, executable: executable)
         let asks = AutoAskQueue(dir: dir, concurrency: settings.autoAskConcurrency, run: { try runner.run($0) },
                                 cancelRunning: { runner.cancel() }, log: log)

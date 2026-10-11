@@ -543,3 +543,74 @@ private func detector(_ dir: URL, _ meeting: Meeting, recorder: Recorder, minSec
         #expect(ProcessCheck.waitUntil(timeout: 3, interval: 0.05) { children.allSatisfy { !ProcessCheck.isAlive($0) } })
     }
 }
+
+final class Toggle: @unchecked Sendable {
+    var enabled: Bool
+    var cancels = 0
+    var made = 0
+    init(_ enabled: Bool) { self.enabled = enabled }
+}
+
+@Suite struct DetectorSwitchTests {
+    private let reply = #"{"questions": [{"question": "¿Cómo se despliega?", "at": "00:00:01"}]}"#
+
+    private func switched(_ dir: URL, _ meeting: Meeting, recorder: Recorder, toggle: Toggle, clock: ManualClock) -> DetectorSwitch {
+        DetectorSwitch(dir: dir, meeting: meeting, factory: { [reply] dir, meeting in
+            toggle.made += 1
+            return QuestionDetector(dir: dir, meeting: meeting, minSeconds: 3, dependencies: .init(
+                now: { clock.now }, template: { "{{transcript}}" }, context: { ProjectContext() },
+                complete: { prompt in recorder.prompt(prompt); return reply },
+                enqueue: { question, origin in recorder.ask(question, origin) },
+                cancelAsks: { toggle.cancels += 1 }, log: { _ in }))
+        }, enabled: { toggle.enabled }, log: { _ in })
+    }
+
+    @Test func turningAutoAskOffMidMeetingStopsDetectionAndCancelsAsks() throws {
+        let (dir, meeting) = try temporaryMeeting()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = Recorder()
+        let toggle = Toggle(true)
+        let clock = ManualClock(Date(timeIntervalSince1970: 5_000))
+        let subject = switched(dir, meeting, recorder: recorder, toggle: toggle, clock: clock)
+        try writeTranscript([Segment(startMs: 0, endMs: 2_000, channel: .system, text: "¿Cómo se despliega?")], to: dir)
+        subject.sync()
+        #expect(subject.current?.tick() == true)
+        #expect(subject.current?.waitUntilIdle(timeout: 5) == true)
+        #expect(recorder.asked == ["¿Cómo se despliega?"])
+        toggle.enabled = false
+        subject.sync()
+        #expect(subject.current == nil)
+        #expect(toggle.cancels == 1)
+        try writeTranscript([Segment(startMs: 3_000, endMs: 5_000, channel: .system, text: "¿Dónde está el pipeline?")], to: dir)
+        subject.sync()
+        #expect(subject.current == nil)
+        #expect(recorder.prompts.count == 1)
+    }
+
+    @Test func turningAutoAskOnMidMeetingOnlyExaminesWhatComesAfter() throws {
+        let (dir, meeting) = try temporaryMeeting()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = Recorder()
+        let toggle = Toggle(false)
+        let clock = ManualClock(Date(timeIntervalSince1970: 5_000))
+        let subject = switched(dir, meeting, recorder: recorder, toggle: toggle, clock: clock)
+        subject.sync()
+        #expect(toggle.made == 0)
+        try writeTranscript([Segment(startMs: 0, endMs: 2_000, channel: .system, text: "Pregunta vieja")], to: dir)
+        toggle.enabled = true
+        subject.sync()
+        #expect(toggle.made == 1)
+        #expect(DetectorCursor.load(dir) == DetectorCursor(detectedThroughMs: 2_000, examinedSegments: 1))
+        #expect(subject.current?.tick() == true)
+        #expect(subject.current?.waitUntilIdle(timeout: 5) == true)
+        #expect(recorder.prompts.isEmpty)
+        try writeTranscript([Segment(startMs: 3_000, endMs: 5_000, channel: .system, text: "Pregunta nueva")], to: dir)
+        subject.current?.transcriptGrew()
+        clock.now = clock.now.addingTimeInterval(10)
+        #expect(subject.current?.tick() == true)
+        #expect(subject.current?.waitUntilIdle(timeout: 5) == true)
+        #expect(recorder.prompts.count == 1)
+        #expect(recorder.prompts.first?.contains("Pregunta nueva") == true)
+        #expect(recorder.prompts.first?.contains("Pregunta vieja") == false)
+    }
+}

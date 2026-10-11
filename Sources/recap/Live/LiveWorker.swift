@@ -5,6 +5,72 @@ struct LiveWorkerState: Codable {
     var processed: Int
 }
 
+enum AutoAskWatcher {
+    static func make(initial: Config, file: URL = Paths.configFile) -> () -> Bool {
+        var stamp = modified(file)
+        var enabled = initial.liveSettings.autoAsk
+        return {
+            let current = modified(file)
+            if current != stamp {
+                stamp = current
+                if let config = try? Config.load() { enabled = config.liveSettings.autoAsk }
+            }
+            return enabled
+        }
+    }
+
+    static func modified(_ file: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+    }
+}
+
+final class DetectorSwitch {
+    private let dir: URL
+    private let meeting: Meeting
+    private let factory: ((URL, Meeting) -> QuestionDetector?)?
+    private let enabled: () -> Bool
+    private let log: (String) -> Void
+    private let describe: () -> String
+    private(set) var current: QuestionDetector?
+    private var synced = false
+
+    init(dir: URL, meeting: Meeting, factory: ((URL, Meeting) -> QuestionDetector?)?, enabled: @escaping () -> Bool,
+         log: @escaping (String) -> Void, describe: @escaping () -> String = { "" }) {
+        self.dir = dir
+        self.meeting = meeting
+        self.factory = factory
+        self.enabled = enabled
+        self.log = log
+        self.describe = describe
+    }
+
+    func sync() {
+        guard let factory else { return }
+        let wanted = enabled()
+        if wanted, current == nil {
+            if synced { Self.skipToTranscriptEnd(dir) }
+            current = factory(dir, meeting)
+            if current != nil { log("question detector on\(describe())") }
+        } else if !wanted, let detector = current {
+            current = nil
+            detector.stop()
+            log("question detector off")
+        }
+        synced = true
+    }
+
+    func stop() {
+        let detector = current
+        current = nil
+        detector?.stop()
+    }
+
+    static func skipToTranscriptEnd(_ dir: URL) {
+        let segments = JSONLines.read(Segment.self, from: LiveFiles.transcript(dir))
+        try? DetectorCursor(detectedThroughMs: segments.map(\.endMs).max() ?? 0, examinedSegments: segments.count).save(dir)
+    }
+}
+
 final class LiveWorker {
     static let threads = 4
     static let promptCharacters = 220
@@ -15,14 +81,17 @@ final class LiveWorker {
     private let log: (String) -> Void
     private let pollInterval: TimeInterval
     private let detectorFactory: ((URL, Meeting) -> QuestionDetector?)?
+    private let autoAskEnabled: () -> Bool
     private var previousText: [Channel: String] = [:]
 
     init(dir: URL, config: Config, pollInterval: TimeInterval = 1,
-         detectorFactory: ((URL, Meeting) -> QuestionDetector?)? = nil, log: @escaping (String) -> Void) {
+         detectorFactory: ((URL, Meeting) -> QuestionDetector?)? = nil, autoAskEnabled: (() -> Bool)? = nil,
+         log: @escaping (String) -> Void) {
         self.dir = dir
         self.config = config
         self.pollInterval = pollInterval
         self.detectorFactory = detectorFactory
+        self.autoAskEnabled = autoAskEnabled ?? AutoAskWatcher.make(initial: config)
         self.log = log
     }
 
@@ -41,16 +110,17 @@ final class LiveWorker {
         var state = (try? JSONDecoder().decode(LiveWorkerState.self, from: Data(contentsOf: LiveFiles.workerState(dir))))
             ?? LiveWorkerState(processed: 0)
         log("live worker started at chunk \(state.processed)")
-        let detector = makeDetector(meeting)
-        if detector != nil {
-            log("question detector on (model \(settings.autoAskModel), every \(settings.autoAskMinSeconds) s at most, \(settings.autoAskConcurrency) answers at a time)")
+        let detectors = DetectorSwitch(dir: dir, meeting: meeting, factory: detectorFactory, enabled: autoAskEnabled, log: log) { [config] in
+            let current = ((try? Config.load()) ?? config).liveSettings
+            return " (model \(current.autoAskModel), every \(current.autoAskMinSeconds) s at most, \(current.autoAskConcurrency) answers at a time)"
         }
-        defer { detector?.stop() }
+        defer { detectors.stop() }
         AskingBoard.prune(dir)
         var lastPrune = Date()
         var finalPass = false
         while true {
-            detector?.tick()
+            detectors.sync()
+            detectors.current?.tick()
             if Date().timeIntervalSince(lastPrune) >= Self.pruneSeconds {
                 AskingBoard.prune(dir)
                 lastPrune = Date()
@@ -63,7 +133,7 @@ final class LiveWorker {
                         ? merger.advance(entry.channel, toMs: entry.endMs, now: Date())
                         : merger.add(segments, channel: entry.channel, coveredUntilMs: entry.endMs, now: Date())
                     try JSONLines.append(ready, to: LiveFiles.transcript(dir))
-                    if !ready.isEmpty { detector?.transcriptGrew() }
+                    if !ready.isEmpty { detectors.current?.transcriptGrew() }
                     state.processed += 1
                     try JSONEncoder().encode(state).write(to: LiveFiles.workerState(dir), options: .atomic)
                 }
@@ -72,7 +142,7 @@ final class LiveWorker {
             }
             let released = merger.release(now: Date(), force: false)
             try JSONLines.append(released, to: LiveFiles.transcript(dir))
-            if !released.isEmpty { detector?.transcriptGrew() }
+            if !released.isEmpty { detectors.current?.transcriptGrew() }
             if !isRecording() {
                 if finalPass { break }
                 finalPass = true
@@ -82,11 +152,6 @@ final class LiveWorker {
         }
         try JSONLines.append(merger.release(now: Date(), force: true), to: LiveFiles.transcript(dir))
         log("live worker finished after \(state.processed) chunks")
-    }
-
-    private func makeDetector(_ meeting: Meeting) -> QuestionDetector? {
-        guard let make = detectorFactory else { return nil }
-        return make(dir, meeting)
     }
 
     private func isRecording() -> Bool {
@@ -168,7 +233,7 @@ struct LiveWorkerCommand: ParsableCommand {
             FileHandle.standardError.write(Data("\(ISO8601DateFormatter().string(from: Date())) \(message)\n".utf8))
         }
         let worker = LiveWorker(dir: dir, config: config, detectorFactory: { dir, meeting in
-            LiveQuestionDetector.make(dir: dir, meeting: meeting, config: config, log: log)
+            LiveQuestionDetector.make(dir: dir, meeting: meeting, config: (try? Config.load()) ?? config, log: log)
         }, log: log)
         do {
             try worker.run()
