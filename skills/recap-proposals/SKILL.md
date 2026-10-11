@@ -1,6 +1,6 @@
 ---
 name: recap-proposals
-description: Revisa los cambios a la documentación que propuso una reunión
+description: Revisa los cambios de documentación que propuso una reunión
 argument-hint: [id de la reunión o "last"]
 allowed-tools: Bash(recap proposals:*), Bash(recap show:*), Read, Write
 disable-model-invocation: true
