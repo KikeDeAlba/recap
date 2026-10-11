@@ -1,6 +1,6 @@
 {
   "name": "@kikedealba/recap",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Meeting recorder CLI: local transcription with whisper.cpp, minutes written by Claude Code, live answers, bita timers and inkwell docs.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
@@ -35,7 +35,6 @@
     "dist",
     "Resources/*.md",
     "skills",
-    "commands",
     "README.md",
     "LICENSE"
   ],
@@ -50,7 +49,7 @@
     "recap": "node src/bin/recap.ts"
   },
   "dependencies": {
-    "@kikedealba/kit": "^0.2.0"
+    "@kikedealba/kit": "^0.3.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

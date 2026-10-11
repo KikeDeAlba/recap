@@ -1,7 +1,9 @@
 ---
+name: recap-list
 description: Lista las reuniones grabadas, o muestra la minuta de una
 argument-hint: [id, parte del título o "last"]
 allowed-tools: Bash(recap list:*), Bash(recap show:*)
+disable-model-invocation: true
 ---
 
 **Sin `$ARGUMENTS`**, lista las reuniones recientes:
