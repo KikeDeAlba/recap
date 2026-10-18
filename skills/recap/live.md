@@ -21,12 +21,20 @@ La respuesta lleva `found` y `sources` (página, `archivo:línea` o commit) y se
 guarda en `live/answers.jsonl`. Con `found: false` no está documentado: no lo
 completes por tu cuenta.
 
-El cerebro solo se consulta si la reunión tiene proyecto (nunca en `global`). Si
-sus notas responden, la fuente es de tipo `note`. Tras responder, recap guarda la
-respuesta en gaze como nota `fact` solo si `found` es true, cita al menos una
-fuente verificable (página, archivo o commit) y ninguna fuente es una nota del
-cerebro; gaze fusiona los casi duplicados. Si gaze falta o falla, todo sigue como
-antes; `RECAP_NO_GAZE=1` lo apaga.
+El cerebro solo se consulta si la reunión tiene proyecto (nunca en `global`).
+Claude no ejecuta gaze: recap hace `gaze search --project <P>` con la pregunta (o,
+sin ella, con los últimos ~30 s de la transcripción en vivo), lee el cuerpo
+completo de las 3 primeras notas y las pone, recortadas, en el prompt. Si esas
+notas responden, la fuente es de tipo `note`. Tras responder, recap guarda la
+respuesta en gaze como nota `fact` (título = la pregunta, máx. 200 caracteres)
+solo si `found` es true, cita al menos una fuente, ninguna es una nota del
+cerebro y recap verifica todas (la página está en el árbol del proyecto, el
+archivo existe en la raíz de docs o en un repo del proyecto, con la línea citada,
+y el commit existe en un repo del proyecto). Tampoco se guarda si la pregunta o la
+respuesta traen secretos o datos personales (tarjetas, llaves o tokens,
+`password=`, llaves privadas, correos). La nota termina con «Generada por recap a
+partir de la reunión «…» (fecha); sin revisión humana.». Si gaze falta o falla,
+todo sigue como antes; `RECAP_NO_GAZE=1` lo apaga.
 
 Con `live.autoAsk` (encendido por omisión), el live-worker detecta solo las
 preguntas técnicas de la reunión y las responde sin que nadie las pida: esas

@@ -28,5 +28,7 @@ transcripción en vivo todavía está vacía y hace falta escribir la pregunta.
 Puede haber otras respuestas en curso al mismo tiempo; no se estorban. Las
 respuestas que el live-worker encontró solo llevan `auto: true` en
 `live/answers.jsonl`.
-Si el proyecto tiene gaze, recap lo consulta primero y guarda como nota `fact` las
-respuestas con fuentes verificables; `RECAP_NO_GAZE=1` lo desactiva.
+Si el proyecto tiene gaze, recap lo consulta él mismo antes de lanzar a Claude (Claude
+no ejecuta gaze) y guarda como nota `fact` solo las respuestas cuyas fuentes verifica
+(sin secretos ni datos personales); sin proyecto no busca ni guarda. `RECAP_NO_GAZE=1`
+lo desactiva; `recap ask --sources --question "<pregunta>"` muestra gaze y las notas halladas.
