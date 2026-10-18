@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
-import { AVAILABLE_TOOLS, allowedTools, askAddDirs, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
+import { AVAILABLE_TOOLS, NO_GIT_HISTORY, allowedTools, askAddDirs, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
 import { emptyContext, loadProjectContext } from '../src/live/context.ts'
 import { jsonLine } from '../src/live/files.ts'
 import { AnswerAssembler, AskStreamReducer, ProgressDescriber, encodeAskEvent, parseSourcesBlock, parseStreamLine, type AskEvent } from '../src/live/stream.ts'
@@ -41,6 +41,8 @@ test('describes progress relative to the known roots', () => {
   assert.equal(describer.describe('Grep', { pattern: 'deploy', path: '/src/bita-desktop' }), 'Buscando «deploy» en bita-desktop')
   assert.equal(describer.describe('Bash', { command: 'git log -5' }), 'Ejecutando git log -5')
   assert.equal(describer.describe('Bash', { command: 'git -C /src/bita-desktop log -1' }), 'Ejecutando git -C bita-desktop log -1')
+  assert.equal(describer.describe('Bash', { command: '/usr/bin/node /opt/recap/dist/bin/recap.js repo-git /src/bita-desktop log -1' }), 'Ejecutando git -C bita-desktop log -1')
+  assert.equal(describer.describe('Bash', { command: '/usr/local/bin/recap repo-git /src/bita-desktop show HEAD' }), 'Ejecutando git -C bita-desktop show HEAD')
 })
 
 test('the assembler strips the question header and holds back the sources block', () => {
@@ -136,11 +138,15 @@ test('renders context, question and transcript window', () => {
     ],
   })
   const request: AskRequest = { meeting: value, dir: '/tmp', question: null, windowSeconds: 180, now: '2026-10-10T10:00:00Z', auto: false }
-  const prompt = renderAskPrompt(loadResource('ask-prompt.md'), request, context, segments)
+  const prompt = renderAskPrompt(loadResource('ask-prompt.md'), request, context, segments, [], ['/usr/local/bin/recap'])
   assert.ok(!prompt.includes('{{'))
   assert.ok(prompt.includes('«Daily de CoDi»'))
   assert.ok(prompt.includes('- #3 Despliegue — codi/despliegue.md'))
-  assert.ok(prompt.includes('`git -C /src/codi log|show|diff …`') && !prompt.includes('/src/gone'))
+  assert.ok(prompt.includes('`/usr/local/bin/recap repo-git /src/codi log|show|diff …`') && !prompt.includes('/src/gone'))
+  assert.ok(prompt.includes('`/usr/local/bin/recap repo-git <ruta del repo> log`') && !prompt.includes('git -C'))
+  assert.ok(prompt.includes('sin `$( )`, sin comillas invertidas y sin redirecciones (`>`)') && !prompt.includes(NO_GIT_HISTORY))
+  const bare = renderAskPrompt(loadResource('ask-prompt.md'), request, emptyContext({ project: 'CoDi' }), segments, [], ['/usr/local/bin/recap'])
+  assert.ok(bare.includes(NO_GIT_HISTORY) && !bare.includes('repo-git') && !bare.includes('{{'))
   assert.ok(prompt.includes('[00:06:40] Remotos: ¿Cómo se despliega el webhook?'))
   assert.ok(!prompt.includes('sprint anterior'))
   assert.ok(prompt.includes('identifícala en la transcripción'))
@@ -151,10 +157,10 @@ test('renders context, question and transcript window', () => {
 
 test('stream arguments keep the isolation flags', () => {
   const context = emptyContext({ project: 'CoDi', docsRoot: '/d', repos: [{ path: '/r', slug: 'r', exists: true }, { path: '/gone', slug: 'gone', exists: false }] })
-  const args = streamArguments([allowedTools(context).join(' ')], ['/d', '/r', '/d'], 'haiku', AVAILABLE_TOOLS)
+  const args = streamArguments([allowedTools(context, ['/usr/local/bin/recap']).join(' ')], ['/d', '/r', '/d'], 'haiku', AVAILABLE_TOOLS)
   assert.deepEqual(args.slice(0, 5), ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'])
   assert.ok(args.includes('--strict-mcp-config') && args.includes('--no-session-persistence') && args.includes('--setting-sources'))
-  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read Grep Glob Bash(git -C /r log:*) Bash(git -C /r show:*) Bash(git -C /r diff:*)')
+  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read Grep Glob Bash(/usr/local/bin/recap repo-git /r log:*) Bash(/usr/local/bin/recap repo-git /r show:*) Bash(/usr/local/bin/recap repo-git /r diff:*)')
   assert.deepEqual(allowedTools(emptyContext()), ['Read', 'Grep', 'Glob'])
   assert.ok(!args.join(' ').includes('gone'))
   assert.equal(args.filter((arg) => arg === '--add-dir').length, 2)

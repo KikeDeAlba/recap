@@ -5,6 +5,9 @@ import { RecapError } from '../errors.ts'
 import type { Channel, Segment } from '../pipeline/transcript.ts'
 import type { RepoRef } from './context.ts'
 import { clockMilliseconds, resolveOrigin } from './origin.ts'
+import { REPO_GIT_COMMAND } from './repo-git.ts'
+
+const REPO_GIT_MARKER = ` ${REPO_GIT_COMMAND} `
 
 export type ClaudeStreamEvent =
   | { type: 'text'; text: string }
@@ -73,6 +76,8 @@ export class ProgressDescriber {
       case 'Bash': {
         let command = input['command']
         if (command === undefined) return 'Ejecutando un comando'
+        const wrapper = command.indexOf(REPO_GIT_MARKER)
+        if (wrapper >= 0) command = `git -C ${command.slice(wrapper + REPO_GIT_MARKER.length)}`
         for (const root of this.roots) command = replaceAll(command, root.prefix, root.label)
         return `Ejecutando ${command}`
       }

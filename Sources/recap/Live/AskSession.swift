@@ -52,16 +52,17 @@ struct AskRequest {
 
 enum AskPrompt {
     static let readTools = ["Read", "Grep", "Glob"]
-    static let gitSubcommands = ["log", "show", "diff"]
 
-    static func allowedTools(_ context: ProjectContext) -> [String] {
-        readTools + context.existingRepos.flatMap { repo in
-            gitSubcommands.map { "Bash(git -C \(repo.path) \($0):*)" }
-        }
+    static func allowedTools(_ context: ProjectContext, selfPath: String? = RepoGit.selfPath) -> [String] {
+        readTools + context.existingRepos.flatMap { RepoGit.allowRules(repo: $0.path, selfPath: selfPath) }
     }
     static let availableTools = ["Read", "Grep", "Glob", "Bash"]
+    static let gitUsage = "Para el historial de un repositorio usa solo `{{git}} <ruta del repo> log`, `{{git}} <ruta del repo> show` o `{{git}} <ruta del repo> diff`, tal cual y con la ruta exacta de la lista: un comando por llamada, sin `cd`, sin `&&`, sin tuberías, sin `$( )`, sin comillas invertidas y sin redirecciones (`>`); cualquier otra forma, `git` directo u opciones que escriban archivos o lean fuera del repositorio se rechazan."
+    static let noGitHistory = "No tienes acceso al historial de git: usa solo Read, Grep y Glob."
 
-    static func render(template: String, request: AskRequest, context: ProjectContext, segments: [Segment]) -> String {
+    static func render(template: String, request: AskRequest, context: ProjectContext, segments: [Segment],
+                       selfPath: String? = RepoGit.selfPath) -> String {
+        let git = RepoGit.invocation(selfPath: selfPath)
         let window = LiveTranscript.window(segments, seconds: request.windowSeconds)
         let labelled = request.meeting.mode == .remote
         let title = request.meeting.bitaEntry?.title ?? request.meeting.title
@@ -77,14 +78,21 @@ enum AskPrompt {
                 .joined(separator: "\n")
         let repos = context.existingRepos.isEmpty
             ? "  (sin repositorios registrados)"
-            : context.existingRepos.map { "  - \($0.slug): \($0.path) (git: `git -C \($0.path) log|show|diff …`)" }.joined(separator: "\n")
+            : context.existingRepos.map { repo in
+                RepoGit.isAllowed(repo: repo.path, selfPath: selfPath)
+                    ? "  - \(repo.slug): \(repo.path) (historial: `\(git) \(repo.path) log|show|diff …`)"
+                    : "  - \(repo.slug): \(repo.path) (sin historial de git; solo Read, Grep y Glob)"
+            }.joined(separator: "\n")
         let speakers = labelled
             ? "«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada."
             : "Un solo micrófono en la sala, sin separación por persona."
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        let ruled = context.existingRepos.contains { RepoGit.isAllowed(repo: $0.path, selfPath: selfPath) }
         return template
+            .replacingOccurrences(of: "{{gitUsage}}", with: ruled ? gitUsage : noGitHistory)
+            .replacingOccurrences(of: "{{git}}", with: git)
             .replacingOccurrences(of: "{{title}}", with: title)
             .replacingOccurrences(of: "{{project}}", with: context.project ?? "sin proyecto")
             .replacingOccurrences(of: "{{now}}", with: formatter.string(from: request.now))
