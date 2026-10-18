@@ -52,7 +52,7 @@ const REJECTED: [string[], string][] = [
   [['/r', 'diff', '/́etc'], 'path outside the repository not allowed: /́etc'],
 ]
 
-const PREFIX = ['-c', 'core.fsmonitor=false', '-c', 'diff.external=', '-c', 'core.pager=cat', '-c', 'gpg.program=false', '-c', 'gpg.ssh.program=false', '-c', 'gpg.x509.program=false', '-c', 'log.showSignature=false']
+const PREFIX = ['-c', 'core.fsmonitor=false', '-c', 'diff.external=', '-c', 'core.pager=cat', '-c', 'gpg.program=/nonexistent/recap-no-gpg', '-c', 'gpg.ssh.program=/nonexistent/recap-no-gpg', '-c', 'gpg.x509.program=/nonexistent/recap-no-gpg', '-c', 'log.showSignature=false']
 
 function recordingRunner(): { runner: GitRunner; calls: string[][] } {
   const calls: string[][] = []

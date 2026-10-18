@@ -19,8 +19,8 @@ enum RepoGit {
     static let signalBase: Int32 = 128
     static let fixedFlags = ["--no-ext-diff", "--no-textconv", "--no-color"]
     static let configFlags = [
-        "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat", "-c", "gpg.program=false",
-        "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false", "-c", "log.showSignature=false",
+        "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat", "-c", "gpg.program=/nonexistent/recap-no-gpg",
+        "-c", "gpg.ssh.program=/nonexistent/recap-no-gpg", "-c", "gpg.x509.program=/nonexistent/recap-no-gpg", "-c", "log.showSignature=false",
     ]
 
     static let exactOptions: Set<String> = [
@@ -41,7 +41,7 @@ enum RepoGit {
 
     static let safeScalars = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./+@-".unicodeScalars)
 
-    static let keptVariables: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"]
+    static let keptVariables: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "DEVELOPER_DIR", "LANG", "LC_ALL"]
 
     static var selfPath: String? { Paths.executable?.path }
 

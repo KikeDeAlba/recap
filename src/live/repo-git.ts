@@ -144,9 +144,9 @@ export const REPO_GIT_CONFIG = [
   'core.fsmonitor=false',
   'diff.external=',
   'core.pager=cat',
-  'gpg.program=false',
-  'gpg.ssh.program=false',
-  'gpg.x509.program=false',
+  'gpg.program=/nonexistent/recap-no-gpg',
+  'gpg.ssh.program=/nonexistent/recap-no-gpg',
+  'gpg.x509.program=/nonexistent/recap-no-gpg',
   'log.showSignature=false',
 ]
 
@@ -162,7 +162,7 @@ export function workTreeArguments(repo: string): string[] {
   return [...configPrefix(repo), 'rev-parse', '--is-inside-work-tree']
 }
 
-export const REPO_GIT_KEPT_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL']
+export const REPO_GIT_KEPT_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'DEVELOPER_DIR', 'LANG', 'LC_ALL']
 export const REPO_GIT_WINDOWS_ENV = ['SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP']
 
 function keptKey(key: string, platform: NodeJS.Platform): boolean {

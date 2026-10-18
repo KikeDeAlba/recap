@@ -4,7 +4,7 @@ import Testing
 
 @Suite struct RepoGitTests {
     private let prefix = ["--no-pager", "-C", "/r", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat",
-                          "-c", "gpg.program=false", "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false",
+                          "-c", "gpg.program=/nonexistent/recap-no-gpg", "-c", "gpg.ssh.program=/nonexistent/recap-no-gpg", "-c", "gpg.x509.program=/nonexistent/recap-no-gpg",
                           "-c", "log.showSignature=false"]
     private let anyWorkTree: RepoGit.WorkTreeCheck = { _, _, _ in true }
 
@@ -116,7 +116,7 @@ import Testing
         })
         #expect(status == 7)
         let base = ["--no-pager", "-C", repo, "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat",
-                    "-c", "gpg.program=false", "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false",
+                    "-c", "gpg.program=/nonexistent/recap-no-gpg", "-c", "gpg.ssh.program=/nonexistent/recap-no-gpg", "-c", "gpg.x509.program=/nonexistent/recap-no-gpg",
                     "-c", "log.showSignature=false"]
         #expect(received?.1 == base + ["log", "--no-ext-diff", "--no-textconv", "--no-color", "-1"])
         #expect(checked == base + ["rev-parse", "--is-inside-work-tree"])
