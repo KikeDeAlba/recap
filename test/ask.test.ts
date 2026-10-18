@@ -9,6 +9,8 @@ import { AnswerAssembler, AskStreamReducer, ProgressDescriber, encodeAskEvent, p
 import { streamArguments } from '../src/pipeline/claude.ts'
 import { loadResource } from '../src/pipeline/resources.ts'
 import { RecapError } from '../src/errors.ts'
+import { brainNoteBody, rememberAnswer, searchBrain, shouldRemember } from '../src/live/brain.ts'
+import { decodeAnswer, encodeAnswer, type Answer } from '../src/live/stream.ts'
 import { FakeTool, meeting, tempDir } from './helpers.ts'
 
 const streamLine = (text: string) => JSON.stringify({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } })
@@ -183,7 +185,7 @@ test('sources list only the project repositories and the docs root', async (t) =
     }
     return { ok: false, errorCode: 'USAGE', errorMessage: 'unknown' }
   })
-  const context = await loadProjectContext('CoDi', { inkwell: bita, bita })
+  const context = await loadProjectContext('CoDi', { inkwell: bita, bita, gaze: null })
   assert.equal(context.docsRoot, '/data/docs')
   assert.deepEqual(
     context.pages.map((page) => page.pageId),
@@ -194,4 +196,128 @@ test('sources list only the project repositories and the docs root', async (t) =
     { path: '/nope/missing', slug: 'missing', exists: false },
   ])
   assert.ok(bita.calls.some((call) => call.join(' ') === 'project repo ls --project CoDi'))
+})
+
+const GAZE = '/opt/gaze/bin/gaze'
+
+const notes = [
+  { id: 'n-7', title: 'Despliegue del webhook', kind: 'fact', project: 'CoDi', snippet: 'Se despliega con make release', score: 0.9 },
+  { id: 'n-9', title: 'Puerto del API', kind: 'decision', project: 'CoDi', snippet: 'El API escucha en 8080', score: 0.4 },
+]
+
+const gazeTool = (fail = false) => new FakeTool((args) => (fail ? { ok: false, errorCode: 'BOOM', errorMessage: 'boom' } : args[0] === 'search' ? { ok: true, data: notes } : { ok: true, data: { id: 'n-10' } }), GAZE)
+
+const baseAnswer = (overrides: Partial<Answer> = {}): Answer => ({
+  id: 'a',
+  askedAt: '2026-10-10T10:00:00Z',
+  question: '¿Cómo se despliega el webhook?',
+  answer: 'Con `make release` (Despliegue).',
+  found: true,
+  sources: [{ kind: 'page', label: 'Despliegue', pageId: 12, path: 'codi/despliegue.md' }],
+  ...overrides,
+})
+
+test('the prompt lists the brain notes and the gaze commands', () => {
+  const request: AskRequest = { meeting: meeting(), dir: '/tmp', question: '¿Cómo se despliega?', windowSeconds: 180, now: '2026-10-10T10:00:00Z', auto: false }
+  const template = loadResource('ask-prompt.md')
+  const withGaze = renderAskPrompt(template, request, emptyContext({ project: 'CoDi', gaze: gazeTool(), brain: notes }), [])
+  assert.ok(!withGaze.includes('{{'))
+  assert.ok(withGaze.includes('  - [n-7] Despliegue del webhook (fact) — Se despliega con make release'))
+  assert.ok(withGaze.includes(`${GAZE} show <id>`) && withGaze.includes(`${GAZE} search "<términos>" --project CoDi`))
+  assert.ok(withGaze.indexOf('Cerebro del proyecto') < withGaze.indexOf('Páginas del proyecto'))
+  assert.ok(withGaze.includes('"kind": "note"'))
+  const empty = renderAskPrompt('{{brain}}', request, emptyContext({ project: 'CoDi', gaze: gazeTool() }), [])
+  assert.equal(empty, '  (sin notas en el cerebro)')
+  const missing = renderAskPrompt('{{brain}}|{{gaze}}', request, emptyContext({ project: 'CoDi' }), [])
+  assert.equal(missing, '  (el cerebro no está disponible)|')
+  const noProject = renderAskPrompt('{{brain}}|{{gaze}}', request, emptyContext({ gaze: gazeTool() }), [])
+  assert.equal(noProject, '  (el cerebro no está disponible)|')
+})
+
+test('gaze rules join the allowlist only with gaze and a project', () => {
+  assert.deepEqual(allowedTools(emptyContext({ project: 'CoDi', gaze: gazeTool() })), ['Read', 'Grep', 'Glob', `Bash(${GAZE} search:*)`, `Bash(${GAZE} show:*)`])
+  assert.deepEqual(allowedTools(emptyContext({ gaze: gazeTool() })), ['Read', 'Grep', 'Glob'])
+  assert.deepEqual(allowedTools(emptyContext({ project: 'CoDi' })), ['Read', 'Grep', 'Glob'])
+  const describer = new ProgressDescriber(null, [])
+  assert.equal(describer.describe('Bash', { command: `${GAZE} search "webhook" --project CoDi` }), 'Consultando el cerebro…')
+  assert.equal(describer.describe('Bash', { command: `${GAZE} show n-7` }), 'Consultando el cerebro…')
+})
+
+test('the context searches the brain only with a project and a question', async () => {
+  const gaze = gazeTool()
+  const context = await loadProjectContext('CoDi', { inkwell: null, bita: null, gaze }, '¿Cómo se despliega?')
+  assert.deepEqual(
+    context.brain.map((note) => note.id),
+    ['n-7', 'n-9'],
+  )
+  assert.deepEqual(gaze.calls[0], ['search', '¿Cómo se despliega?', '--project', 'CoDi', '--limit', '5', '--json'])
+  const quiet = gazeTool()
+  assert.deepEqual((await loadProjectContext('CoDi', { inkwell: null, bita: null, gaze: quiet })).brain, [])
+  const loose = await loadProjectContext(null, { inkwell: null, bita: null, gaze: quiet }, '¿x?')
+  assert.equal(loose.gaze, null)
+  assert.equal(quiet.calls.length, 0)
+  assert.deepEqual(await searchBrain(gazeTool(true), 'CoDi', '¿x?'), [])
+})
+
+test('note sources parse and encode with noteId last', () => {
+  const block = parseSourcesBlock('{"found": true, "sources": [{"kind": "note", "label": "", "noteId": "n-7"}, {"kind": "note", "label": "sin id"}, {"kind": "note", "label": "Puerto", "noteId": "n-9"}]}')
+  assert.ok(block)
+  assert.deepEqual(block.sources, [
+    { kind: 'note', label: 'Nota n-7', noteId: 'n-7' },
+    { kind: 'note', label: 'Puerto', noteId: 'n-9' },
+  ])
+  const line = jsonLine(encodeAnswer(baseAnswer({ sources: block.sources })))
+  assert.ok(line.includes('{"kind":"note","label":"Nota n-7","noteId":"n-7"}'))
+  assert.equal(decodeAnswer(JSON.parse(line))?.sources[0]?.noteId, 'n-7')
+  const encoded = encodeAskEvent({ type: 'source', source: { kind: 'page', label: 'x', pageId: 1, noteId: 'n' } })['source']
+  assert.deepEqual(Object.keys(encoded as object), ['kind', 'label', 'pageId', 'path', 'line', 'repo', 'sha', 'noteId'])
+  assert.ok(!jsonLine(encodeAnswer(baseAnswer())).includes('noteId'))
+})
+
+test('only founded answers with documentary sources are remembered', () => {
+  assert.equal(shouldRemember(baseAnswer()), true)
+  assert.equal(shouldRemember(baseAnswer({ sources: [{ kind: 'commit', label: 'fix', sha: 'abc' }] })), true)
+  assert.equal(shouldRemember(baseAnswer({ sources: [] })), false)
+  assert.equal(shouldRemember(baseAnswer({ sources: [...baseAnswer().sources, { kind: 'note', label: 'n', noteId: 'n-7' }] })), false)
+  assert.equal(shouldRemember(baseAnswer({ found: false })), false)
+})
+
+test('the note body carries the answer, its sources and the meeting', () => {
+  const answer = baseAnswer({
+    sources: [
+      { kind: 'page', label: 'Despliegue', pageId: 12, path: 'codi/despliegue.md' },
+      { kind: 'file', label: 'README.md:42', path: '/src/codi/README.md', line: 42, repo: '/src/codi' },
+      { kind: 'commit', label: 'fix deploy', sha: 'abc1234', repo: '/src/codi' },
+    ],
+  })
+  assert.equal(
+    brainNoteBody(answer, { title: 'Daily de CoDi', createdAt: '2026-10-10T15:00:00Z' }),
+    [
+      'Con `make release` (Despliegue).',
+      '',
+      'Fuentes:',
+      '- «Despliegue» (#12, codi/despliegue.md)',
+      '- /src/codi/README.md:42 (/src/codi)',
+      '- abc1234 fix deploy (/src/codi)',
+      '',
+      'Reunión: «Daily de CoDi» (2026-10-10)',
+    ].join('\n'),
+  )
+})
+
+test('remembering is best effort and needs a project', async () => {
+  const stamp = { title: 'Daily', createdAt: '2026-10-10T15:00:00Z' }
+  const gaze = gazeTool()
+  assert.equal(await rememberAnswer(gaze, null, baseAnswer(), stamp), false)
+  assert.equal(await rememberAnswer(gaze, 'CoDi', baseAnswer({ sources: [] }), stamp), false)
+  assert.equal(gaze.calls.length, 0)
+  assert.equal(await rememberAnswer(gaze, 'CoDi', baseAnswer(), stamp), true)
+  assert.deepEqual(gaze.calls[0], ['remember', '-', '--project', 'CoDi', '--kind', 'fact', '--title', '¿Cómo se despliega el webhook?', '--json'])
+  assert.equal(gaze.inputs[0], brainNoteBody(baseAnswer(), stamp))
+  const logged: string[] = []
+  assert.equal(await rememberAnswer(gazeTool(true), 'CoDi', baseAnswer(), stamp, (line) => logged.push(line)), false)
+  assert.deepEqual(logged, ['gaze remember failed: boom'])
+  const throwing = { bin: GAZE, invoke: async () => Promise.reject(new Error('down')) }
+  assert.equal(await rememberAnswer(throwing, 'CoDi', baseAnswer(), stamp, (line) => logged.push(line)), false)
+  assert.equal(logged.at(-1), 'gaze remember failed: down')
 })

@@ -5,7 +5,7 @@ import { MeetingStore, loadMeeting, resolveTarget, type Located } from '../../co
 import { signalNumber, signalTree } from '../../core/proc.ts'
 import { trimmed } from '../../core/text.ts'
 import { RecapError, asRecapError, usageError } from '../../errors.ts'
-import { runAsk } from '../../live/ask.ts'
+import { gazeBin, runAsk } from '../../live/ask.ts'
 import { isValidAskId, makeAskId, performAsk, removeBoard } from '../../live/asking.ts'
 import { contextSources, loadProjectContext, meetingContext, meetingProjectName } from '../../live/context.ts'
 import { jsonLine } from '../../live/files.ts'
@@ -73,7 +73,7 @@ async function answer(args: Args, emit: (event: AskEvent) => void) {
   let childPid: number | null = null
   installCleanup(found.dir, id, () => childPid)
   return performAsk({ dir: found.dir, id, question, auto: args.has('auto'), now, questionMs, channel }, async () => {
-    const context = await meetingContext(found.meeting, config)
+    const context = await meetingContext(found.meeting, config, question)
     return runAsk(
       config,
       { meeting: found.meeting, dir: found.dir, question, windowSeconds: args.int('window') ?? 180, now, auto: args.has('auto'), questionMs, channel, askId: id },
@@ -82,6 +82,7 @@ async function answer(args: Args, emit: (event: AskEvent) => void) {
       (pid) => {
         childPid = pid
       },
+      (line) => process.stderr.write(`recap: ${line}\n`),
     )
   })
 }
@@ -108,9 +109,19 @@ export async function askCommand(argv: string[]): Promise<number> {
       const found = args.has('active') || args.value('meeting') !== undefined || args.value('bita-entry') !== undefined ? target(args, config) : null
       const sources = await contextSources(config, found?.meeting ?? null)
       const name = args.value('project') ?? (found ? meetingProjectName(found.meeting) : null)
-      const context = await loadProjectContext(name, sources)
-      const lines = [`Project: ${context.project ?? '(none)'}`, `Docs: ${context.docsRoot ?? '(unknown)'}`, ...context.repos.map((repo) => `Repo: ${repo.slug} ${repo.path}${repo.exists ? '' : ' (missing)'}`)]
-      return { data: { project: context.project ?? undefined, docsRoot: context.docsRoot ?? undefined, repos: context.repos }, text: lines.join('\n') }
+      const context = await loadProjectContext(name, sources, args.value('question'))
+      const gaze = gazeBin(context)
+      const lines = [
+        `Project: ${context.project ?? '(none)'}`,
+        `Docs: ${context.docsRoot ?? '(unknown)'}`,
+        ...context.repos.map((repo) => `Repo: ${repo.slug} ${repo.path}${repo.exists ? '' : ' (missing)'}`),
+        `Gaze: ${gaze ?? (sources.gaze ? '(needs a project)' : '(unavailable)')}`,
+        ...context.brain.map((note) => `Note: [${note.id}] ${note.title} (${note.kind})`),
+      ]
+      return {
+        data: { project: context.project ?? undefined, docsRoot: context.docsRoot ?? undefined, repos: context.repos, gaze: gaze ?? undefined, notes: context.brain },
+        text: lines.join('\n'),
+      }
     }
     const result = await answer(args, (event) => {
       if (json) return

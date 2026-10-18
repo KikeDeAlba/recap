@@ -6,6 +6,7 @@ import { trimmed } from '../core/text.ts'
 import { BitaClient, INKWELL_CAPABILITIES, findInkwell, meetingTarget, type ToolCalling } from '../bita/client.ts'
 import type { Config } from '../core/config.ts'
 import { RecapError } from '../errors.ts'
+import { findGaze, searchBrain, type BrainNote, type GazeCalling } from './brain.ts'
 
 export interface PageRef {
   pageId: number
@@ -26,10 +27,12 @@ export interface ProjectContext {
   docsRoot: string | null
   pages: PageRef[]
   repos: RepoRef[]
+  brain: BrainNote[]
+  gaze: GazeCalling | null
 }
 
 export function emptyContext(overrides: Partial<ProjectContext> = {}): ProjectContext {
-  return { project: null, docsRoot: null, pages: [], repos: [], ...overrides }
+  return { project: null, docsRoot: null, pages: [], repos: [], brain: [], gaze: null, ...overrides }
 }
 
 export function existingRepos(context: ProjectContext): RepoRef[] {
@@ -82,23 +85,26 @@ function metaRoot(meta: Record<string, unknown> | undefined): string | null {
 export interface ContextSources {
   inkwell: ToolCalling | null
   bita: ToolCalling | null
+  gaze: GazeCalling | null
 }
 
-export async function loadProjectContext(project: string | null | undefined, sources: ContextSources): Promise<ProjectContext> {
+export async function loadProjectContext(project: string | null | undefined, sources: ContextSources, question?: string | null): Promise<ProjectContext> {
   const context = emptyContext({ project: project && trimmed(project).length > 0 ? project : null })
-  const { inkwell, bita } = sources
+  const { inkwell, bita, gaze } = sources
   if (context.project) {
-    if (inkwell) {
-      const pages = await inkwell.invoke(['page', 'ls', '--project', context.project]).catch(() => null)
-      if (pages?.ok) {
-        context.pages = parsePages(pages.data)
-        context.docsRoot = metaRoot(pages.meta)
-      }
+    const name = context.project
+    context.gaze = gaze
+    const [pages, repos, brain] = await Promise.all([
+      inkwell ? inkwell.invoke(['page', 'ls', '--project', name]).catch(() => null) : null,
+      bita ? bita.invoke(['project', 'repo', 'ls', '--project', name]).catch(() => null) : null,
+      searchBrain(gaze, name, question),
+    ])
+    if (pages?.ok) {
+      context.pages = parsePages(pages.data)
+      context.docsRoot = metaRoot(pages.meta)
     }
-    if (bita) {
-      const repos = await bita.invoke(['project', 'repo', 'ls', '--project', context.project]).catch(() => null)
-      if (repos?.ok) context.repos = parseRepos(repos.data)
-    }
+    if (repos?.ok) context.repos = parseRepos(repos.data)
+    context.brain = brain
   }
   if (context.docsRoot === null && inkwell) {
     const tree = await inkwell.invoke(['tree']).catch(() => null)
@@ -133,11 +139,11 @@ export async function meetingProject(meeting: Meeting, inkwell: ToolCalling | nu
 }
 
 export async function contextSources(config: Config, meeting: Meeting | null): Promise<ContextSources> {
-  const [inkwell, bita] = await Promise.all([findInkwell(INKWELL_CAPABILITIES.pages), BitaClient.create(config, meeting ? meetingTarget(meeting) : {})])
-  return { inkwell, bita }
+  const [inkwell, bita, gaze] = await Promise.all([findInkwell(INKWELL_CAPABILITIES.pages), BitaClient.create(config, meeting ? meetingTarget(meeting) : {}), findGaze()])
+  return { inkwell, bita, gaze }
 }
 
-export async function meetingContext(meeting: Meeting, config: Config): Promise<ProjectContext> {
+export async function meetingContext(meeting: Meeting, config: Config, question?: string | null): Promise<ProjectContext> {
   const sources = await contextSources(config, meeting)
-  return loadProjectContext(await meetingProject(meeting, sources.inkwell), sources)
+  return loadProjectContext(await meetingProject(meeting, sources.inkwell), sources, question)
 }

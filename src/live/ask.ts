@@ -8,6 +8,7 @@ import { RecapError } from '../errors.ts'
 import { streamArguments, streamClaude } from '../pipeline/claude.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import type { Channel, Segment } from '../pipeline/transcript.ts'
+import { rememberAnswer } from './brain.ts'
 import { existingRepos, type ProjectContext } from './context.ts'
 import { appendLines, liveFiles } from './files.ts'
 import { loadLiveTranscript, renderLive, transcriptWindow } from './merger.ts'
@@ -29,8 +30,25 @@ export const READ_TOOLS = ['Read', 'Grep', 'Glob']
 export const GIT_SUBCOMMANDS = ['log', 'show', 'diff']
 export const AVAILABLE_TOOLS = ['Read', 'Grep', 'Glob', 'Bash']
 
+export const GAZE_SUBCOMMANDS = ['search', 'show']
+
+export function gazeBin(context: ProjectContext): string | null {
+  return context.project && context.gaze ? context.gaze.bin : null
+}
+
 export function allowedTools(context: ProjectContext): string[] {
-  return [...READ_TOOLS, ...existingRepos(context).flatMap((repo) => GIT_SUBCOMMANDS.map((sub) => `Bash(git -C ${repo.path} ${sub}:*)`))]
+  const gaze = gazeBin(context)
+  return [
+    ...READ_TOOLS,
+    ...(gaze ? GAZE_SUBCOMMANDS.map((sub) => `Bash(${gaze} ${sub}:*)`) : []),
+    ...existingRepos(context).flatMap((repo) => GIT_SUBCOMMANDS.map((sub) => `Bash(git -C ${repo.path} ${sub}:*)`)),
+  ]
+}
+
+export function renderBrain(context: ProjectContext): string {
+  if (gazeBin(context) === null) return '  (el cerebro no está disponible)'
+  if (context.brain.length === 0) return '  (sin notas en el cerebro)'
+  return context.brain.map((note) => `  - [${note.id}] ${note.title} (${note.kind}) — ${note.snippet}`).join('\n')
 }
 
 export function askAddDirs(context: ProjectContext): string[] {
@@ -61,6 +79,8 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
   text = replaceAll(text, '{{now}}', minuteStamp(parseDate(request.now) ?? new Date()))
   text = replaceAll(text, '{{questionBlock}}', questionBlock)
   text = replaceAll(text, '{{docsRoot}}', context.docsRoot ?? '(desconocida)')
+  text = replaceAll(text, '{{brain}}', renderBrain(context))
+  text = replaceAll(text, '{{gaze}}', gazeBin(context) ?? '')
   text = replaceAll(text, '{{pages}}', pages)
   text = replaceAll(text, '{{repos}}', reposText)
   text = replaceAll(text, '{{speakers}}', speakers)
@@ -74,6 +94,7 @@ export async function runAsk(
   context: ProjectContext,
   emit: (event: AskEvent) => void,
   onSpawn?: (pid: number) => void,
+  log: (line: string) => void = () => {},
 ): Promise<Answer> {
   const segments = loadLiveTranscript(request.dir)
   const explicit = request.question && trimmed(request.question).length > 0 ? trimmed(request.question) : null
@@ -104,5 +125,7 @@ export async function runAsk(
   answer.answeredAt = isoNow()
   appendLines([encodeAnswer(answer)], liveFiles.answers(request.dir))
   emit({ type: 'done', answer })
+  const stamp = { title: request.meeting.bitaEntry?.title ?? request.meeting.title, createdAt: request.meeting.createdAt }
+  await rememberAnswer(gazeBin(context) === null ? null : context.gaze, context.project, answer, stamp, log).catch(() => false)
   return answer
 }
