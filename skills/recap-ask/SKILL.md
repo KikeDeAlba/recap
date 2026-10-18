@@ -22,9 +22,11 @@ Responde en vivo una pregunta de la reunión que se está grabando.
   ```
 
 Muestra `data.answer` tal cual y, debajo, las fuentes de `data.sources` (su
-`label`). Si `data.found` es false, dilo en una línea: no está documentado.
+`label`; las de tipo `note` vienen del cerebro de gaze). Si `data.found` es false, dilo en una línea: no está documentado.
 Si falla con `NOT_RECORDING`, no hay grabación activa; con `NO_QUESTION`, la
 transcripción en vivo todavía está vacía y hace falta escribir la pregunta.
 Puede haber otras respuestas en curso al mismo tiempo; no se estorban. Las
 respuestas que el live-worker encontró solo llevan `auto: true` en
 `live/answers.jsonl`.
+Si el proyecto tiene gaze, recap lo consulta primero y guarda como nota `fact` las
+respuestas con fuentes verificables; `RECAP_NO_GAZE=1` lo desactiva.
