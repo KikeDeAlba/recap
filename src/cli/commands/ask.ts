@@ -5,8 +5,9 @@ import { MeetingStore, loadMeeting, resolveTarget, type Located } from '../../co
 import { signalNumber, signalTree } from '../../core/proc.ts'
 import { trimmed } from '../../core/text.ts'
 import { RecapError, asRecapError, usageError } from '../../errors.ts'
-import { gazeBin, runAsk } from '../../live/ask.ts'
-import { isValidAskId, makeAskId, performAsk, removeBoard } from '../../live/asking.ts'
+import { askThenRemember, gazeBin, runAsk } from '../../live/ask.ts'
+import { isValidAskId, makeAskId, removeBoard } from '../../live/asking.ts'
+import { searchBrain } from '../../live/brain.ts'
 import { contextSources, loadProjectContext, meetingContext, meetingProjectName } from '../../live/context.ts'
 import { jsonLine } from '../../live/files.ts'
 import { encodeAnswer, encodeAskEvent, type AskEvent } from '../../live/stream.ts'
@@ -72,19 +73,24 @@ async function answer(args: Args, emit: (event: AskEvent) => void) {
   const channel = args.value('channel') as Channel | undefined
   let childPid: number | null = null
   installCleanup(found.dir, id, () => childPid)
-  return performAsk({ dir: found.dir, id, question, auto: args.has('auto'), now, questionMs, channel }, async () => {
-    const context = await meetingContext(found.meeting, config, question)
-    return runAsk(
-      config,
-      { meeting: found.meeting, dir: found.dir, question, windowSeconds: args.int('window') ?? 180, now, auto: args.has('auto'), questionMs, channel, askId: id },
-      context,
-      emit,
-      (pid) => {
-        childPid = pid
-      },
-      (line) => process.stderr.write(`recap: ${line}\n`),
-    )
-  })
+  return askThenRemember(
+    { dir: found.dir, id, question, auto: args.has('auto'), now, questionMs, channel },
+    found.meeting,
+    async () => {
+      const context = await meetingContext(found.meeting, config)
+      const result = await runAsk(
+        config,
+        { meeting: found.meeting, dir: found.dir, question, windowSeconds: args.int('window') ?? 180, now, auto: args.has('auto'), questionMs, channel, askId: id },
+        context,
+        emit,
+        (pid) => {
+          childPid = pid
+        },
+      )
+      return { answer: result, context }
+    },
+    (line) => process.stderr.write(`recap: ${line}\n`),
+  )
 }
 
 export async function askCommand(argv: string[]): Promise<number> {
@@ -109,17 +115,18 @@ export async function askCommand(argv: string[]): Promise<number> {
       const found = args.has('active') || args.value('meeting') !== undefined || args.value('bita-entry') !== undefined ? target(args, config) : null
       const sources = await contextSources(config, found?.meeting ?? null)
       const name = args.value('project') ?? (found ? meetingProjectName(found.meeting) : null)
-      const context = await loadProjectContext(name, sources, args.value('question'))
+      const context = await loadProjectContext(name, sources)
+      const notes = await searchBrain(context.gaze, context.project, args.value('question'))
       const gaze = gazeBin(context)
       const lines = [
         `Project: ${context.project ?? '(none)'}`,
         `Docs: ${context.docsRoot ?? '(unknown)'}`,
         ...context.repos.map((repo) => `Repo: ${repo.slug} ${repo.path}${repo.exists ? '' : ' (missing)'}`),
         `Gaze: ${gaze ?? (sources.gaze ? '(needs a project)' : '(unavailable)')}`,
-        ...context.brain.map((note) => `Note: [${note.id}] ${note.title} (${note.kind})`),
+        ...notes.map((note) => `Note: [${note.id}] ${note.title} (${note.kind})`),
       ]
       return {
-        data: { project: context.project ?? undefined, docsRoot: context.docsRoot ?? undefined, repos: context.repos, gaze: gaze ?? undefined, notes: context.brain },
+        data: { project: context.project ?? undefined, docsRoot: context.docsRoot ?? undefined, repos: context.repos, gaze: gaze ?? undefined, notes },
         text: lines.join('\n'),
       }
     }

@@ -49,8 +49,6 @@ export function parseStreamLine(line: string): ClaudeStreamEvent[] {
   }
 }
 
-const BRAIN_COMMAND = /(^|[\s/])gaze\s+(search|show)(\s|$)/
-
 export class ProgressDescriber {
   readonly roots: { prefix: string; label: string }[]
 
@@ -75,7 +73,6 @@ export class ProgressDescriber {
       case 'Bash': {
         let command = input['command']
         if (command === undefined) return 'Ejecutando un comando'
-        if (BRAIN_COMMAND.test(command)) return 'Consultando el cerebro…'
         for (const root of this.roots) command = replaceAll(command, root.prefix, root.label)
         return `Ejecutando ${command}`
       }

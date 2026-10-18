@@ -15,6 +15,15 @@ package struct ShellResult {
     package var ok: Bool { status == 0 }
 }
 
+private final class TimeoutFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    var value: Bool { lock.withLock { flag } }
+
+    func set() { lock.withLock { flag = true } }
+}
+
 package enum Shell {
     package static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 
@@ -38,7 +47,7 @@ package enum Shell {
 
     @discardableResult
     package static func run(_ executable: URL, _ arguments: [String], stdin: Data? = nil,
-                    environment: [String: String]? = nil, cwd: URL? = nil) throws -> ShellResult {
+                    environment: [String: String]? = nil, cwd: URL? = nil, timeout: TimeInterval? = nil) throws -> ShellResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -68,8 +77,19 @@ package enum Shell {
             errData = err.fileHandleForReading.readDataToEndOfFile()
             group.leave()
         }
+        let timedOut = TimeoutFlag()
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                guard process.isRunning else { return }
+                timedOut.set()
+                process.terminate()
+            }
+        }
         process.waitUntilExit()
         group.wait()
+        if timedOut.value {
+            throw RecapError("TIMEOUT", "\(executable.lastPathComponent) did not finish within \(Int(timeout ?? 0)) seconds")
+        }
         return ShellResult(status: process.terminationStatus,
                            stdout: String(decoding: outData, as: UTF8.self),
                            stderr: String(decoding: errData, as: UTF8.self))

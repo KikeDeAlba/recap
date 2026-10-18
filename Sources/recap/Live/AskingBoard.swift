@@ -194,6 +194,15 @@ enum AskCoordinator {
         defer { AskingBoard.remove(dir, id: id) }
         return try body()
     }
+
+    static func perform(dir: URL, id: String = AskID.make(), question: String?, auto: Bool, now: Date = Date(),
+                        questionMs: Int? = nil, channel: Channel? = nil, pid: Int32 = getpid(),
+                        body: () throws -> Answer, afterBoard: (Answer) -> Void) throws -> Answer {
+        let answer = try perform(dir: dir, id: id, question: question, auto: auto, now: now, questionMs: questionMs,
+                                 channel: channel, pid: pid, body: body)
+        afterBoard(answer)
+        return answer
+    }
 }
 
 final class AskSignalCleanup {

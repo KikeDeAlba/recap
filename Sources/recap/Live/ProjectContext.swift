@@ -29,19 +29,10 @@ struct ProjectContext: Equatable {
 }
 
 enum ProjectContextLoader {
-    static func load(project: String?, docsRoot: String?, bita: BitaCalling?, gaze: GazeCalling? = nil,
-                     question: String? = nil) -> ProjectContext {
+    static func load(project: String?, docsRoot: String?, bita: BitaCalling?, gaze: GazeCalling? = nil) -> ProjectContext {
         var context = ProjectContext(project: project?.trimmed.isEmpty == true ? nil : project, docsRoot: docsRoot)
-        guard let gaze, let name = context.project else { return loadBita(context, bita: bita) }
-        context.gaze = gaze.command
-        guard let question = question?.trimmed, !question.isEmpty else { return loadBita(context, bita: bita) }
-        let group = DispatchGroup()
-        var brain: [BrainNote] = []
-        DispatchQueue.global().async(group: group) { brain = GazeBrain.search(gaze, question: question, project: name) }
-        context = loadBita(context, bita: bita)
-        group.wait()
-        context.brain = brain
-        return context
+        if let gaze, context.project != nil { context.gaze = gaze.command }
+        return loadBita(context, bita: bita)
     }
 
     private static func loadBita(_ initial: ProjectContext, bita: BitaCalling?) -> ProjectContext {

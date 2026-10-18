@@ -53,14 +53,11 @@ struct AskRequest {
 enum AskPrompt {
     static let readTools = ["Read", "Grep", "Glob"]
     static let gitSubcommands = ["log", "show", "diff"]
-    static let gazeSubcommands = ["search", "show"]
 
     static func allowedTools(_ context: ProjectContext) -> [String] {
-        let git = context.existingRepos.flatMap { repo in
+        readTools + context.existingRepos.flatMap { repo in
             gitSubcommands.map { "Bash(git -C \(repo.path) \($0):*)" }
         }
-        let brain = context.project == nil ? [] : (context.gaze.map { gaze in gazeSubcommands.map { "Bash(\(gaze) \($0):*)" } } ?? [])
-        return readTools + brain + git
     }
     static let availableTools = ["Read", "Grep", "Glob", "Bash"]
 
@@ -95,7 +92,6 @@ enum AskPrompt {
             .replacingOccurrences(of: "{{docsRoot}}", with: context.docsRoot ?? "(desconocida)")
             .replacingOccurrences(of: "{{pages}}", with: pages)
             .replacingOccurrences(of: "{{repos}}", with: repos)
-            .replacingOccurrences(of: "{{gaze}}", with: context.project == nil ? "" : context.gaze ?? "")
             .replacingOccurrences(of: "{{brain}}", with: GazeBrain.render(context))
             .replacingOccurrences(of: "{{speakers}}", with: speakers)
             .replacingOccurrences(of: "{{transcript}}", with: LiveTranscript.render(window, labelled: labelled))
@@ -111,26 +107,42 @@ final class AskSession {
     private let emit: (AskEvent) -> Void
     private let gaze: GazeCalling?
     private let log: (String) -> Void
+    private let checks: SourceChecks
 
-    init(config: Config, gaze: GazeCalling? = nil,
+    init(config: Config, gaze: GazeCalling? = nil, checks: SourceChecks = .live,
          log: @escaping (String) -> Void = { FileHandle.standardError.write(Data("recap: \($0)\n".utf8)) },
          emit: @escaping (AskEvent) -> Void) {
         self.config = config
         self.gaze = gaze
+        self.checks = checks
         self.log = log
         self.emit = emit
     }
 
-    func run(_ request: AskRequest, context: ProjectContext) throws -> Answer {
+    func brainContext(_ context: ProjectContext, question: String?, segments: [Segment]) -> ProjectContext {
+        guard let gaze, let project = context.project, context.gaze != nil else { return context }
+        var enriched = context
+        enriched.brain = GazeBrain.lookup(gaze, project: project, query: GazeBrain.query(question: question, segments: segments))
+        return enriched
+    }
+
+    func remember(_ answer: Answer, request: AskRequest, context: ProjectContext) {
+        guard let gaze, let project = context.project, context.gaze != nil else { return }
+        GazeBrain.remember(gaze, answer: answer, project: project, meeting: request.meeting, context: context,
+                           checks: checks, log: log)
+    }
+
+    func run(_ request: AskRequest, context initial: ProjectContext) throws -> Answer {
         let segments = LiveTranscript.load(request.dir)
         let explicit = request.question?.trimmed.isEmpty == false ? request.question?.trimmed : nil
         guard explicit != nil || !segments.isEmpty else {
             throw RecapError("NO_QUESTION", "The live transcript is empty; pass --question")
         }
+        let context = brainContext(initial, question: explicit, segments: segments)
         let prompt = AskPrompt.render(template: try ResourceText.load("ask-prompt.md"), request: request,
                                       context: context, segments: segments)
         if let explicit { emit(.question(explicit)) }
-        let describer = ProgressDescriber(docsRoot: context.docsRoot, repos: context.existingRepos, gaze: context.gaze)
+        let describer = ProgressDescriber(docsRoot: context.docsRoot, repos: context.existingRepos)
         let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context).joined(separator: " ")],
                                                      addDirs: AskPrompt.addDirs(context),
                                                      model: config.liveSettings.assistModel,
@@ -153,9 +165,6 @@ final class AskSession {
         answer.answeredAt = Date()
         try JSONLines.append([answer], to: LiveFiles.answers(request.dir))
         emit(.done(answer))
-        if let gaze, let project = context.project, context.gaze != nil {
-            GazeBrain.remember(gaze, answer: answer, project: project, meeting: request.meeting, log: log)
-        }
         return answer
     }
 }

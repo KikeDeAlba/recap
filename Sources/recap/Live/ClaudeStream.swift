@@ -38,10 +38,8 @@ enum ClaudeStreamParser {
 
 struct ProgressDescriber {
     var roots: [(prefix: String, label: String)]
-    var gaze: String?
 
-    init(docsRoot: String?, repos: [RepoRef], gaze: String? = nil) {
-        self.gaze = gaze
+    init(docsRoot: String?, repos: [RepoRef]) {
         var roots: [(String, String)] = repos.map { ($0.path, $0.slug) }
         if let docsRoot { roots.append((docsRoot, "docs")) }
         self.roots = roots.sorted { $0.0.count > $1.0.count }
@@ -59,18 +57,11 @@ struct ProgressDescriber {
             return "Listando \(input["pattern"] ?? "")\(scope)"
         case "Bash":
             guard var command = input["command"] else { return "Ejecutando un comando" }
-            if isBrainQuery(command) { return "Consultando el cerebro…" }
             for root in roots { command = command.replacingOccurrences(of: root.prefix, with: root.label) }
             return "Ejecutando \(command)"
         default:
             return name
         }
-    }
-
-    func isBrainQuery(_ command: String) -> Bool {
-        let trimmed = command.trimmed
-        let prefixes = ([gaze].compactMap { $0 } + ["gaze"]).flatMap { ["\($0) search", "\($0) show"] }
-        return prefixes.contains { trimmed == $0 || trimmed.hasPrefix($0 + " ") }
     }
 
     func short(_ path: String) -> String {

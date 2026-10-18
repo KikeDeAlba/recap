@@ -5,6 +5,34 @@ struct AskSourcesData: Encodable {
     let project: String?
     let docsRoot: String?
     let repos: [RepoRef]
+    let gaze: String?
+    let notes: [BrainNote]
+
+    init(context: ProjectContext) {
+        project = context.project
+        docsRoot = context.docsRoot
+        repos = context.repos
+        gaze = context.project == nil ? nil : context.gaze
+        notes = context.brain
+    }
+
+    static func load(project: String?, docsRoot: String?, bita: BitaCalling?, gaze: GazeCalling?,
+                     question: String?) -> ProjectContext {
+        var context = ProjectContextLoader.load(project: project, docsRoot: docsRoot, bita: bita, gaze: gaze)
+        if let gaze, let name = context.project, context.gaze != nil {
+            context.brain = GazeBrain.lookup(gaze, project: name, query: question)
+        }
+        return context
+    }
+
+    static func lines(_ context: ProjectContext, gazeFound: Bool) -> String {
+        var lines = ["Project: \(context.project ?? "(none)")", "Docs: \(context.docsRoot ?? "(unknown)")"]
+        lines += context.repos.map { "Repo: \($0.slug) \($0.path)\($0.exists ? "" : " (missing)")" }
+        let gaze = context.project == nil ? nil : context.gaze
+        lines.append("Gaze: \(gaze ?? (gazeFound ? "(needs a project)" : "(unavailable)"))")
+        lines += context.brain.map { "Note: [\($0.id)] \($0.title) (\($0.kind))" }
+        return lines.joined(separator: "\n")
+    }
 }
 
 struct AskCommand: ParsableCommand {
@@ -77,11 +105,10 @@ struct AskCommand: ParsableCommand {
                 let bita = found.flatMap { MeetingContext.bita($0.0, config: config) }
                     ?? (try? BitaClient(config: config, target: BitaTarget()))
                 let name = project ?? found.flatMap { MeetingContext.project($0.0) }
-                let context = ProjectContextLoader.load(project: name, docsRoot: found?.0.bitaDocsRoot, bita: bita)
-                let data = AskSourcesData(project: context.project, docsRoot: context.docsRoot, repos: context.repos)
-                var lines = ["Project: \(context.project ?? "(none)")", "Docs: \(context.docsRoot ?? "(unknown)")"]
-                lines += context.repos.map { "Repo: \($0.slug) \($0.path)\($0.exists ? "" : " (missing)")" }
-                return (data, lines.joined(separator: "\n"))
+                let gaze = GazeClient.find()
+                let context = AskSourcesData.load(project: name, docsRoot: found?.0.bitaDocsRoot, bita: bita, gaze: gaze,
+                                                  question: question)
+                return (AskSourcesData(context: context), AskSourcesData.lines(context, gazeFound: gaze != nil))
             }
             return
         }
@@ -123,14 +150,17 @@ struct AskCommand: ParsableCommand {
         let request = AskRequest(meeting: found, dir: dir, question: question, windowSeconds: window, auto: auto,
                                  questionMs: questionMs, channel: channel, askId: id)
         AskSignalCleanup.install(dir: dir, id: id)
+        var remember: ((Answer) -> Void)?
         return try AskCoordinator.perform(dir: dir, id: id, question: question, auto: auto, now: request.now,
-                                          questionMs: questionMs, channel: channel) {
+                                          questionMs: questionMs, channel: channel, body: {
             let bita = MeetingContext.bita(found, config: config)
             let gaze = GazeClient.find()
             let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita),
-                                                    docsRoot: found.bitaDocsRoot, bita: bita, gaze: gaze, question: question)
-            return try AskSession(config: config, gaze: gaze, emit: emit).run(request, context: context)
-        }
+                                                    docsRoot: found.bitaDocsRoot, bita: bita, gaze: gaze)
+            let session = AskSession(config: config, gaze: gaze, emit: emit)
+            remember = { session.remember($0, request: request, context: context) }
+            return try session.run(request, context: context)
+        }, afterBoard: { answer in remember?(answer) })
     }
 
     private func target(_ config: Config) throws -> (Meeting, URL) {
