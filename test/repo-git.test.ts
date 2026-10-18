@@ -3,6 +3,7 @@ import { execFile, execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import { exitCodeOf, repoGitCommand, type GitProbe, type GitRunner } from '../src/cli/commands/repo-git.ts'
 import { GIT_USAGE, NO_GIT_HISTORY, allowedTools, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
 import { emptyContext } from '../src/live/context.ts'
@@ -242,7 +243,8 @@ test('resolves itself to node plus the real entry script', () => {
   const [node, entry] = runningCommand()
   assert.equal(node, process.execPath)
   assert.equal(entry, realpathSync(BIN))
-  assert.equal(recapEntry('file:///opt/recap/dist/live/repo-git.js'), '/opt/recap/dist/bin/recap.js')
+  const root = path.resolve('/opt/recap')
+  assert.equal(recapEntry(pathToFileURL(path.join(root, 'dist', 'live', 'repo-git.js')).href), path.join(root, 'dist', 'bin', 'recap.js'))
 })
 
 function runCli(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
