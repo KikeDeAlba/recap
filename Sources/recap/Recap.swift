@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 
 @main
 struct Recap: ParsableCommand {
@@ -37,6 +38,9 @@ struct Recap: ParsableCommand {
 
     static func main() {
         let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.first == RepoGit.commandName {
+            Darwin.exit(RepoGit.run(Array(arguments.dropFirst())))
+        }
         guard arguments.first == CaptureCommand.configuration.commandName else {
             main(nil)
             return

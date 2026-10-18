@@ -158,11 +158,11 @@ private func streamLine(_ text: String) -> String {
         let template = try ResourceText.load("ask-prompt.md")
         let prompt = AskPrompt.render(template: template, request: AskRequest(meeting: meeting(), dir: URL(fileURLWithPath: "/tmp"),
                                                                               question: nil, windowSeconds: 180),
-                                      context: context, segments: segments)
+                                      context: context, segments: segments, selfPath: "/usr/local/bin/recap")
         #expect(!prompt.contains("{{"))
         #expect(prompt.contains("«Daily de CoDi»"))
         #expect(prompt.contains("- #3 Despliegue — codi/despliegue.md"))
-        #expect(prompt.contains("`git -C /src/codi log|show|diff …`") && !prompt.contains("/src/gone"))
+        #expect(prompt.contains("`/usr/local/bin/recap repo-git /src/codi log|show|diff …`") && !prompt.contains("/src/gone"))
         #expect(!prompt.contains("cd /src"))
         #expect(prompt.contains("[00:06:40] Remotos: ¿Cómo se despliega el webhook?"))
         #expect(!prompt.contains("sprint anterior"))
@@ -173,18 +173,45 @@ private func streamLine(_ text: String) -> String {
                                                                                           question: "¿Qué puerto usa?", windowSeconds: 60),
                                         context: context, segments: segments)
         #expect(explicit.contains("> ¿Qué puerto usa?"))
+        #expect(prompt.contains("Para el historial de un repositorio usa solo `/usr/local/bin/recap repo-git <ruta del repo> log`"))
+        #expect(prompt.contains("sin `$( )`, sin comillas invertidas y sin redirecciones (`>`)"))
+        #expect(!prompt.contains(AskPrompt.noGitHistory))
+    }
+
+    @Test func promptWithoutRuledReposDeniesTheGitHistory() throws {
+        let template = try ResourceText.load("ask-prompt.md")
+        let request = AskRequest(meeting: meeting(), dir: URL(fileURLWithPath: "/tmp"), question: "x", windowSeconds: 60)
+        let contexts = [
+            ProjectContext(project: "CoDi", docsRoot: "/data/docs", repos: []),
+            ProjectContext(project: "CoDi", docsRoot: "/data/docs", repos: [RepoRef(path: "/src/my repo", slug: "mine", exists: true)]),
+        ]
+        for context in contexts {
+            let prompt = AskPrompt.render(template: template, request: request, context: context, segments: [],
+                                          selfPath: "/usr/local/bin/recap")
+            #expect(!prompt.contains("{{"))
+            #expect(prompt.contains("No tienes acceso al historial de git: usa solo Read, Grep y Glob."))
+            #expect(!prompt.contains("<ruta del repo>"))
+            #expect(!prompt.contains("/usr/local/bin/recap repo-git"))
+        }
+        let unsafeSelf = ProjectContext(project: "CoDi", docsRoot: nil, repos: [RepoRef(path: "/src/codi", slug: "codi", exists: true)])
+        let prompt = AskPrompt.render(template: "{{gitUsage}}", request: request, context: unsafeSelf, segments: [],
+                                      selfPath: "/a b/recap")
+        #expect(prompt == AskPrompt.noGitHistory)
+        #expect(AskPrompt.render(template: "{{gitUsage}}|{{git}}", request: request, context: unsafeSelf, segments: [],
+                                 selfPath: "/s/recap")
+                == AskPrompt.gitUsage.replacingOccurrences(of: "{{git}}", with: "/s/recap repo-git") + "|/s/recap repo-git")
     }
 
     @Test func streamArgumentsKeepTheIsolationFlags() {
         let context = ProjectContext(project: "CoDi", docsRoot: "/d", repos: [RepoRef(path: "/r", slug: "r", exists: true),
                                                                           RepoRef(path: "/gone", slug: "gone", exists: false)])
-        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context).joined(separator: " ")],
+        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context, selfPath: "/usr/local/bin/recap").joined(separator: " ")],
                                                      addDirs: ["/d", "/r", "/d"], model: "haiku",
                                                      restrictTools: AskPrompt.availableTools)
         #expect(Array(arguments.prefix(5)) == ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
         #expect(arguments.contains("--strict-mcp-config") && arguments.contains("--no-session-persistence"))
         #expect(arguments[arguments.firstIndex(of: "--allowedTools")! + 1]
-                == "Read Grep Glob Bash(git -C /r log:*) Bash(git -C /r show:*) Bash(git -C /r diff:*)")
+                == "Read Grep Glob Bash(/usr/local/bin/recap repo-git /r log:*) Bash(/usr/local/bin/recap repo-git /r show:*) Bash(/usr/local/bin/recap repo-git /r diff:*)")
         #expect(AskPrompt.allowedTools(ProjectContext(project: nil, docsRoot: nil)) == ["Read", "Grep", "Glob"])
         #expect(!arguments.joined(separator: " ").contains("gone"))
         #expect(arguments.filter { $0 == "--add-dir" }.count == 2)
@@ -383,8 +410,8 @@ private let fakeChecks = SourceChecks(
 
     @Test func claudeGetsNoGazeRules() {
         var context = context()
-        #expect(AskPrompt.allowedTools(context) == ["Read", "Grep", "Glob", "Bash(git -C /r log:*)", "Bash(git -C /r show:*)",
-                                                    "Bash(git -C /r diff:*)"])
+        #expect(AskPrompt.allowedTools(context, selfPath: "/s/recap") == ["Read", "Grep", "Glob", "Bash(/s/recap repo-git /r log:*)", "Bash(/s/recap repo-git /r show:*)",
+                                                    "Bash(/s/recap repo-git /r diff:*)"])
         context.repos = []
         #expect(AskPrompt.allowedTools(context) == ["Read", "Grep", "Glob"])
         let describer = ProgressDescriber(docsRoot: nil, repos: [])

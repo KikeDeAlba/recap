@@ -13,6 +13,7 @@ import { BRAIN_QUERY_SECONDS, brainAvailable, brainNotesShown, brainQuery, remem
 import { existingRepos, type ProjectContext } from './context.ts'
 import { appendLines, liveFiles } from './files.ts'
 import { loadLiveTranscript, renderLive, transcriptWindow } from './merger.ts'
+import { REPO_GIT_SUBCOMMANDS, repoGitAllowed, repoGitPrefix, repoGitRules, runningCommand } from './repo-git.ts'
 import { AskStreamReducer, ProgressDescriber, encodeAnswer, type Answer, type AskEvent } from './stream.ts'
 
 export interface AskRequest {
@@ -28,22 +29,25 @@ export interface AskRequest {
 }
 
 export const READ_TOOLS = ['Read', 'Grep', 'Glob']
-export const GIT_SUBCOMMANDS = ['log', 'show', 'diff']
+export const GIT_SUBCOMMANDS: readonly string[] = REPO_GIT_SUBCOMMANDS
 export const AVAILABLE_TOOLS = ['Read', 'Grep', 'Glob', 'Bash']
+export const GIT_USAGE =
+  'Para el historial de un repositorio usa solo `{{git}} <ruta del repo> log`, `{{git}} <ruta del repo> show` o `{{git}} <ruta del repo> diff`, tal cual y con la ruta exacta de la lista: un comando por llamada, sin `cd`, sin `&&`, sin tuberías, sin `$( )`, sin comillas invertidas y sin redirecciones (`>`); cualquier otra forma, `git` directo u opciones que escriban archivos o lean fuera del repositorio se rechazan.'
+export const NO_GIT_HISTORY = 'No tienes acceso al historial de git: usa solo Read, Grep y Glob.'
 
 export function gazeBin(context: ProjectContext): string | null {
   return context.project && context.gaze ? context.gaze.bin : null
 }
 
-export function allowedTools(context: ProjectContext): string[] {
-  return [...READ_TOOLS, ...existingRepos(context).flatMap((repo) => GIT_SUBCOMMANDS.map((sub) => `Bash(git -C ${repo.path} ${sub}:*)`))]
+export function allowedTools(context: ProjectContext, self: readonly string[] = runningCommand()): string[] {
+  return [...READ_TOOLS, ...repoGitRules(self, existingRepos(context).map((repo) => repo.path))]
 }
 
 export function askAddDirs(context: ProjectContext): string[] {
   return [...(context.docsRoot ? [context.docsRoot] : []), ...existingRepos(context).map((repo) => repo.path)]
 }
 
-export function renderAskPrompt(template: string, request: AskRequest, context: ProjectContext, segments: readonly Segment[], notes: readonly BrainNote[] = []): string {
+export function renderAskPrompt(template: string, request: AskRequest, context: ProjectContext, segments: readonly Segment[], notes: readonly BrainNote[] = [], self: readonly string[] = runningCommand()): string {
   const window = transcriptWindow(segments, request.windowSeconds)
   const labelled = request.meeting.mode === 'remote'
   const title = request.meeting.bitaEntry?.title ?? request.meeting.title
@@ -57,11 +61,24 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
       ? '  (sin páginas registradas para este proyecto)'
       : context.pages.map((page) => `  ${'  '.repeat(Math.max(0, page.depth))}- #${page.pageId} ${page.title} — ${page.relPath}`).join('\n')
   const repos = existingRepos(context)
-  const reposText = repos.length === 0 ? '  (sin repositorios registrados)' : repos.map((repo) => `  - ${repo.slug}: ${repo.path} (git: \`git -C ${repo.path} log|show|diff …\`)`).join('\n')
+  const git = repoGitPrefix(self)
+  const reposText =
+    repos.length === 0
+      ? '  (sin repositorios registrados)'
+      : repos
+          .map((repo) =>
+            repoGitAllowed(self, repo.path)
+              ? `  - ${repo.slug}: ${repo.path} (historial: \`${git} ${repo.path} log|show|diff …\`)`
+              : `  - ${repo.slug}: ${repo.path} (sin historial de git; solo Read, Grep y Glob)`,
+          )
+          .join('\n')
   const speakers = labelled
     ? '«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada.'
     : 'Un solo micrófono en la sala, sin separación por persona.'
+  const gitUsage = repos.some((repo) => repoGitAllowed(self, repo.path)) ? GIT_USAGE : NO_GIT_HISTORY
   let text = template
+  text = replaceAll(text, '{{gitUsage}}', gitUsage)
+  text = replaceAll(text, '{{git}}', git)
   text = replaceAll(text, '{{title}}', title)
   text = replaceAll(text, '{{project}}', context.project ?? 'sin proyecto')
   text = replaceAll(text, '{{now}}', minuteStamp(parseDate(request.now) ?? new Date()))
