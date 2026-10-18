@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { repoGitCommand, type GitRunner } from '../src/cli/commands/repo-git.ts'
-import { allowedTools, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
+import { exitCodeOf, repoGitCommand, type GitProbe, type GitRunner } from '../src/cli/commands/repo-git.ts'
+import { GIT_USAGE, NO_GIT_HISTORY, allowedTools, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
 import { emptyContext } from '../src/live/context.ts'
-import { REPO_GIT_STRIPPED_ENV, recapEntry, repoGitArguments, repoGitEnv, repoGitRules, runningCommand, validateRepoGitArgs } from '../src/live/repo-git.ts'
+import { recapEntry, repoGitArguments, repoGitEnv, repoGitRules, runningCommand, validateRepoGitArgs, workTreeArguments } from '../src/live/repo-git.ts'
+import { loadResource } from '../src/pipeline/resources.ts'
 import { PACKAGE_ROOT } from '../src/version.ts'
 import { meeting, tempDir } from './helpers.ts'
 
@@ -47,11 +48,29 @@ const REJECTED: [string[], string][] = [
   [['/r', 'diff', '/etc/hosts', '/dev/null'], 'path outside the repository not allowed: /etc/hosts'],
   [['/r', 'diff', '--', '../../etc/hosts', 'a'], 'path outside the repository not allowed: ../../etc/hosts'],
   [['/r'], 'subcommand not allowed: (none)'],
+  [['/r', 'log', '-́x'], 'option not allowed: -́x'],
+  [['/r', 'diff', '/́etc'], 'path outside the repository not allowed: /́etc'],
 ]
+
+const PREFIX = ['-c', 'core.fsmonitor=false', '-c', 'diff.external=', '-c', 'core.pager=cat', '-c', 'gpg.program=false', '-c', 'gpg.ssh.program=false', '-c', 'gpg.x509.program=false', '-c', 'log.showSignature=false']
 
 function recordingRunner(): { runner: GitRunner; calls: string[][] } {
   const calls: string[][] = []
   return { calls, runner: async (args) => (calls.push(args), 0) }
+}
+
+function recordingProbe(result: { code: number; stdout: string } = { code: 0, stdout: 'true\n' }): { probe: GitProbe; calls: string[][] } {
+  const calls: string[][] = []
+  return { calls, probe: async (args) => (calls.push(args), result) }
+}
+
+function commitRepo(dir: string): string {
+  const repo = path.join(dir, 'repo')
+  execFileSync('git', ['init', '-q', repo])
+  writeFileSync(path.join(repo, 'a'), 'a\n')
+  execFileSync('git', ['-C', repo, 'add', 'a'])
+  execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'real commit'])
+  return repo
 }
 
 test('accepts the shared allowed vectors', () => {
@@ -82,13 +101,91 @@ test('never spawns git for rejected arguments and exits 2', async (t) => {
 test('runs git with the fixed safe prefix and a neutralised environment', async (t) => {
   const repo = tempDir(t)
   const { runner, calls } = recordingRunner()
-  assert.equal(await repoGitCommand([repo, 'log', '--oneline', '-1'], runner), 0)
+  const probe = recordingProbe()
+  assert.equal(await repoGitCommand([repo, 'log', '--oneline', '-1'], runner, () => {}, probe.probe), 0)
+  assert.deepEqual(probe.calls, [['--no-pager', '-C', repo, ...PREFIX, 'rev-parse', '--is-inside-work-tree']])
+  assert.deepEqual(probe.calls[0], workTreeArguments(repo))
   assert.deepEqual(calls, [repoGitArguments(repo, 'log', ['--oneline', '-1'])])
-  assert.deepEqual(calls[0], ['--no-pager', '-C', repo, '-c', 'core.fsmonitor=false', '-c', 'diff.external=', '-c', 'core.pager=cat', 'log', '--no-ext-diff', '--no-textconv', '--no-color', '--oneline', '-1'])
-  const hostile = Object.fromEntries([...REPO_GIT_STRIPPED_ENV, 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_12', 'GIT_CONFIG_VALUE_12'].map((key) => [key, 'evil']))
-  assert.equal(REPO_GIT_STRIPPED_ENV.length, 11)
-  const env = repoGitEnv({ PATH: '/bin', HOME: '/h', GIT_AUTHOR_NAME: 'ana', GIT_TERMINAL_PROMPT: '1', ...hostile })
-  assert.deepEqual(env, { PATH: '/bin', HOME: '/h', GIT_AUTHOR_NAME: 'ana', GIT_TERMINAL_PROMPT: '0' })
+  assert.deepEqual(calls[0], ['--no-pager', '-C', repo, ...PREFIX, 'log', '--no-ext-diff', '--no-textconv', '--no-color', '--oneline', '-1'])
+})
+
+test('passes only the allowlisted environment to git', () => {
+  const kept = { PATH: '/bin', HOME: '/h', USER: 'u', LOGNAME: 'u', TMPDIR: '/t', LANG: 'es_MX.UTF-8', LC_ALL: 'C', LC_CTYPE: 'UTF-8', LC_MESSAGES: 'C' }
+  const names = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_TRACE', 'GIT_TRACE2_EVENT', 'GIT_COMMON_DIR', 'GIT_ATTR_SOURCE', 'GIT_NAMESPACE', 'GIT_AUTHOR_NAME', 'GIT_EXEC_PATH', 'NODE_OPTIONS', 'SYSTEMROOT', 'LCX']
+  const hostile = Object.fromEntries(names.map((key) => [key, 'evil']))
+  assert.deepEqual(repoGitEnv({ ...kept, ...hostile, GIT_TERMINAL_PROMPT: '1', GIT_CONFIG_NOSYSTEM: '0' }, 'darwin'), { ...kept, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' })
+  const windows = { Path: 'C:\\bin', SystemRoot: 'C:\\Windows', COMSPEC: 'cmd', PATHEXT: '.EXE', USERPROFILE: 'u', APPDATA: 'a', LOCALAPPDATA: 'l', TEMP: 't', TMP: 't' }
+  assert.deepEqual(repoGitEnv({ ...windows, GIT_TRACE: '1' }, 'win32'), { ...windows, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' })
+})
+
+test('refuses a directory that is not a work tree before running git', async (t) => {
+  const repo = tempDir(t)
+  const { runner, calls } = recordingRunner()
+  let error = ''
+  assert.equal(await repoGitCommand([repo, 'log'], runner, (text) => (error += text), recordingProbe({ code: 128, stdout: '' }).probe), 2)
+  assert.equal(await repoGitCommand([repo, 'log'], runner, () => {}, recordingProbe({ code: 0, stdout: 'false\n' }).probe), 2)
+  assert.equal(calls.length, 0)
+  assert.equal(error, `recap repo-git: not a git repository: ${repo}\n`)
+  const real = await runCli(['repo-git', repo, 'log', '-1'])
+  assert.equal(real.code, 2)
+  assert.equal(real.stderr, `recap repo-git: not a git repository: ${repo}\n`)
+})
+
+test('reports a missing git with exit 127', async (t) => {
+  const repo = tempDir(t)
+  let error = ''
+  assert.equal(await repoGitCommand([repo, 'log'], recordingRunner().runner, (text) => (error += text), recordingProbe({ code: 127, stdout: '' }).probe), 127)
+  assert.equal(error, 'recap repo-git: git not found\n')
+  const empty = path.join(repo, 'empty')
+  mkdirSync(empty)
+  const real = await runCli(['repo-git', repo, 'log'], { ...process.env, PATH: empty })
+  assert.equal(real.code, 127)
+  assert.equal(real.stderr, 'recap repo-git: git not found\n')
+})
+
+test('maps timeouts and foreign signals to shell exit codes', () => {
+  assert.equal(exitCodeOf(0, null, false), 0)
+  assert.equal(exitCodeOf(128, null, false), 128)
+  assert.equal(exitCodeOf(null, 'SIGKILL', true), 124)
+  assert.equal(exitCodeOf(null, 'SIGTERM', false), 143)
+  assert.equal(exitCodeOf(null, 'SIGKILL', false), 137)
+  assert.equal(exitCodeOf(null, 'SIGINT', false), 130)
+})
+
+test('ignores git configuration and tracing from the parent environment', async (t) => {
+  const dir = realpathSync(tempDir(t))
+  const repo = commitRepo(dir)
+  const marker = path.join(dir, 'X')
+  const trace = path.join(dir, 't')
+  const env = { ...process.env, GIT_CONFIG_PARAMETERS: `'core.pager'='touch ${marker}'`, GIT_TRACE: trace }
+  const result = await runCli(['repo-git', repo, 'log', '--oneline', '-1'], env)
+  assert.equal(result.code, 0, result.stderr)
+  assert.match(result.stdout, /real commit/)
+  assert.ok(!existsSync(marker))
+  assert.ok(!existsSync(trace))
+})
+
+test('reads signature status without running a signing program', async (t) => {
+  const dir = realpathSync(tempDir(t))
+  const repo = commitRepo(dir)
+  const marker = path.join(dir, 'gpg-ran')
+  const script = path.join(dir, 'fake-gpg')
+  writeFileSync(script, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
+  chmodSync(script, 0o755)
+  const tree = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim()
+  const body = `tree ${tree}\nauthor t <t@t> 1700000000 +0000\ncommitter t <t@t> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n\nsigned commit\n`
+  const objectFile = path.join(dir, 'commit.txt')
+  writeFileSync(objectFile, body)
+  const sha = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', objectFile], { encoding: 'utf8' }).trim()
+  execFileSync('git', ['-C', repo, 'update-ref', 'HEAD', sha])
+  execFileSync('git', ['-C', repo, 'config', 'gpg.program', script])
+  execFileSync('git', ['-C', repo, 'log', '--format=%G?', '-1'], { encoding: 'utf8' })
+  assert.ok(existsSync(marker), 'control: plain git runs the configured signing program')
+  rmSync(marker)
+  const result = await runCli(['repo-git', repo, 'log', '--format=%G?', '-1'])
+  assert.equal(result.code, 0, result.stderr)
+  assert.match(result.stdout, /^[A-Z]\n$/)
+  assert.ok(!existsSync(marker))
 })
 
 test('a hostile git environment cannot redirect the real run', async (t) => {
@@ -99,7 +196,7 @@ test('a hostile git environment cannot redirect the real run', async (t) => {
   execFileSync('git', ['-C', repo, 'add', 'a'])
   execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'real commit'])
   const marker = path.join(dir, 'pwned')
-  const env = { ...process.env, GIT_DIR: path.join(dir, 'nowhere'), GIT_WORK_TREE: dir, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.pager', GIT_CONFIG_VALUE_0: `touch ${marker}`, GIT_PAGER: `touch ${marker}`, GIT_EXTERNAL_DIFF: `touch ${marker}` }
+  const env = { ...process.env, GIT_CONFIG_PARAMETERS: `'core.pager'='touch ${marker}'`, GIT_DIR: path.join(dir, 'nowhere'), GIT_WORK_TREE: dir, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.pager', GIT_CONFIG_VALUE_0: `touch ${marker}`, GIT_PAGER: `touch ${marker}`, GIT_EXTERNAL_DIFF: `touch ${marker}` }
   const result = await runCli(['repo-git', repo, 'log', '--oneline', '-1'], env)
   assert.equal(result.code, 0, result.stderr)
   assert.match(result.stdout, /real commit/)
@@ -122,6 +219,23 @@ test('the prompt tells Claude to use the wrapper', () => {
   const context = emptyContext({ repos: [{ path: '/src/codi', slug: 'codi', exists: true }, { path: '/src/con espacio', slug: 'esp', exists: true }] })
   const text = renderAskPrompt('{{git}}|{{repos}}', request, context, [], [], SELF)
   assert.equal(text, '/usr/local/bin/recap repo-git|  - codi: /src/codi (historial: `/usr/local/bin/recap repo-git /src/codi log|show|diff …`)\n  - esp: /src/con espacio (sin historial de git; solo Read, Grep y Glob)')
+  assert.equal(renderAskPrompt('{{gitUsage}}', request, context, [], [], SELF), GIT_USAGE.replaceAll('{{git}}', '/usr/local/bin/recap repo-git'))
+  assert.ok(GIT_USAGE.includes('un comando por llamada, sin `cd`, sin `&&`, sin tuberías, sin `$( )`, sin comillas invertidas y sin redirecciones (`>`)'))
+})
+
+test('the prompt denies git history when no repository got a rule', () => {
+  const request: AskRequest = { meeting: meeting(), dir: '/tmp', question: '¿Qué cambió?', windowSeconds: 60, now: '2026-10-10T10:00:00Z', auto: false }
+  const cases: [ReturnType<typeof emptyContext>, string[]][] = [
+    [emptyContext(), SELF],
+    [emptyContext({ repos: [{ path: '/src/con espacio', slug: 'esp', exists: true }] }), SELF],
+    [emptyContext({ repos: [{ path: '/src/codi', slug: 'codi', exists: true }] }), ['/opt/my node/node']],
+  ]
+  for (const [context, self] of cases) {
+    const prompt = renderAskPrompt(loadResource('ask-prompt.md'), request, context, [], [], self)
+    assert.deepEqual(allowedTools(context, self), ['Read', 'Grep', 'Glob'])
+    assert.ok(prompt.includes(`Puedes leerlas con Read, Grep y Glob. ${NO_GIT_HISTORY}`))
+    assert.ok(!prompt.includes('{{') && !prompt.includes('<ruta del repo>') && !prompt.includes('repo-git'))
+  }
 })
 
 test('resolves itself to node plus the real entry script', () => {

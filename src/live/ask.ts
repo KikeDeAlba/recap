@@ -31,6 +31,9 @@ export interface AskRequest {
 export const READ_TOOLS = ['Read', 'Grep', 'Glob']
 export const GIT_SUBCOMMANDS: readonly string[] = REPO_GIT_SUBCOMMANDS
 export const AVAILABLE_TOOLS = ['Read', 'Grep', 'Glob', 'Bash']
+export const GIT_USAGE =
+  'Para el historial de un repositorio usa solo `{{git}} <ruta del repo> log`, `{{git}} <ruta del repo> show` o `{{git}} <ruta del repo> diff`, tal cual y con la ruta exacta de la lista: un comando por llamada, sin `cd`, sin `&&`, sin tuberías, sin `$( )`, sin comillas invertidas y sin redirecciones (`>`); cualquier otra forma, `git` directo u opciones que escriban archivos o lean fuera del repositorio se rechazan.'
+export const NO_GIT_HISTORY = 'No tienes acceso al historial de git: usa solo Read, Grep y Glob.'
 
 export function gazeBin(context: ProjectContext): string | null {
   return context.project && context.gaze ? context.gaze.bin : null
@@ -72,7 +75,9 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
   const speakers = labelled
     ? '«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada.'
     : 'Un solo micrófono en la sala, sin separación por persona.'
+  const gitUsage = repos.some((repo) => repoGitAllowed(self, repo.path)) ? GIT_USAGE : NO_GIT_HISTORY
   let text = template
+  text = replaceAll(text, '{{gitUsage}}', gitUsage)
   text = replaceAll(text, '{{git}}', git)
   text = replaceAll(text, '{{title}}', title)
   text = replaceAll(text, '{{project}}', context.project ?? 'sin proyecto')

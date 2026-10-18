@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
-import { AVAILABLE_TOOLS, allowedTools, askAddDirs, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
+import { AVAILABLE_TOOLS, NO_GIT_HISTORY, allowedTools, askAddDirs, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
 import { emptyContext, loadProjectContext } from '../src/live/context.ts'
 import { jsonLine } from '../src/live/files.ts'
 import { AnswerAssembler, AskStreamReducer, ProgressDescriber, encodeAskEvent, parseSourcesBlock, parseStreamLine, type AskEvent } from '../src/live/stream.ts'
@@ -144,6 +144,9 @@ test('renders context, question and transcript window', () => {
   assert.ok(prompt.includes('- #3 Despliegue — codi/despliegue.md'))
   assert.ok(prompt.includes('`/usr/local/bin/recap repo-git /src/codi log|show|diff …`') && !prompt.includes('/src/gone'))
   assert.ok(prompt.includes('`/usr/local/bin/recap repo-git <ruta del repo> log`') && !prompt.includes('git -C'))
+  assert.ok(prompt.includes('sin `$( )`, sin comillas invertidas y sin redirecciones (`>`)') && !prompt.includes(NO_GIT_HISTORY))
+  const bare = renderAskPrompt(loadResource('ask-prompt.md'), request, emptyContext({ project: 'CoDi' }), segments, [], ['/usr/local/bin/recap'])
+  assert.ok(bare.includes(NO_GIT_HISTORY) && !bare.includes('repo-git') && !bare.includes('{{'))
   assert.ok(prompt.includes('[00:06:40] Remotos: ¿Cómo se despliega el webhook?'))
   assert.ok(!prompt.includes('sprint anterior'))
   assert.ok(prompt.includes('identifícala en la transcripción'))

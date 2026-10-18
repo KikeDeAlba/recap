@@ -173,6 +173,33 @@ private func streamLine(_ text: String) -> String {
                                                                                           question: "¿Qué puerto usa?", windowSeconds: 60),
                                         context: context, segments: segments)
         #expect(explicit.contains("> ¿Qué puerto usa?"))
+        #expect(prompt.contains("Para el historial de un repositorio usa solo `/usr/local/bin/recap repo-git <ruta del repo> log`"))
+        #expect(prompt.contains("sin `$( )`, sin comillas invertidas y sin redirecciones (`>`)"))
+        #expect(!prompt.contains(AskPrompt.noGitHistory))
+    }
+
+    @Test func promptWithoutRuledReposDeniesTheGitHistory() throws {
+        let template = try ResourceText.load("ask-prompt.md")
+        let request = AskRequest(meeting: meeting(), dir: URL(fileURLWithPath: "/tmp"), question: "x", windowSeconds: 60)
+        let contexts = [
+            ProjectContext(project: "CoDi", docsRoot: "/data/docs", repos: []),
+            ProjectContext(project: "CoDi", docsRoot: "/data/docs", repos: [RepoRef(path: "/src/my repo", slug: "mine", exists: true)]),
+        ]
+        for context in contexts {
+            let prompt = AskPrompt.render(template: template, request: request, context: context, segments: [],
+                                          selfPath: "/usr/local/bin/recap")
+            #expect(!prompt.contains("{{"))
+            #expect(prompt.contains("No tienes acceso al historial de git: usa solo Read, Grep y Glob."))
+            #expect(!prompt.contains("<ruta del repo>"))
+            #expect(!prompt.contains("/usr/local/bin/recap repo-git"))
+        }
+        let unsafeSelf = ProjectContext(project: "CoDi", docsRoot: nil, repos: [RepoRef(path: "/src/codi", slug: "codi", exists: true)])
+        let prompt = AskPrompt.render(template: "{{gitUsage}}", request: request, context: unsafeSelf, segments: [],
+                                      selfPath: "/a b/recap")
+        #expect(prompt == AskPrompt.noGitHistory)
+        #expect(AskPrompt.render(template: "{{gitUsage}}|{{git}}", request: request, context: unsafeSelf, segments: [],
+                                 selfPath: "/s/recap")
+                == AskPrompt.gitUsage.replacingOccurrences(of: "{{git}}", with: "/s/recap repo-git") + "|/s/recap repo-git")
     }
 
     @Test func streamArgumentsKeepTheIsolationFlags() {

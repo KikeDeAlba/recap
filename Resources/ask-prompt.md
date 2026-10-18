@@ -20,7 +20,7 @@ Revisa estas notas antes que cualquier otra fuente. Si responden la pregunta por
 
 ### Documentación y repositorios
 
-Responde solo con lo que encuentres en estas fuentes. Puedes leerlas con Read, Grep y Glob. Para el historial de un repositorio usa solo `{{git}} <ruta del repo> log`, `{{git}} <ruta del repo> show` o `{{git}} <ruta del repo> diff`, tal cual y con la ruta exacta de la lista: un comando por llamada, sin `cd`, sin `&&`, sin tuberías y sin redirecciones; cualquier otra forma, `git` directo u opciones que escriban archivos o lean fuera del repositorio se rechazan.
+Responde solo con lo que encuentres en estas fuentes. Puedes leerlas con Read, Grep y Glob. {{gitUsage}}
 
 - Raíz de la documentación (inkwell): {{docsRoot}}
 - Páginas del proyecto (ruta relativa a la raíz):

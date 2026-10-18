@@ -140,33 +140,42 @@ export function validateRepoGitArgs(argv: readonly string[], directoryExists: (d
   return { ok: true, repo, sub, args }
 }
 
-export function repoGitArguments(repo: string, sub: RepoGitSubcommand, args: readonly string[]): string[] {
-  return ['--no-pager', '-C', repo, '-c', 'core.fsmonitor=false', '-c', 'diff.external=', '-c', 'core.pager=cat', sub, ...REPO_GIT_FIXED_FLAGS, ...args]
-}
-
-export const REPO_GIT_STRIPPED_ENV = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-  'GIT_CONFIG',
-  'GIT_CONFIG_GLOBAL',
-  'GIT_CONFIG_SYSTEM',
-  'GIT_CONFIG_COUNT',
-  'GIT_EXTERNAL_DIFF',
-  'GIT_PAGER',
+export const REPO_GIT_CONFIG = [
+  'core.fsmonitor=false',
+  'diff.external=',
+  'core.pager=cat',
+  'gpg.program=false',
+  'gpg.ssh.program=false',
+  'gpg.x509.program=false',
+  'log.showSignature=false',
 ]
 
-const STRIPPED_ENV_PATTERN = /^GIT_CONFIG_(KEY|VALUE)_/
+function configPrefix(repo: string): string[] {
+  return ['--no-pager', '-C', repo, ...REPO_GIT_CONFIG.flatMap((setting) => ['-c', setting])]
+}
 
-export function repoGitEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function repoGitArguments(repo: string, sub: RepoGitSubcommand, args: readonly string[]): string[] {
+  return [...configPrefix(repo), sub, ...REPO_GIT_FIXED_FLAGS, ...args]
+}
+
+export function workTreeArguments(repo: string): string[] {
+  return [...configPrefix(repo), 'rev-parse', '--is-inside-work-tree']
+}
+
+export const REPO_GIT_KEPT_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL']
+export const REPO_GIT_WINDOWS_ENV = ['SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP']
+
+function keptKey(key: string, platform: NodeJS.Platform): boolean {
+  const name = platform === 'win32' ? key.toUpperCase() : key
+  if (REPO_GIT_KEPT_ENV.includes(name) || name.startsWith('LC_')) return true
+  return platform === 'win32' && REPO_GIT_WINDOWS_ENV.includes(name)
+}
+
+export function repoGitEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
   const clean: NodeJS.ProcessEnv = {}
-  for (const [key, value] of Object.entries(env)) {
-    if (REPO_GIT_STRIPPED_ENV.includes(key) || STRIPPED_ENV_PATTERN.test(key)) continue
-    clean[key] = value
-  }
+  for (const [key, value] of Object.entries(env)) if (value !== undefined && keptKey(key, platform)) clean[key] = value
   clean['GIT_TERMINAL_PROMPT'] = '0'
+  clean['GIT_CONFIG_NOSYSTEM'] = '1'
   return clean
 }
 

@@ -3,7 +3,10 @@ import Testing
 @testable import recap
 
 @Suite struct RepoGitTests {
-    private let prefix = ["--no-pager", "-C", "/r", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat"]
+    private let prefix = ["--no-pager", "-C", "/r", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat",
+                          "-c", "gpg.program=false", "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false",
+                          "-c", "log.showSignature=false"]
+    private let anyWorkTree: RepoGit.WorkTreeCheck = { _, _, _ in true }
 
     private func validate(_ arguments: [String]) throws(RepoGitRejection) -> [String] {
         try RepoGit.validate(arguments, directoryExists: { $0 == "/r" })
@@ -103,24 +106,110 @@ import Testing
         #expect(errors.contains("recap repo-git: option not allowed: --output=/tmp/x\n"))
 
         var received: (URL, [String], [String: String])?
+        var checked: [String]?
         let status = RepoGit.run([repo, "log", "-1"], runner: { git, arguments, environment in
             received = (git, arguments, environment)
             return 7
-        }, git: { URL(fileURLWithPath: "/usr/bin/git") })
+        }, git: { URL(fileURLWithPath: "/usr/bin/git") }, isWorkTree: { _, arguments, _ in
+            checked = arguments
+            return true
+        })
         #expect(status == 7)
-        #expect(received?.1 == ["--no-pager", "-C", repo, "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c",
-                                "core.pager=cat", "log", "--no-ext-diff", "--no-textconv", "--no-color", "-1"])
+        let base = ["--no-pager", "-C", repo, "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat",
+                    "-c", "gpg.program=false", "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false",
+                    "-c", "log.showSignature=false"]
+        #expect(received?.1 == base + ["log", "--no-ext-diff", "--no-textconv", "--no-color", "-1"])
+        #expect(checked == base + ["rev-parse", "--is-inside-work-tree"])
         #expect(received?.2["GIT_TERMINAL_PROMPT"] == "0")
+        #expect(received?.2["GIT_CONFIG_NOSYSTEM"] == "1")
     }
 
-    @Test func neutralisesTheGitEnvironment() {
-        var base = ["PATH": "/bin", "GIT_AUTHOR_NAME": "Ana", "GIT_CONFIG_KEY_0": "core.pager", "GIT_CONFIG_VALUE_0": "sh",
-                    "GIT_CONFIG_KEY_12": "x", "GIT_CONFIG_VALUE_12": "y", "GIT_TERMINAL_PROMPT": "1"]
+    @Test func keepsOnlyTheAllowlistedEnvironment() {
+        var base = ["PATH": "/bin", "HOME": "/h", "USER": "u", "LOGNAME": "u", "TMPDIR": "/t", "LANG": "es_MX.UTF-8",
+                    "LC_ALL": "C", "LC_CTYPE": "UTF-8", "LC_MESSAGES": "es", "GIT_AUTHOR_NAME": "Ana",
+                    "GIT_CONFIG_KEY_0": "core.pager", "GIT_CONFIG_VALUE_0": "sh", "GIT_TERMINAL_PROMPT": "1",
+                    "GIT_CONFIG_PARAMETERS": "'core.pager'='sh'", "GIT_TRACE": "/tmp/t", "GIT_TRACE2_EVENT": "/tmp/e",
+                    "GIT_COMMON_DIR": "/x", "GIT_ATTR_SOURCE": "x", "GIT_NAMESPACE": "x", "SHELL": "/bin/zsh",
+                    "DYLD_INSERT_LIBRARIES": "/x.dylib", "PAGER": "sh", "SYSTEMROOT": "C:\\Windows", "lc_all": "x"]
         for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
                      "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT", "GIT_EXTERNAL_DIFF", "GIT_PAGER"] {
             base[name] = "/x"
         }
-        #expect(RepoGit.environment(base) == ["PATH": "/bin", "GIT_AUTHOR_NAME": "Ana", "GIT_TERMINAL_PROMPT": "0"])
+        #expect(RepoGit.environment(base) == ["PATH": "/bin", "HOME": "/h", "USER": "u", "LOGNAME": "u", "TMPDIR": "/t",
+                                              "LANG": "es_MX.UTF-8", "LC_ALL": "C", "LC_CTYPE": "UTF-8", "LC_MESSAGES": "es",
+                                              "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"])
+        #expect(RepoGit.environment([:]) == ["GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"])
+    }
+
+    @Test func validatesOnUnicodeScalars() {
+        #expect(rejection(["/r", "log", "-\u{301}x"]) == "option not allowed: -\u{301}x")
+        #expect(rejection(["/r", "log", "/\u{301}etc"]) == "path outside the repository not allowed: /\u{301}etc")
+        #expect(rejection(["/r", "log", "--", "/\u{301}etc"]) == "path outside the repository not allowed: /\u{301}etc")
+        #expect(rejection(["/r", "log", "-\u{301}-output=/x"]) == "option not allowed: -\u{301}-output=/x")
+        #expect(rejection(["/r", "log", "--\u{301}output=/x"]) == "option not allowed: --\u{301}output=/x")
+        #expect(rejection(["/r", "log", "--stat\u{301}"]) == "option not allowed: --stat\u{301}")
+        #expect(rejection(["/r", "log", "-n", "3\u{301}"]) == "-n needs a number")
+        #expect(rejection(["/r", "log", "-3\u{301}"]) == "option not allowed: -3\u{301}")
+        #expect(rejection(["/r", "log", "a/..\u{301}/b"]) == nil)
+        #expect(rejection(["/r", "log", "--", "a\u{301}/../../b"]) != nil)
+        #expect(rejection(["/r", "log", "--author=Jos\u{e9}", "--grep=caf\u{301}e"]) == nil)
+        #expect(rejection(["/r\u{301}", "log"]) == "repository not found: /r\u{301}")
+        #expect(RepoGit.allowRules(repo: "/r\u{301}", selfPath: "/s/recap").isEmpty)
+        #expect(rejection(["/r", "log", "-S\n"]) == "option not allowed: -S\n")
+        #expect(rejection(["/r", "log", "-G\r"]) == "option not allowed: -G\r")
+        for terminator in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+            for flag in ["-S", "-G", "-M", "-L"] {
+                #expect(rejection(["/r", "log", flag + terminator + "x"]) == "option not allowed: \(flag)\(terminator)x")
+            }
+        }
+        #expect(rejection(["/r", "log", "-Sa\nb", "-Gx\u{2028}", "-M\t50%", "-L\u{301}1,2:a"]) == nil)
+    }
+
+    @Test func exitCodesForMissingGitTimeoutsAndSignals() throws {
+        let repo = FileManager.default.temporaryDirectory.path
+        var errors = ""
+        #expect(RepoGit.run([repo, "log"], runner: { _, _, _ in 0 }, git: { nil }, isWorkTree: anyWorkTree,
+                            stderr: { errors += $0 }) == 127)
+        #expect(errors == "recap repo-git: git not found\n")
+
+        errors = ""
+        #expect(RepoGit.run([repo, "log"], runner: { _, _, _ in throw RecapError("TIMEOUT", "git did not finish within 30 seconds") },
+                            git: { URL(fileURLWithPath: "/usr/bin/git") }, isWorkTree: anyWorkTree, stderr: { errors += $0 }) == 124)
+        #expect(errors == "recap repo-git: git did not finish within 30 seconds\n")
+
+        errors = ""
+        let gone = URL(fileURLWithPath: "/nonexistent/bin/git-\(UUID().uuidString)")
+        #expect(RepoGit.run([repo, "log"], git: { gone }, stderr: { errors += $0 }) == 127)
+        #expect(RepoGit.run([repo, "log"], runner: RepoGit.process(), git: { gone }, isWorkTree: anyWorkTree,
+                            stderr: { errors += $0 }) == 127)
+        #expect(errors == "recap repo-git: git not found\nrecap repo-git: git not found\n")
+
+        errors = ""
+        var spawned = 0
+        #expect(RepoGit.run([repo, "log"], runner: { _, _, _ in
+            spawned += 1
+            return 0
+        }, git: { URL(fileURLWithPath: "/usr/bin/git") }, isWorkTree: { _, _, _ in
+            throw RecapError("TIMEOUT", "git did not finish within 10 seconds")
+        }, stderr: { errors += $0 }) == 2)
+        #expect(spawned == 0)
+        #expect(errors == "recap repo-git: not a git repository: \(repo)\n")
+
+        let root = FileManager.default.temporaryDirectory.appending(path: "repo-git-exit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appending(path: "fake-git")
+        try "#!/bin/sh\nkill -TERM $$\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        #expect(RepoGit.run([repo, "log"], runner: RepoGit.process(), git: { script }, isWorkTree: anyWorkTree) == 128 + SIGTERM)
+
+        let sleeper = root.appending(path: "slow-git")
+        try "#!/bin/sh\nexec sleep 5\n".write(to: sleeper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sleeper.path)
+        errors = ""
+        #expect(RepoGit.run([repo, "log"], runner: RepoGit.process(timeout: 0.2), git: { sleeper }, isWorkTree: anyWorkTree,
+                            stderr: { errors += $0 }) == 124)
+        #expect(errors == "recap repo-git: git did not finish within 0 seconds\n")
     }
 
     @Test func allowRulesFailClosedOnUnsafeCharacters() {
@@ -198,5 +287,61 @@ import Testing
         #expect(RepoGit.run([root.path, "diff", "--output=\(target.path)"], runner: runner, stderr: { errors += $0 }) == 2)
         #expect(!FileManager.default.fileExists(atPath: target.path))
         #expect(errors == "recap repo-git: option not allowed: --output=\(target.path)\n")
+    }
+
+    @Test func refusesDirectoriesThatAreNotARepository() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "repo-git-plain-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var spawned = 0
+        var errors = ""
+        let status = RepoGit.run([root.path, "log"], runner: { _, _, _ in
+            spawned += 1
+            return 0
+        }, stderr: { errors += $0 })
+        #expect(status == 2)
+        #expect(spawned == 0)
+        #expect(errors == "recap repo-git: not a git repository: \(root.path)\n")
+    }
+
+    @Test func parentGitVariablesAndSigningProgramsNeverRun() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "repo-git-env-\(UUID().uuidString)")
+        let home = root.appending(path: "home")
+        let repo = root.appending(path: "repo")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let git = try #require(Shell.which("git"))
+        let base = ["-C", repo.path, "-c", "user.name=T", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        let quiet = RepoGit.process(stdout: .nullDevice, stderr: .nullDevice)
+        let environment = ProcessInfo.processInfo.environment
+        #expect(try quiet(git, ["init", "-q", repo.path], environment) == 0)
+        try "hola\n".write(to: repo.appending(path: "README.md"), atomically: true, encoding: .utf8)
+        #expect(try quiet(git, base + ["add", "README.md"], environment) == 0)
+        #expect(try quiet(git, base + ["commit", "-q", "-m", "first commit"], environment) == 0)
+
+        let pagerMarker = root.appending(path: "X")
+        let traceMarker = root.appending(path: "t")
+        let gpgMarker = root.appending(path: "gpg-ran")
+        let gpg = root.appending(path: "fake-gpg")
+        try "#!/bin/sh\ntouch '\(gpgMarker.path)'\n".write(to: gpg, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gpg.path)
+        try "[gpg]\n\tprogram = \(gpg.path)\n[log]\n\tshowSignature = true\n"
+            .write(to: home.appending(path: ".gitconfig"), atomically: true, encoding: .utf8)
+        let parent = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin", "HOME": home.path,
+                      "GIT_CONFIG_PARAMETERS": "'core.pager'='touch \(pagerMarker.path)'", "GIT_TRACE": traceMarker.path]
+
+        let outFile = root.appending(path: "stdout.txt")
+        FileManager.default.createFile(atPath: outFile.path, contents: nil)
+        let out = try FileHandle(forWritingTo: outFile)
+        let runner = RepoGit.process(stdout: out, stderr: out)
+        #expect(RepoGit.run([repo.path, "log", "-1"], runner: runner, environment: parent) == 0)
+        #expect(RepoGit.run([repo.path, "log", "--format=%G?", "-1"], runner: runner, environment: parent) == 0)
+        #expect(RepoGit.run([repo.path, "show", "HEAD"], runner: runner, environment: parent) == 0)
+        try out.close()
+        #expect(!FileManager.default.fileExists(atPath: pagerMarker.path))
+        #expect(!FileManager.default.fileExists(atPath: traceMarker.path))
+        #expect(!FileManager.default.fileExists(atPath: gpgMarker.path))
+        #expect(try String(contentsOf: outFile, encoding: .utf8).contains("N\n"))
     }
 }
