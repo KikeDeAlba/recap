@@ -29,14 +29,18 @@ export function meetingDir(t: { after: (fn: () => void) => void }, overrides: Pa
 
 export class FakeTool implements ToolCalling {
   calls: string[][] = []
+  inputs: (string | undefined)[] = []
   readonly handler: (args: string[]) => ToolResponse
+  readonly bin: string
 
-  constructor(handler: (args: string[]) => ToolResponse) {
+  constructor(handler: (args: string[]) => ToolResponse, bin = '/opt/fake/bin/tool') {
     this.handler = handler
+    this.bin = bin
   }
 
-  async invoke(args: readonly string[]): Promise<ToolResponse> {
+  async invoke(args: readonly string[], input?: string): Promise<ToolResponse> {
     this.calls.push([...args])
+    this.inputs.push(input)
     return this.handler([...args])
   }
 }

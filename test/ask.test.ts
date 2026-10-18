@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdirSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
+import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { AVAILABLE_TOOLS, allowedTools, askAddDirs, renderAskPrompt, type AskRequest } from '../src/live/ask.ts'
 import { emptyContext, loadProjectContext } from '../src/live/context.ts'
 import { jsonLine } from '../src/live/files.ts'
@@ -9,7 +11,8 @@ import { AnswerAssembler, AskStreamReducer, ProgressDescriber, encodeAskEvent, p
 import { streamArguments } from '../src/pipeline/claude.ts'
 import { loadResource } from '../src/pipeline/resources.ts'
 import { RecapError } from '../src/errors.ts'
-import { FakeTool, meeting, tempDir } from './helpers.ts'
+import { PACKAGE_ROOT } from '../src/version.ts'
+import { FakeTool, meeting, sandboxEnv, tempDir } from './helpers.ts'
 
 const streamLine = (text: string) => JSON.stringify({ type: 'stream_event', session_id: 's', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } })
 
@@ -183,7 +186,7 @@ test('sources list only the project repositories and the docs root', async (t) =
     }
     return { ok: false, errorCode: 'USAGE', errorMessage: 'unknown' }
   })
-  const context = await loadProjectContext('CoDi', { inkwell: bita, bita })
+  const context = await loadProjectContext('CoDi', { inkwell: bita, bita, gaze: null })
   assert.equal(context.docsRoot, '/data/docs')
   assert.deepEqual(
     context.pages.map((page) => page.pageId),
@@ -194,4 +197,53 @@ test('sources list only the project repositories and the docs root', async (t) =
     { path: '/nope/missing', slug: 'missing', exists: false },
   ])
   assert.ok(bita.calls.some((call) => call.join(' ') === 'project repo ls --project CoDi'))
+})
+
+const FAKE_GAZE = `import { appendFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+appendFileSync(process.env.FAKE_GAZE_LOG, JSON.stringify({ args, events: process.env.KIT_NO_EVENTS, hooks: process.env.BITA_NO_HOOKS }) + '\\n')
+const reply = (ok, data) => process.stdout.write(JSON.stringify({ schemaVersion: 1, ok, command: args[0], generatedAt: '2026-10-17T00:00:00Z', data, ...(ok ? {} : { error: { code: 'NOPE', message: 'nope' } }) }) + '\\n')
+if (args[0] === 'search') reply(true, [{ id: 'n-7', title: 'Despliegue', kind: 'fact', project: 'CoDi', snippet: 'resumen', score: 1 }, { id: '-h', title: 'Bandera', kind: 'fact', project: 'CoDi', snippet: 'x', score: 0.5 }])
+else if (args[0] === 'show') reply(true, { id: args.at(-1), body: 'Con make release.' })
+else reply(false, null)
+`
+
+test('ask --sources --question --json reports gaze and the brain notes', async (t) => {
+  const dir = tempDir(t)
+  const script = path.join(dir, 'fake-gaze.mjs')
+  const log = path.join(dir, 'gaze.log')
+  writeFileSync(script, FAKE_GAZE)
+  const registry = path.join(dir, 'registry')
+  mkdirSync(registry, { recursive: true })
+  const manifest = (name: string, capabilities: string[]) => ({ manifestVersion: 1, name, version: '1.0.0', bin: [process.execPath, script], envelope: 1, capabilities, emits: [], subscribes: [] })
+  writeFileSync(path.join(registry, 'gaze.json'), JSON.stringify(manifest('gaze', ['memory.search', 'memory.write'])))
+  writeFileSync(path.join(registry, 'bita.json'), JSON.stringify(manifest('bita', [])))
+  const env = sandboxEnv(dir, { PATH: path.dirname(process.execPath), RECAP_NO_INKWELL: '1', FAKE_GAZE_LOG: log, KIT_NO_EVENTS: '', BITA_NO_HOOKS: '' })
+  delete env['RECAP_NO_GAZE']
+  const bin = path.join(PACKAGE_ROOT, 'src', 'bin', 'recap.ts')
+  const stdout = await new Promise<string>((resolve) => {
+    execFile(process.execPath, [bin, 'ask', '--sources', '--project', 'CoDi', '--question', '¿Cómo se despliega?', '--json'], { env }, (_error, out) => resolve(String(out)))
+  })
+  const envelope = parseEnvelope(stdout)
+  assert.equal(envelope?.ok, true, stdout)
+  const data = envelope?.data as { project: string; gaze: string; notes: { id: string; title: string; kind: string; body: string }[] }
+  assert.equal(data.project, 'CoDi')
+  assert.equal(data.gaze, `${process.execPath} ${script}`)
+  assert.deepEqual(
+    data.notes.map((note) => [note.id, note.title, note.kind, note.body]),
+    [['n-7', 'Despliegue', 'fact', 'Con make release.']],
+  )
+  const calls = readFileSync(log, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { args: string[]; events: string; hooks: string })
+  const gazeCalls = calls.filter((call) => call.args[0] === 'search' || call.args[0] === 'show')
+  assert.deepEqual(
+    gazeCalls.map((call) => call.args),
+    [
+      ['search', '--project=CoDi', '--limit', '5', '--json', '--', '¿Cómo se despliega?'],
+      ['show', '--json', '--', 'n-7'],
+    ],
+  )
+  assert.ok(gazeCalls.every((call) => call.events === '1' && call.hooks === '1'))
 })

@@ -166,7 +166,7 @@ Trae tres cosas:
   | `/recap:recap-status` | Dice si se está grabando y en qué va el procesamiento |
   | `/recap:recap-list [reunión]` | Lista las reuniones o muestra la minuta de una |
   | `/recap:recap-summarize [reunión] [indicaciones]` | Rehace la minuta dentro de la sesión y la guarda con `recap save-summary` |
-  | `/recap:recap-ask [pregunta]` | Responde la última pregunta de la reunión en curso, o la que le pases, con las páginas de inkwell y los repos del proyecto |
+  | `/recap:recap-ask [pregunta]` | Responde la última pregunta de la reunión en curso, o la que le pases, con el cerebro de gaze, las páginas de inkwell y los repos del proyecto |
   | `/recap:recap-proposals [reunión]` | Revisa los cambios a la documentación que propuso una reunión |
 
 - **Sin monitor.** El plugin no arranca nada en segundo plano. `recap watch`
@@ -184,16 +184,19 @@ While a meeting is being recorded, recap also transcribes it live:
 - A detached `recap live-worker` transcribes each chunk with `whisper-cli` (same model and VAD as the pipeline, 4 threads, the previous text as prompt), drops hallucinations and microphone echo, and appends `{startMs, endMs, channel, text}` lines to `live/transcript.jsonl`, with offsets from the start of the recording. It exits once the recording stops and the queue is empty.
 - The transcript after `stop` is still the source of truth; the live one is for answering during the meeting.
 
-`recap ask` answers a question with Claude Code (headless, streaming), reading only the inkwell pages of the project (`inkwell page ls --project`) and the repositories registered for it in bita (`bita project repo ls`). Without inkwell it answers from the repositories alone:
+`recap ask` answers a question with Claude Code (headless, streaming), reading only the project brain in gaze (notes of the project, its gaze group and `global`), the inkwell pages of the project (`inkwell page ls --project`) and the repositories registered for it in bita (`bita project repo ls`). Without inkwell it skips the pages, and without gaze the brain; with neither it answers from the repositories alone:
 
 ```sh
 recap ask --active                                      # the last question in the live transcript
 recap ask --active --question "¿cómo se despliega bita-desktop?"
 recap ask --meeting <meeting> --window 300 --json-stream
-recap ask --sources --project CoDi --json               # the docs root and repositories it would read
+recap ask --sources --project CoDi --json               # gaze availability, the notes found (pass `--question` to see notes), the docs root and repositories it would read
 ```
 
 - The context is the last `--window` seconds (default 180) of the live transcript, the entry title and project, the project page tree and its repositories. Claude may use Read, Grep, Glob and, in each repository, only `git -C <repo> log|show|diff` (one exact `--allowedTools` prefix per repository and subcommand, since headless Claude Code rejects `cd <repo> && git …` and does not match wildcards in the middle of a pattern), and nothing else (`Resources/ask-prompt.md`).
+- Search order: brain (gaze) → inkwell pages → Grep in the docs root → bita repositories. Claude never runs gaze (no gaze command in its allowlist): before launching it, recap runs `gaze search --project=<P>` itself, with the question or, without one, the last 300 characters of the last 30 s of the live transcript. By gaze's design that search also returns notes from `global` and from projects in the same gaze group, so Claude sees notes from the project, its gaze group and `global`, never from other projects outside that. recap reads the full body of the top 3 notes and puts them, cut to 1200 characters, in the prompt as escaped data, so a note cannot break out of the notes block. It only happens when gaze is installed and registered in the kit registry with the `memory.search` and `memory.write` capabilities, and the meeting has a project (never in `global`). If the notes answer the question, the answer cites a source `{"kind":"note","label":"…","noteId":"…"}`. gaze lookups (and the `git cat-file` commit existence check) time out after 10 s and saving after 60 s; if gaze is missing, fails or times out, `recap ask` continues without the brain.
+- After answering, the answer is saved in gaze as a `fact` note (title = the question, cut to 200 characters (plus `…`); body = the answer and a `Fuentes:` list, ending with «Generada por recap a partir de la reunión «…» (fecha); sin revisión humana.») only when `found` is true, it cites at least one source, no source is a brain note, and recap verifies every source: the page is in the project tree, the file exists inside the docs root or a project repo (and the cited line exists), and the commit exists in a project repo. In `Fuentes:`, page sources use the page title from the project tree and commit sources only the sha and repo; recap writes no model-written labels. Nothing is saved when the prompt already included brain notes (only knowledge found without the brain is saved), because gaze merges or replaces near-identical notes and could overwrite a human-written note. Answers longer than 8000 characters are not saved. The sensitive-data check covers the whole note (title and body, including the meeting title) and blocks the save on card numbers (also with CVV/expiry or other separators), access keys, private keys, emails, JWTs, bearer tokens, `sk_live_`, `github_pat_` and `npm_` tokens, Basic auth, GitLab/Slack/`sk-` keys, credentials in URLs, and credentials such as `password`, `secret`, `token`, `api_key` (also `clave`/`contraseña`) followed by `=`, `:` or `is`/`was`/`es`/`era`. The text is normalized first: non-ASCII digits become ASCII and invisible characters are removed before scanning. Unverified answers are never saved, since they could be unfounded. Without a project nothing is searched or saved.
+- `RECAP_NO_GAZE=1` turns off both the search and the saving. `recap ask --sources --question "<q>"` shows whether gaze is available and the notes it finds for that question.
 - Answers are short, give the exact command when there is one, cite the page, `file:line` or commit, and say "No está documentado." instead of guessing.
 - `--json-stream` prints one JSON object per line: `question`, `progress` (the file being read), `delta` (answer text), `source`, then `done` with the whole answer, or `error`.
 - Every answer is appended to `live/answers.jsonl` as `{id, askId, askedAt, question, answer, found, sources}`, plus `"auto": true` when the live worker detected the question (manual answers leave `auto` out). `askId` is the id of the ask's file under `live/asking/`, so a pending ask maps to its answer exactly. A failed ask appends nothing.
@@ -344,7 +347,7 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
 - `live` controls the live assistant; every key is optional. `enabled` turns the live transcription on, `openWindow` lets bita-desktop open its floating window while recording, `proposals` turns the `proposals` stage on, `maxChunkSeconds` (5–60) is the longest live chunk, `assistModel` is the model for `recap ask` (Claude Code's default when unset), `autoAsk` turns question detection on, `autoAskModel` is the model that detects them (`haiku` by default), `autoAskMinSeconds` (3–120) is the shortest time between two detections, and `autoAskConcurrency` (1–6) is how many detected questions are answered at once.
 - `recap config get [<key>] --json` and `recap config set <key> <value> --json` read and change the `live.*` keys.
 
-Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`.
+Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`, `RECAP_NO_GAZE` (`1` turns off the gaze brain (search and saving) in `recap ask`, the live worker and the app).
 
 ## recap-capture
 

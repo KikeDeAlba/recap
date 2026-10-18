@@ -18,6 +18,8 @@ struct ProjectContext: Equatable {
     var docsRoot: String?
     var pages: [PageRef] = []
     var repos: [RepoRef] = []
+    var gaze: String?
+    var brain: [BrainNote] = []
 
     var existingRepos: [RepoRef] { repos.filter(\.exists) }
 
@@ -27,8 +29,14 @@ struct ProjectContext: Equatable {
 }
 
 enum ProjectContextLoader {
-    static func load(project: String?, docsRoot: String?, bita: BitaCalling?) -> ProjectContext {
+    static func load(project: String?, docsRoot: String?, bita: BitaCalling?, gaze: GazeCalling? = nil) -> ProjectContext {
         var context = ProjectContext(project: project?.trimmed.isEmpty == true ? nil : project, docsRoot: docsRoot)
+        if let gaze, context.project != nil { context.gaze = gaze.command }
+        return loadBita(context, bita: bita)
+    }
+
+    private static func loadBita(_ initial: ProjectContext, bita: BitaCalling?) -> ProjectContext {
+        var context = initial
         guard let bita else { return context }
         if let project = context.project {
             if let response = try? bita.invoke(["docs", "page", "ls", "--project", project]), response.ok {
