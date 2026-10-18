@@ -126,9 +126,10 @@ struct AskCommand: ParsableCommand {
         return try AskCoordinator.perform(dir: dir, id: id, question: question, auto: auto, now: request.now,
                                           questionMs: questionMs, channel: channel) {
             let bita = MeetingContext.bita(found, config: config)
+            let gaze = GazeClient.find()
             let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita),
-                                                    docsRoot: found.bitaDocsRoot, bita: bita)
-            return try AskSession(config: config, emit: emit).run(request, context: context)
+                                                    docsRoot: found.bitaDocsRoot, bita: bita, gaze: gaze, question: question)
+            return try AskSession(config: config, gaze: gaze, emit: emit).run(request, context: context)
         }
     }
 

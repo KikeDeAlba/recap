@@ -220,3 +220,146 @@ private func streamLine(_ text: String) -> String {
         #expect(bita.calls.contains(["project", "repo", "ls", "--project", "CoDi"]))
     }
 }
+
+final class FakeGaze: GazeCalling {
+    var calls: [([String], String?)] = []
+    let command: String
+    let handler: ([String]) -> BitaResponse
+
+    init(command: String = "/opt/gaze/bin/gaze", _ handler: @escaping ([String]) -> BitaResponse) {
+        self.command = command
+        self.handler = handler
+    }
+
+    func invoke(_ arguments: [String], stdin: Data?) throws -> BitaResponse {
+        calls.append((arguments, stdin.map { String(decoding: $0, as: UTF8.self) }))
+        return handler(arguments)
+    }
+}
+
+@Suite struct GazeBrainTests {
+    private func meeting() -> Meeting {
+        var meeting = Meeting(id: "m", title: "Daily", mode: .remote, status: .recording,
+                              createdAt: ISO8601DateFormatter().date(from: "2026-10-17T15:00:00Z")!)
+        meeting.bitaEntry = BitaEntrySnapshot(title: "Daily de CoDi", projectName: "CoDi", kind: "remote-meeting", pageIds: [])
+        return meeting
+    }
+
+    private func answer(found: Bool, sources: [AnswerSource]) -> Answer {
+        Answer(id: "a", askedAt: Date(timeIntervalSince1970: 0), question: "¿Cómo se despliega?",
+               answer: "Con `make release`.", found: found, sources: sources)
+    }
+
+    @Test func promptListsTheBrainNotesAndTheGazeBinary() throws {
+        let gaze = FakeGaze { _ in
+            BitaResponse(ok: true, data: [["id": "n1", "title": "Despliegue", "kind": "fact", "project": "CoDi",
+                                           "snippet": " Se despliega\n con make release ", "score": 0.9]])
+        }
+        let context = ProjectContextLoader.load(project: "CoDi", docsRoot: "/d", bita: nil, gaze: gaze, question: "¿Cómo se despliega?")
+        #expect(gaze.calls.map(\.0) == [["search", "¿Cómo se despliega?", "--project", "CoDi", "--limit", "5", "--json"]])
+        let request = AskRequest(meeting: meeting(), dir: URL(fileURLWithPath: "/tmp"), question: "¿Cómo se despliega?", windowSeconds: 60)
+        let prompt = AskPrompt.render(template: "{{brain}}|{{gaze}}", request: request, context: context, segments: [])
+        #expect(prompt == "  - [n1] Despliegue (fact) — Se despliega con make release|/opt/gaze/bin/gaze")
+        let full = AskPrompt.render(template: try ResourceText.load("ask-prompt.md"), request: request, context: context, segments: [])
+        #expect(!full.contains("{{"))
+
+        var empty = context
+        empty.brain = []
+        #expect(AskPrompt.render(template: "{{brain}}", request: request, context: empty, segments: []) == "  (sin notas en el cerebro)")
+        let none = ProjectContextLoader.load(project: nil, docsRoot: nil, bita: nil, gaze: gaze, question: "x")
+        #expect(AskPrompt.render(template: "{{brain}}|{{gaze}}", request: request, context: none, segments: [])
+                == "  (el cerebro no está disponible)|")
+        #expect(gaze.calls.count == 1)
+        let failing = FakeGaze { _ in BitaResponse(ok: false, errorMessage: "boom") }
+        #expect(ProjectContextLoader.load(project: "CoDi", docsRoot: nil, bita: nil, gaze: failing, question: "x").brain.isEmpty)
+        let withoutQuestion = FakeGaze { _ in BitaResponse(ok: true, data: []) }
+        _ = ProjectContextLoader.load(project: "CoDi", docsRoot: nil, bita: nil, gaze: withoutQuestion, question: nil)
+        #expect(withoutQuestion.calls.isEmpty)
+    }
+
+    @Test func allowedToolsAddGazeOnlyWithGazeAndProject() {
+        var context = ProjectContext(project: "CoDi", docsRoot: nil)
+        #expect(AskPrompt.allowedTools(context) == ["Read", "Grep", "Glob"])
+        context.gaze = "/opt/gaze/bin/gaze"
+        #expect(AskPrompt.allowedTools(context)
+                == ["Read", "Grep", "Glob", "Bash(/opt/gaze/bin/gaze search:*)", "Bash(/opt/gaze/bin/gaze show:*)"])
+        context.repos = [RepoRef(path: "/r", slug: "r", exists: true)]
+        #expect(Array(AskPrompt.allowedTools(context)[3...5])
+                == ["Bash(/opt/gaze/bin/gaze search:*)", "Bash(/opt/gaze/bin/gaze show:*)", "Bash(git -C /r log:*)"])
+        context.repos = []
+        context.project = nil
+        #expect(AskPrompt.allowedTools(context) == ["Read", "Grep", "Glob"])
+        let describer = ProgressDescriber(docsRoot: nil, repos: [], gaze: "/opt/gaze/bin/gaze")
+        #expect(describer.describe(name: "Bash", input: ["command": "/opt/gaze/bin/gaze search deploy --project CoDi"])
+                == "Consultando el cerebro…")
+        #expect(describer.describe(name: "Bash", input: ["command": "/opt/gaze/bin/gaze show n1"]) == "Consultando el cerebro…")
+    }
+
+    @Test func noteSourcesParseAndEncode() throws {
+        let block = try #require(SourcesBlock.parse("""
+        {"found": true, "sources": [
+          {"kind": "note", "label": "Despliegue", "noteId": "n1"},
+          {"kind": "note", "label": "", "noteId": "n2"},
+          {"kind": "note", "label": "sin id"}
+        ]}
+        """))
+        #expect(block.sources == [AnswerSource(kind: "note", label: "Despliegue", noteId: "n1"),
+                                  AnswerSource(kind: "note", label: "Nota n2", noteId: "n2")])
+        #expect(try JSONLines.line(block.sources[0]) == #"{"kind":"note","label":"Despliegue","noteId":"n1"}"#)
+        #expect(try JSONLines.line(AnswerSource(kind: "page", label: "P", pageId: 1)) == #"{"kind":"page","label":"P","pageId":1}"#)
+    }
+
+    @Test func shouldRememberOnlyFoundAnswersBackedByDocsOrCode() {
+        let page = AnswerSource(kind: "page", label: "Despliegue", pageId: 12, path: "codi/despliegue.md")
+        let note = AnswerSource(kind: "note", label: "Despliegue", noteId: "n1")
+        #expect(GazeBrain.shouldRemember(answer(found: true, sources: [page])))
+        #expect(!GazeBrain.shouldRemember(answer(found: true, sources: [])))
+        #expect(!GazeBrain.shouldRemember(answer(found: true, sources: [page, note])))
+        #expect(!GazeBrain.shouldRemember(answer(found: false, sources: [page])))
+    }
+
+    @Test func noteBodyListsSourcesAndTheMeeting() {
+        let sources = [AnswerSource(kind: "page", label: "Despliegue", pageId: 12, path: "codi/despliegue.md"),
+                       AnswerSource(kind: "file", label: "README.md:42", path: "/src/app/README.md", line: 42, repo: "/src/app"),
+                       AnswerSource(kind: "commit", label: "fix deploy", repo: "/src/app", sha: "abc1234")]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let day = formatter.string(from: meeting().createdAt)
+        #expect(GazeBrain.noteBody(answer: answer(found: true, sources: sources), meeting: meeting()) == """
+        Con `make release`.
+
+        Fuentes:
+        - «Despliegue» (#12, codi/despliegue.md)
+        - /src/app/README.md:42 (/src/app)
+        - abc1234 fix deploy (/src/app)
+
+        Reunión: «Daily de CoDi» (\(day))
+        """)
+    }
+
+    @Test func rememberSavesThroughStdinAndNeverThrows() {
+        let gaze = FakeGaze { _ in BitaResponse(ok: false, errorMessage: "db locked") }
+        var logged: [String] = []
+        let page = AnswerSource(kind: "page", label: "Despliegue", pageId: 12, path: "codi/despliegue.md")
+        GazeBrain.remember(gaze, answer: answer(found: true, sources: [page]), project: "CoDi", meeting: meeting()) { logged.append($0) }
+        #expect(gaze.calls.first?.0 == ["remember", "-", "--project", "CoDi", "--kind", "fact", "--title", "¿Cómo se despliega?", "--json"])
+        #expect(gaze.calls.first?.1?.hasPrefix("Con `make release`.\n\nFuentes:\n- «Despliegue»") == true)
+        #expect(logged == ["gaze remember failed: db locked"])
+        GazeBrain.remember(gaze, answer: answer(found: true, sources: []), project: "CoDi", meeting: meeting()) { logged.append($0) }
+        #expect(gaze.calls.count == 1)
+    }
+
+    @Test func registryHonoursCapabilitiesAndTheKillSwitch() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "recap-kit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let manifest: [String: Any] = ["manifestVersion": 1, "name": "gaze", "version": "0.2.2", "bin": ["/bin/echo"],
+                                       "envelope": 1, "capabilities": ["memory.search", "memory.write"], "emits": [], "subscribes": []]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: dir.appending(path: "gaze.json"))
+        #expect(GazeClient.find(environment: ["KIT_REGISTRY_DIR": dir.path])?.command == "/bin/echo")
+        #expect(GazeClient.find(environment: ["KIT_REGISTRY_DIR": dir.path, "RECAP_NO_GAZE": "1"]) == nil)
+        #expect(KitRegistry.find("gaze", capabilities: ["memory.graph.read"], environment: ["KIT_REGISTRY_DIR": dir.path]) == nil)
+        #expect(GazeClient.find(environment: ["KIT_REGISTRY_DIR": dir.appending(path: "none").path]) == nil)
+    }
+}
