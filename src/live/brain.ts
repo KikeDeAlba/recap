@@ -38,6 +38,7 @@ export const NOTE_KIND_CHARS = 32
 export const BRAIN_ANSWER_CHARS = 8000
 export const GAZE_LOOKUP_MS = 10_000
 export const GAZE_REMEMBER_MS = 60_000
+export const GIT_COMMIT_MS = 10_000
 
 const NOTE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 
@@ -96,7 +97,7 @@ export function parseBrainNotes(data: unknown): BrainNote[] {
   const notes: BrainNote[] = []
   for (const item of data) {
     if (!isRecord(item)) continue
-    const id = typeof item['id'] === 'number' ? String(item['id']) : item['id']
+    const id = typeof item['id'] === 'number' && Number.isInteger(item['id']) ? String(item['id']) : item['id']
     if (typeof id !== 'string' || trimmed(id).length === 0) continue
     notes.push({
       id: trimmed(id),
@@ -216,19 +217,31 @@ const SECRET_PATTERNS: readonly { name: string; pattern: RegExp }[] = [
   { name: 'private-key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
   { name: 'jwt', pattern: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
   { name: 'bearer', pattern: /bearer\s+[A-Za-z0-9._~+/-]{16,}=*/i },
+  { name: 'basic-auth', pattern: /basic\s+[A-Za-z0-9+/]{16,}={0,2}/i },
   { name: 'uri-credentials', pattern: /[a-z][a-z0-9+.-]{0,20}:\/\/[^\s/:@]{1,64}:[^\s/@]{1,128}@/i },
-  { name: 'credential', pattern: /(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key)["']?\s*(?::|=|\bis\b)\s*\S+/i },
+  {
+    name: 'credential',
+    pattern: /(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key|clave|contraseña|contrasena)["']?\s*(?::|=|(?<![A-Za-z0-9_])(?:is|es|was|era)(?![A-Za-z0-9_]))\s*\S+/i,
+  },
   { name: 'email', pattern: /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}/ },
 ]
 
-const CARD_RUN = /[0-9](?:[\s./-]{0,3}[0-9]){0,63}/g
 const CARD_MIN = 13
 const CARD_MAX = 19
+const CARD_CHUNK = 64
+const CARD_STRIDE = 32
+const CARD_GAP = 5
+const DIGIT_GROUP = /[0-9]+/g
+const LETTER = /\p{L}/u
+const INVISIBLE = /[\p{Cf}\p{Mn}]+/gu
+const FOREIGN_DIGIT = /(?![0-9])\p{Nd}/gu
+const DECIMAL = /^\p{Nd}$/u
+const WHITE_SPACE = /\p{White_Space}/gu
 
 export function passesLuhn(digits: string): boolean {
   let sum = 0
   for (let index = 0; index < digits.length; index += 1) {
-    let digit = Number(digits[digits.length - 1 - index])
+    let digit = digits.charCodeAt(digits.length - 1 - index) - 48
     if (index % 2 === 1) {
       digit *= 2
       if (digit > 9) digit -= 9
@@ -239,36 +252,57 @@ export function passesLuhn(digits: string): boolean {
 }
 
 export function hasCardNumber(digits: string, starts: readonly number[] = [0]): boolean {
-  for (const start of starts) {
-    for (let length = CARD_MIN; length <= CARD_MAX && start + length <= digits.length; length += 1) {
-      if (passesLuhn(digits.slice(start, start + length))) return true
+  let first = 0
+  for (let chunk = 0; chunk < digits.length; chunk += CARD_STRIDE) {
+    const end = Math.min(chunk + CARD_CHUNK, digits.length)
+    while (first < starts.length && (starts[first] ?? 0) < chunk) first += 1
+    for (let next = first; next < starts.length && (starts[next] ?? end) < end; next += 1) {
+      const start = starts[next] ?? end
+      for (let length = CARD_MIN; length <= CARD_MAX && start + length <= end; length += 1) {
+        if (passesLuhn(digits.slice(start, start + length))) return true
+      }
     }
+    if (end === digits.length) break
   }
   return false
 }
 
-function cardRun(run: string): { digits: string; starts: number[] } {
+function asciiDigit(char: string): string {
+  const code = char.codePointAt(0) ?? 0
+  let zero = code
+  while (zero > 0 && DECIMAL.test(String.fromCodePoint(zero - 1))) zero -= 1
+  return String((code - zero) % 10)
+}
+
+export function scanText(text: string): string {
+  return text.normalize('NFKC').replace(INVISIBLE, '').replace(FOREIGN_DIGIT, asciiDigit).replace(WHITE_SPACE, ' ')
+}
+
+function joinsGroups(gap: string): boolean {
+  if (gap.length === 0 || gap.length > CARD_GAP * 2) return false
+  return Array.from(gap).length <= CARD_GAP && !LETTER.test(gap)
+}
+
+export function hasCardSequence(normalized: string): boolean {
   let digits = ''
-  const starts = [0]
-  let gap = false
-  for (const char of run) {
-    if (char >= '0' && char <= '9') {
-      if (gap) starts.push(digits.length)
-      digits += char
-      gap = false
-    } else {
-      gap = true
+  let starts: number[] = []
+  let previousEnd = -1
+  for (const match of normalized.matchAll(DIGIT_GROUP)) {
+    if (previousEnd < 0 || !joinsGroups(normalized.slice(previousEnd, match.index))) {
+      if (hasCardNumber(digits, starts)) return true
+      digits = ''
+      starts = []
     }
+    starts.push(digits.length)
+    digits += match[0]
+    previousEnd = match.index + match[0].length
   }
-  return { digits, starts }
+  return hasCardNumber(digits, starts)
 }
 
 export function sensitiveContent(text: string): string | null {
-  const normalized = text.normalize('NFKC')
-  for (const match of normalized.matchAll(CARD_RUN)) {
-    const { digits, starts } = cardRun(match[0])
-    if (hasCardNumber(digits, starts)) return 'card'
-  }
+  const normalized = scanText(text)
+  if (hasCardSequence(normalized)) return 'card'
   return SECRET_PATTERNS.find((entry) => entry.pattern.test(normalized))?.name ?? null
 }
 
@@ -306,7 +340,7 @@ export const fileSystemChecks: SourceChecks = {
   },
   commitExists(repo, sha) {
     return new Promise((resolve) => {
-      execFile('git', ['-C', repo, 'cat-file', '-e', `${sha}^{commit}`], { timeout: 10_000, windowsHide: true }, (error) => resolve(error === null))
+      execFile('git', ['-C', repo, 'cat-file', '-e', `${sha}^{commit}`], { timeout: GIT_COMMIT_MS, windowsHide: true }, (error) => resolve(error === null))
     })
   },
 }
@@ -322,13 +356,17 @@ function repoPaths(context: ProjectContext): string[] {
   return context.repos.filter((repo) => repo.exists).map((repo) => repo.path)
 }
 
+function hasNul(source: AnswerSource): boolean {
+  return [source.path, source.repo, source.label, source.sha].some((field) => typeof field === 'string' && field.includes('\0'))
+}
+
 export async function sourceVerified(source: AnswerSource, context: ProjectContext, checks: SourceChecks = fileSystemChecks): Promise<boolean> {
+  if (hasNul(source)) return false
   switch (source.kind) {
     case 'page':
-      if (source.path?.includes('\0')) return false
       return context.pages.some((page) => (source.pageId !== undefined && page.pageId === source.pageId) || (source.path !== undefined && page.relPath.length > 0 && page.relPath === source.path))
     case 'file': {
-      if (source.path === undefined || source.path.length === 0 || source.path.includes('\0')) return false
+      if (source.path === undefined || source.path.length === 0) return false
       const candidate = path.isAbsolute(source.path) ? source.path : context.docsRoot ? path.join(context.docsRoot, source.path) : null
       const real = candidate === null ? null : checks.realpath(candidate)
       if (real === null) return false
@@ -339,7 +377,7 @@ export async function sourceVerified(source: AnswerSource, context: ProjectConte
       return Number.isInteger(source.line) && count !== null && source.line >= 1 && source.line <= count
     }
     case 'commit': {
-      if (source.repo === undefined || source.sha === undefined || source.repo.includes('\0') || !SHA.test(source.sha)) return false
+      if (source.repo === undefined || source.sha === undefined || !SHA.test(source.sha)) return false
       if (!repoPaths(context).includes(source.repo)) return false
       return checks.commitExists(source.repo, source.sha).catch(() => false)
     }

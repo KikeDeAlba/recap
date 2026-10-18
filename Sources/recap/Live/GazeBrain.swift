@@ -102,6 +102,8 @@ struct SourceChecks {
     var lineCount: (String) -> Int?
     var commitExists: (_ repo: String, _ sha: String) -> Bool
 
+    static let commitTimeout: TimeInterval = 10
+
     static let live = SourceChecks(
         resolve: { path in
             guard let resolved = realpath(path, nil) else { return nil }
@@ -120,25 +122,25 @@ struct SourceChecks {
         commitExists: { repo, sha in
             let git = Shell.which("git") ?? URL(fileURLWithPath: "/usr/bin/git")
             guard let result = try? Shell.run(git, ["-C", repo, "cat-file", "-e", "\(sha)^{commit}"],
-                                              timeout: GazeClient.rememberTimeout) else { return false }
+                                              timeout: commitTimeout) else { return false }
             return result.ok
         }
     )
 }
 
 enum SecretScanner {
-    static let cardRunLimit = 64
+    static let cardChunkLength = 64
+    static let cardChunkStride = 32
     static let cardWindow = 13...19
+    static let cardGap = 1...5
 
     private static func compile(_ pattern: String, _ options: NSRegularExpression.Options = []) -> NSRegularExpression {
         try! NSRegularExpression(pattern: pattern, options: options)
     }
 
-    static let cardRun = compile(#"[0-9](?:[\s./\- ]{0,3}[0-9]){0,63}"#)
-
     static let email = compile(#"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"#)
 
-    static let requiresAt: Set<String> = ["uri-credentials", "email"]
+    static let atWindows: [String: (before: Int, after: Int)] = ["uri-credentials": (420, 1), "email": (64, 282)]
 
     static let patterns: [(name: String, regex: NSRegularExpression)] = [
         ("aws-key", compile("(AKIA|ASIA)[0-9A-Z]{16}")),
@@ -152,46 +154,136 @@ enum SecretScanner {
         ("private-key", compile("-----BEGIN [A-Z ]*PRIVATE KEY-----")),
         ("jwt", compile(#"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"#)),
         ("bearer", compile(#"bearer\s+[A-Za-z0-9._~+/-]{16,}=*"#, [.caseInsensitive])),
+        ("basic-auth", compile(#"basic\s+[A-Za-z0-9+/]{16,}={0,2}"#, [.caseInsensitive])),
         ("uri-credentials", compile(#"[a-z][a-z0-9+.-]{0,20}://[^\s/:@]{1,64}:[^\s/@]{1,128}@"#, [.caseInsensitive])),
-        ("credential", compile(#"(password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key)["']?\s*(:|=|\bis\b)\s*\S+"#,
-                               [.caseInsensitive])),
+        ("credential", compile(
+            #"(password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key|clave|contraseña|contrasena)"#
+                + #"["']?\s*(:|=|(?<![A-Za-z0-9_])(is|es|was|era)(?![A-Za-z0-9_]))\s*\S+"#,
+            [.caseInsensitive])),
         ("email", email),
     ]
 
+    static func normalize(_ text: String) -> String {
+        var output = String.UnicodeScalarView()
+        for scalar in text.precomposedStringWithCompatibilityMapping.unicodeScalars {
+            let properties = scalar.properties
+            switch properties.generalCategory {
+            case .format, .nonspacingMark:
+                continue
+            case .decimalNumber:
+                if let value = properties.numericValue, value >= 0, value <= 9,
+                   let digit = Unicode.Scalar(0x30 + UInt32(value)) {
+                    output.append(digit)
+                } else {
+                    output.append(scalar)
+                }
+            default:
+                output.append(properties.isWhitespace ? " " : scalar)
+            }
+        }
+        return String(output)
+    }
+
     static func reason(_ text: String) -> String? {
-        let normalized = text.precomposedStringWithCompatibilityMapping
+        let normalized = normalize(text)
         if containsCard(normalized) { return "card" }
-        let range = NSRange(normalized.startIndex..., in: normalized)
-        let hasAt = normalized.contains("@")
+        let length = normalized.utf16.count
+        let ats = normalized.utf16.enumerated().compactMap { $0.element == 0x40 ? $0.offset : nil }
         return patterns.first { entry in
-            (hasAt || !requiresAt.contains(entry.name)) && entry.regex.firstMatch(in: normalized, range: range) != nil
+            ranges(for: entry.name, ats: ats, length: length).contains { range in
+                entry.regex.firstMatch(in: normalized, range: range) != nil
+            }
         }?.name
     }
 
-    static func containsCard(_ text: String) -> Bool {
-        cardRun.matches(in: text, range: NSRange(text.startIndex..., in: text)).contains { match in
-            guard let range = Range(match.range, in: text) else { return false }
-            var digits: [Int] = []
-            var starts: Set<Int> = []
-            var afterSeparator = true
-            for scalar in text[range].unicodeScalars {
-                guard scalar.value >= 0x30 && scalar.value <= 0x39 else {
-                    afterSeparator = true
-                    continue
-                }
-                if afterSeparator { starts.insert(digits.count) }
-                afterSeparator = false
-                digits.append(Int(scalar.value - 0x30))
+    static func ranges(for name: String, ats: [Int], length: Int) -> [NSRange] {
+        guard let window = atWindows[name] else { return [NSRange(location: 0, length: length)] }
+        var merged: [NSRange] = []
+        for at in ats {
+            let lower = max(0, at - window.before)
+            let upper = min(length, at + 1 + window.after)
+            if let last = merged.last, lower <= NSMaxRange(last) {
+                merged[merged.count - 1] = NSRange(location: last.location, length: upper - last.location)
+            } else {
+                merged.append(NSRange(location: lower, length: upper - lower))
             }
-            return luhnWindow(Array(digits.prefix(cardRunLimit)), starts: starts)
+        }
+        return merged
+    }
+
+    static func isDigit(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value >= 0x30 && scalar.value <= 0x39
+    }
+
+    static func breaksSequence(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter, .decimalNumber: true
+        default: false
         }
     }
 
-    static func luhnWindow(_ digits: [Int], starts: Set<Int>) -> Bool {
-        for start in starts.sorted() {
-            for length in cardWindow where start + length <= digits.count {
-                if luhn(digits[start..<(start + length)]) { return true }
+    static func containsCard(_ normalized: String) -> Bool {
+        var digits: [Int] = []
+        var starts: [Int] = []
+        var gap = 0
+        var gapBroken = false
+        for scalar in normalized.unicodeScalars {
+            if isDigit(scalar) {
+                if digits.isEmpty {
+                    starts.append(0)
+                } else if gap > 0 {
+                    if gapBroken || !cardGap.contains(gap) {
+                        if sequenceHasCard(digits, starts: starts) { return true }
+                        digits.removeAll(keepingCapacity: true)
+                        starts.removeAll(keepingCapacity: true)
+                    }
+                    starts.append(digits.count)
+                }
+                gap = 0
+                gapBroken = false
+                digits.append(Int(scalar.value - 0x30))
+            } else if !digits.isEmpty && !gapBroken {
+                gap += 1
+                if gap > cardGap.upperBound || breaksSequence(scalar) { gapBroken = true }
             }
+        }
+        return sequenceHasCard(digits, starts: starts)
+    }
+
+    static func sequenceHasCard(_ digits: [Int], starts: [Int]) -> Bool {
+        guard digits.count >= cardWindow.lowerBound else { return false }
+        let size = digits.count + 1
+        var plain = [Int](repeating: 0, count: size * 2)
+        var doubled = [Int](repeating: 0, count: size * 2)
+        for (index, digit) in digits.enumerated() {
+            let twice = digit * 2
+            let own = (index % 2) * size
+            let other = size - own
+            plain[own + index + 1] = plain[own + index] + digit
+            plain[other + index + 1] = plain[other + index]
+            doubled[own + index + 1] = doubled[own + index] + (twice > 9 ? twice - 9 : twice)
+            doubled[other + index + 1] = doubled[other + index]
+        }
+        let passes = { (start: Int, end: Int) -> Bool in
+            let kept = ((end - 1) % 2) * size
+            let flipped = size - kept
+            let sum = plain[kept + end] - plain[kept + start] + doubled[flipped + end] - doubled[flipped + start]
+            return sum % 10 == 0
+        }
+        var first = 0
+        var chunk = 0
+        while chunk < digits.count {
+            let chunkEnd = min(chunk + cardChunkLength, digits.count)
+            while first < starts.count && starts[first] < chunk { first += 1 }
+            var index = first
+            while index < starts.count && starts[index] < chunk + cardChunkStride {
+                let start = starts[index]
+                for length in cardWindow where start + length <= chunkEnd {
+                    if passes(start, start + length) { return true }
+                }
+                index += 1
+            }
+            chunk += cardChunkStride
         }
         return false
     }
@@ -204,10 +296,12 @@ enum SecretScanner {
 
     static func luhn(_ values: ArraySlice<Int>) -> Bool {
         guard cardWindow.contains(values.count) else { return false }
-        let sum = values.reversed().enumerated().reduce(0) { total, item in
-            guard item.offset % 2 == 1 else { return total + item.element }
-            let doubled = item.element * 2
-            return total + (doubled > 9 ? doubled - 9 : doubled)
+        var sum = 0
+        var doubles = false
+        for value in values.reversed() {
+            let term = doubles ? value * 2 : value
+            sum += term > 9 ? term - 9 : term
+            doubles.toggle()
         }
         return sum % 10 == 0
     }
@@ -253,8 +347,8 @@ enum GazeBrain {
     static func lookup(_ gaze: GazeCalling, project: String, query: String?) -> [BrainNote] {
         guard let query = query?.trimmed, !query.isEmpty,
               let response = try? gaze.invoke(searchArguments(project: project, query: query), stdin: nil),
-              response.ok, let items = response.data as? [[String: Any]] else { return [] }
-        let notes = Array(items.compactMap(note).filter { validId($0.id) }.prefix(shownNotes))
+              response.ok, let items = response.data as? [Any] else { return [] }
+        let notes = Array(items.compactMap { ($0 as? [String: Any]).flatMap(note) }.filter { validId($0.id) }.prefix(shownNotes))
         var bodies = [String?](repeating: nil, count: notes.count)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: notes.count) { index in
@@ -275,11 +369,21 @@ enum GazeBrain {
     }
 
     static func note(_ item: [String: Any]) -> BrainNote? {
-        let id = ((item["id"] as? String) ?? (item["id"] as? Int).map(String.init))?.trimmed
-        guard let id, !id.isEmpty else { return nil }
+        guard let id = noteId(item["id"])?.trimmed, !id.isEmpty else { return nil }
         return BrainNote(id: id, title: (item["title"] as? String ?? "").trimmed, kind: item["kind"] as? String ?? "",
                          project: item["project"] as? String, snippet: collapse(item["snippet"] as? String ?? ""),
                          score: (item["score"] as? NSNumber)?.doubleValue)
+    }
+
+    static func noteId(_ value: Any?) -> String? {
+        if let text = value as? String { return text }
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        if CFNumberIsFloatType(number) {
+            let double = number.doubleValue
+            guard double.isFinite, double.rounded() == double, abs(double) < 9.2e18 else { return nil }
+            return String(Int64(double))
+        }
+        return number.stringValue
     }
 
     static func available(_ context: ProjectContext) -> Bool {
@@ -347,11 +451,15 @@ enum GazeBrain {
 
     static func page(for source: AnswerSource, context: ProjectContext) -> PageRef? {
         source.pageId.flatMap { id in context.pages.first { $0.pageId == id } }
-            ?? source.path.flatMap { path in context.pages.first { $0.relPath == path } }
+            ?? source.path.flatMap { path in path.isEmpty ? nil : context.pages.first { !$0.relPath.isEmpty && $0.relPath == path } }
+    }
+
+    static func hasNul(_ source: AnswerSource) -> Bool {
+        [source.path, source.repo, source.label, source.sha].contains { $0?.unicodeScalars.contains("\0") == true }
     }
 
     static func verifies(_ source: AnswerSource, context: ProjectContext, checks: SourceChecks) -> Bool {
-        guard ![source.path, source.repo].contains(where: { $0?.contains("\0") == true }) else { return false }
+        guard !hasNul(source) else { return false }
         switch source.kind {
         case "page":
             return page(for: source, context: context) != nil

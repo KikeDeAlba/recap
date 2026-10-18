@@ -15,11 +15,14 @@ import {
   fileSystemChecks,
   GAZE_LOOKUP_MS,
   GAZE_REMEMBER_MS,
+  GIT_COMMIT_MS,
   GazeClient,
   noteTitle,
+  parseBrainNotes,
   passesLuhn,
   rememberAnswer,
   renderBrain,
+  scanText,
   searchBrain,
   sensitiveContent,
   sourceVerified,
@@ -510,4 +513,83 @@ test('note sources parse and encode with noteId last', () => {
   const encoded = encodeAskEvent({ type: 'source', source: { kind: 'page', label: 'x', pageId: 1, noteId: 'n' } })['source']
   assert.deepEqual(Object.keys(encoded as object), ['kind', 'label', 'pageId', 'path', 'line', 'repo', 'sha', 'noteId'])
   assert.ok(!jsonLine(encodeAnswer(baseAnswer())).includes('noteId'))
+})
+
+test('the scan normalises invisible characters, foreign digits and whitespace first', () => {
+  assert.equal(scanText('a​b‍c﻿d­e'), 'abcde')
+  assert.equal(scanText('á@́b'), 'á@b')
+  assert.equal(scanText('٤١०९５'), '41095')
+  assert.equal(scanText('a\u0085b c d\te\nf'), 'a b c d e f')
+})
+
+test('round-4 shared vectors for cards and credentials', () => {
+  const cards = [
+    '4111,1111,1111,1111',
+    '4111_1111_1111_1111',
+    '4111:1111:1111:1111',
+    '4111 • 1111 • 1111 • 1111',
+    '4111    1111 1111 1111',
+    '4111​1111​1111​1111',
+    '٤١١١١١١١١١١١١١١١',
+    '४१११११११११११११११',
+    `${'3 '.repeat(63)}4111 1111 1111 1111`,
+  ]
+  for (const sample of cards) assert.equal(sensitiveContent(sample), 'card', sample)
+  const secrets: [string, string][] = [
+    ['pass​word: x', 'credential'],
+    ['my password was x', 'credential'],
+    ['la contraseña es x', 'credential'],
+    ['clave: x', 'credential'],
+    ['Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==', 'basic-auth'],
+    ['password isé x', 'credential'],
+    ['https://admin:hunter2@‍host/db', 'uri-credentials'],
+    ['a@́b.co', 'email'],
+  ]
+  for (const [sample, name] of secrets) assert.equal(sensitiveContent(sample), name, sample)
+  const clean = ['1234 5678 9012 3456', '2026-10-17', 'version 4111 abc 1111 def 1111 ghi 1111', 'the password field']
+  for (const sample of clean) assert.equal(sensitiveContent(sample), null, sample)
+})
+
+test('a card glued after another digit is not found, an accepted limitation', () => {
+  assert.equal(sensitiveContent('94111111111111111'), null)
+})
+
+test('100 000 characters of random text scan quickly', () => {
+  let seed = 42
+  const random = () => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+    return seed / 2_147_483_648
+  }
+  const pick = (alphabet: string) => Array.from({ length: 100_000 }, () => alphabet[Math.floor(random() * alphabet.length)]).join('')
+  const samples = [pick('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789      .,:;/-_@=\'"\néñ​'), pick('0123456789 ,')]
+  for (const sample of samples) {
+    const started = performance.now()
+    sensitiveContent(sample)
+    assert.ok(performance.now() - started < 200)
+  }
+})
+
+test('gaze note ids are strings or integers and bad items are skipped one by one', () => {
+  const notes = parseBrainNotes([{ id: 7, title: 'int' }, { id: 1.5, title: 'float' }, { id: true, title: 'bool' }, 'text', null, 3, { id: 'n-1', title: 'str' }])
+  assert.deepEqual(
+    notes.map((note) => note.id),
+    ['7', 'n-1'],
+  )
+})
+
+test('a NUL in any string field rejects the source', async () => {
+  const context = pageContext({ docsRoot: '/docs', repos: [{ path: '/src/codi', slug: 'codi', exists: true }] })
+  const checks = fakeChecks(['/src/codi@abc1234'])
+  const sources: AnswerSource[] = [
+    { kind: 'page', label: 'p', pageId: 12 },
+    { kind: 'file', label: 'f', path: 'deploy.md' },
+    { kind: 'commit', label: 'c', repo: '/src/codi', sha: 'abc1234' },
+  ]
+  for (const source of sources) {
+    assert.equal(await sourceVerified(source, context, checks), true, source.kind)
+    for (const field of ['label', 'path', 'repo', 'sha'] as const) {
+      assert.equal(await sourceVerified({ ...source, [field]: `${source[field] ?? ''}\0` }, context, checks), false, `${source.kind} ${field}`)
+    }
+  }
+  assert.equal(GIT_COMMIT_MS, 10_000)
 })

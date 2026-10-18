@@ -525,8 +525,76 @@ private let fakeChecks = SourceChecks(
             #expect(SecretScanner.reason(text) == "card", "\(text)")
         }
         #expect(SecretScanner.reason("2026-10-17") == nil)
-        #expect(SecretScanner.reason("4111     1111 1111 1111") == nil)
+        #expect(SecretScanner.reason("4111     1111 1111 1111") == "card")
+        #expect(SecretScanner.reason("4111      1111 1111 1111") == nil)
         #expect(SecretScanner.reason(String(repeating: "4111 1111 1111 111", count: 6)) == "card")
+    }
+
+    @Test func roundFourCardHits() {
+        let hits = ["4111,1111,1111,1111", "4111_1111_1111_1111", "4111:1111:1111:1111", "4111 • 1111 • 1111 • 1111",
+                    "4111    1111 1111 1111", "4111\u{200B}1111\u{200B}1111\u{200B}1111", "٤١١١١١١١١١١١١١١١",
+                    "४१११११११११११११११", String(repeating: "3 ", count: 63) + "4111 1111 1111 1111",
+                    "4111\u{00A0}1111\u{2028}1111\u{0085}1111", "4111\u{00AD}1111\u{FEFF}1111\u{200D}1111"]
+        for text in hits {
+            #expect(SecretScanner.reason(text) == "card", "\(text)")
+        }
+        #expect(SecretScanner.reason(String(repeating: "1", count: 100) + " 4111111111111111") == "card")
+        #expect(SecretScanner.reason(String(repeating: "1 ", count: 40) + "4111 1111 1111 1111") == "card")
+    }
+
+    @Test func roundFourCardNonHits() {
+        let misses = ["1234 5678 9012 3456", "2026-10-17", "94111111111111111", "version 4111 abc 1111 def 1111 ghi 1111",
+                      "4111 x 1111 1111 1111"]
+        for text in misses {
+            #expect(SecretScanner.reason(text) == nil, "\(text)")
+        }
+    }
+
+    @Test func roundFourAcceptedLimitationGluedPrefixHidesThePan() {
+        #expect(SecretScanner.reason("94111111111111111") == nil)
+        #expect(SecretScanner.reason("9 4111111111111111") == "card")
+    }
+
+    @Test func roundFourNormalization() {
+        #expect(SecretScanner.normalize("a\u{200B}b\u{00AD}x\u{0301}") == "abx")
+        #expect(SecretScanner.normalize("c\u{0301}") == "\u{0107}")
+        #expect(SecretScanner.normalize("٤٥\u{0966}\u{096F}") == "4509")
+        #expect(SecretScanner.normalize("a\u{00A0}b\u{2028}c\u{0085}d\ne\tf") == "a b c d e f")
+        #expect(SecretScanner.normalize("ｃｏｎｔｒａｓｅñａ") == "contraseña")
+    }
+
+    @Test func roundFourCredentialAndAuthHits() {
+        let samples: [(String, String)] = [
+            ("pass\u{200B}word: x", "credential"),
+            ("my password was x", "credential"),
+            ("la contraseña es x", "credential"),
+            ("la contrasena era x", "credential"),
+            ("clave: x", "credential"),
+            ("Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==", "basic-auth"),
+            ("password isé x", "credential"),
+            ("https://admin:hunter2@\u{200D}host/db", "uri-credentials"),
+            ("a@\u{0301}b.co", "email"),
+            ("token\nis\nabc", "credential"),
+        ]
+        for (text, reason) in samples {
+            #expect(SecretScanner.reason(text) == reason, "\(text)")
+        }
+        #expect(SecretScanner.reason("the password field") == nil)
+        #expect(SecretScanner.reason("password island") == nil)
+        #expect(SecretScanner.reason("Basic auth is fine") == nil)
+    }
+
+    @Test func roundFourScanStaysFast() {
+        let inputs = [String(repeating: "a", count: 100_000), String(repeating: "1 ", count: 50_000),
+                      String(repeating: "password ", count: 11_112), String(repeating: "4", count: 100_000),
+                      String(repeating: "a", count: 100_000) + "@acme.com", String(repeating: "a@", count: 50_000),
+                      String(repeating: "x://", count: 25_000) + "u:p@h"]
+        for text in inputs {
+            let started = Date()
+            _ = SecretScanner.reason(text)
+            let elapsed = Date().timeIntervalSince(started)
+            #expect(elapsed < 0.2, "\(text.prefix(10)) \(elapsed)")
+        }
     }
 
     @Test func sharedVectorCardWindowsStartAtGroupBoundaries() {
@@ -536,7 +604,14 @@ private let fakeChecks = SourceChecks(
         #expect(SecretScanner.reason("134111111111111111") == nil)
         let filler = String(repeating: "1", count: 60)
         #expect(SecretScanner.reason(filler + "1234") == nil)
-        #expect(SecretScanner.reason(filler + "12344111111111111111134") == "card")
+        #expect(SecretScanner.reason(filler + "12344111111111111111134") == nil)
+        #expect(SecretScanner.reason(filler + "1234 4111111111111111134") == "card")
+        let spacedFiller = String(repeating: "3 ", count: 30)
+        #expect(SecretScanner.reason(spacedFiller + "12344111111111111111134") == "card")
+        #expect(SecretScanner.reason(spacedFiller) == nil)
+        #expect(SecretScanner.reason(String(repeating: "3 ", count: 9) + "33") == nil)
+        #expect(SecretScanner.reason("3333333333333333123") == "card")
+        #expect(SecretScanner.reason("3333331234411") == "card")
         #expect(SecretScanner.reason("4111 1111 1111 1111\n") == "card")
         #expect(GazeBrain.sensitiveReason(title: "4111 1111", body: "1111 1111") == nil)
     }
@@ -646,6 +721,35 @@ private let fakeChecks = SourceChecks(
             logged.append($0)
         }
         #expect(gaze.calls.count == 1)
+    }
+
+    @Test func roundFourParityFixes() {
+        var context = context()
+        context.pages.append(PageRef(pageId: 30, title: "Sin ruta", relPath: "", depth: 0))
+        let check = { (source: AnswerSource) in GazeBrain.verifies(source, context: context, checks: fakeChecks) }
+        #expect(!check(AnswerSource(kind: "page", label: "P", path: "")))
+        #expect(check(AnswerSource(kind: "page", label: "P", pageId: 30, path: "")))
+        #expect(check(AnswerSource(kind: "page", label: "P", path: "codi/despliegue.md")))
+        #expect(!check(AnswerSource(kind: "page", label: "P\0", pageId: 12)))
+        #expect(!check(AnswerSource(kind: "commit", label: "c", repo: "/r", sha: "abc1234\0")))
+        #expect(check(AnswerSource(kind: "commit", label: "c", repo: "/r", sha: "abc1234")))
+        #expect(!check(AnswerSource(kind: "file", label: "f\0", path: "/docs/a.md")))
+        #expect(SourceChecks.commitTimeout == 10)
+
+        let items: [Any] = ["texto", 7, NSNull(), ["id": "n1", "title": "Uno"] as [String: Any], ["id": true] as [String: Any],
+                            ["id": NSNumber(value: false)] as [String: Any], ["id": 1.5] as [String: Any],
+                            ["id": 42] as [String: Any], ["id": NSNumber(value: 2.0)] as [String: Any]]
+        let gaze = FakeGaze { arguments in
+            arguments.first == "search" ? BitaResponse(ok: true, data: items) : BitaResponse(ok: false, errorMessage: "x")
+        }
+        #expect(GazeBrain.lookup(gaze, project: "CoDi", query: "q").map(\.id) == ["n1", "42", "2"])
+        #expect(GazeBrain.noteId(true) == nil)
+        #expect(GazeBrain.noteId(NSNumber(value: true)) == nil)
+        #expect(GazeBrain.noteId(1.5) == nil)
+        #expect(GazeBrain.noteId(7) == "7")
+        #expect(GazeBrain.noteId("x") == "x")
+        let parsed = try? JSONSerialization.jsonObject(with: Data(#"[{"id":true},{"id":3},{"id":"n"},5,{"id":1.25}]"#.utf8))
+        #expect(((parsed as? [Any]) ?? []).compactMap { ($0 as? [String: Any]).flatMap { GazeBrain.noteId($0["id"]) } } == ["3", "n"])
     }
 
     @Test func sourceVerificationRejectsNulPathsAndRepoAliases() {
