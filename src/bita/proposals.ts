@@ -294,7 +294,7 @@ export class ProposalGenerator {
       if (existing.proposals.length > 0) await this.inkwell.invoke(['branch', 'drop', branch]).catch(() => null)
     }
     const linked = await entryPages(this.inkwell, entryId)
-    const context = await loadProjectContext(await meetingProject(meeting, this.inkwell, linked), { inkwell: this.inkwell, bita: null })
+    const context = await loadProjectContext(await meetingProject(meeting, this.inkwell, linked), { inkwell: this.inkwell, bita: null, gaze: null })
     const pages = this.candidates(meeting, context, linked)
     const file: ProposalsFile = { entryId, branch, generatedAt: isoNow(), branchDropped: false, proposals: [], discarded: [] }
     if (pages.length === 0 || context.docsRoot === null) {

@@ -94,6 +94,7 @@ enum AskPrompt {
             .replacingOccurrences(of: "{{repos}}", with: repos)
             .replacingOccurrences(of: "{{speakers}}", with: speakers)
             .replacingOccurrences(of: "{{transcript}}", with: LiveTranscript.render(window, labelled: labelled))
+            .replacingOccurrences(of: "{{brain}}", with: GazeBrain.render(context))
     }
 
     static func addDirs(_ context: ProjectContext) -> [String] {
@@ -104,18 +105,42 @@ enum AskPrompt {
 final class AskSession {
     private let config: Config
     private let emit: (AskEvent) -> Void
+    private let gaze: GazeCalling?
+    private let log: (String) -> Void
+    private let checks: SourceChecks
+    private(set) var promptContext: ProjectContext?
 
-    init(config: Config, emit: @escaping (AskEvent) -> Void) {
+    init(config: Config, gaze: GazeCalling? = nil, checks: SourceChecks = .live,
+         log: @escaping (String) -> Void = { FileHandle.standardError.write(Data("recap: \($0)\n".utf8)) },
+         emit: @escaping (AskEvent) -> Void) {
         self.config = config
+        self.gaze = gaze
+        self.checks = checks
+        self.log = log
         self.emit = emit
     }
 
-    func run(_ request: AskRequest, context: ProjectContext) throws -> Answer {
+    func brainContext(_ context: ProjectContext, question: String?, segments: [Segment]) -> ProjectContext {
+        guard let gaze, let project = context.project, context.gaze != nil else { return context }
+        var enriched = context
+        enriched.brain = GazeBrain.lookup(gaze, project: project, query: GazeBrain.query(question: question, segments: segments))
+        return enriched
+    }
+
+    func remember(_ answer: Answer, request: AskRequest, context: ProjectContext) {
+        guard let gaze, let project = context.project, context.gaze != nil else { return }
+        GazeBrain.remember(gaze, answer: answer, project: project, meeting: request.meeting, context: context,
+                           checks: checks, log: log)
+    }
+
+    func run(_ request: AskRequest, context initial: ProjectContext) throws -> Answer {
         let segments = LiveTranscript.load(request.dir)
         let explicit = request.question?.trimmed.isEmpty == false ? request.question?.trimmed : nil
         guard explicit != nil || !segments.isEmpty else {
             throw RecapError("NO_QUESTION", "The live transcript is empty; pass --question")
         }
+        let context = brainContext(initial, question: explicit, segments: segments)
+        promptContext = context
         let prompt = AskPrompt.render(template: try ResourceText.load("ask-prompt.md"), request: request,
                                       context: context, segments: segments)
         if let explicit { emit(.question(explicit)) }

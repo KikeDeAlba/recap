@@ -190,6 +190,7 @@ export interface AnswerSource {
   line?: number | undefined
   repo?: string | undefined
   sha?: string | undefined
+  noteId?: string | undefined
 }
 
 export interface Answer {
@@ -207,7 +208,7 @@ export interface Answer {
 }
 
 export function encodeSource(source: AnswerSource): Record<string, unknown> {
-  return { kind: source.kind, label: source.label, pageId: source.pageId, path: source.path, line: source.line, repo: source.repo, sha: source.sha }
+  return { kind: source.kind, label: source.label, pageId: source.pageId, path: source.path, line: source.line, repo: source.repo, sha: source.sha, noteId: source.noteId }
 }
 
 export function encodeAnswer(answer: Answer): Record<string, unknown> {
@@ -235,21 +236,25 @@ function cleanOptional(value: unknown): string | undefined {
 function decodeSourceLoose(item: unknown): AnswerSource | null {
   if (!isRecord(item) || typeof item['kind'] !== 'string') return null
   const kind = item['kind'].toLowerCase()
-  if (!['page', 'file', 'commit'].includes(kind)) return null
+  if (!['page', 'file', 'commit', 'note'].includes(kind)) return null
   const pageId = asIntLoose(item['pageId'])
   const line = asIntLoose(item['line'])
   const sourcePath = cleanOptional(item['path'])
   const repo = cleanOptional(item['repo'])
   const sha = cleanOptional(item['sha'])
+  const noteId = typeof item['noteId'] === 'number' ? String(item['noteId']) : cleanOptional(item['noteId'])
   if (kind === 'page' && pageId === undefined && sourcePath === undefined) return null
   if (kind === 'file' && sourcePath === undefined) return null
   if (kind === 'commit' && sha === undefined) return null
+  if (kind === 'note' && noteId === undefined) return null
   let label = typeof item['label'] === 'string' ? trimmed(item['label']) : ''
   if (label.length === 0) {
     if (kind === 'page') label = pageId !== undefined ? `Página #${pageId}` : (sourcePath ?? '')
     else if (kind === 'file') label = [sourcePath ?? '', line !== undefined ? String(line) : ''].filter((part) => part.length > 0).join(':')
+    else if (kind === 'note') label = `Nota ${noteId ?? ''}`
     else label = (sha ?? '').slice(0, 10)
   }
+  if (kind === 'note') return { kind, label, noteId }
   return { kind, label, pageId, path: sourcePath, line, repo, sha }
 }
 
@@ -269,6 +274,7 @@ export function decodeAnswer(value: unknown): Answer | null {
       line: typeof item['line'] === 'number' ? item['line'] : undefined,
       repo: typeof item['repo'] === 'string' ? item['repo'] : undefined,
       sha: typeof item['sha'] === 'string' ? item['sha'] : undefined,
+      noteId: typeof item['noteId'] === 'string' ? item['noteId'] : undefined,
     })
   }
   return {

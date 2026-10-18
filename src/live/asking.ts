@@ -180,8 +180,19 @@ export function pruneBoard(meetingDir: string): void {
   }
 }
 
+export interface PerformOptions {
+  dir: string
+  id?: string
+  question: string | null | undefined
+  auto: boolean
+  now?: string
+  questionMs?: number | undefined
+  channel?: Channel | undefined
+  pid?: number
+}
+
 export async function performAsk<T>(
-  options: { dir: string; id?: string; question: string | null | undefined; auto: boolean; now?: string; questionMs?: number | undefined; channel?: Channel | undefined; pid?: number },
+  options: PerformOptions,
   body: () => Promise<T>,
 ): Promise<T> {
   const id = options.id ?? makeAskId()

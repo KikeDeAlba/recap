@@ -15,6 +15,18 @@ package struct ShellResult {
     package var ok: Bool { status == 0 }
 }
 
+private final class RunState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timedOutFlag = false
+    private var abandonedFlag = false
+
+    var timedOut: Bool { lock.withLock { timedOutFlag } }
+    var abandoned: Bool { lock.withLock { abandonedFlag } }
+
+    func markTimedOut() { lock.withLock { timedOutFlag = true } }
+    func abandon() { lock.withLock { abandonedFlag = true } }
+}
+
 package enum Shell {
     package static let searchPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 
@@ -36,9 +48,13 @@ package enum Shell {
         return url
     }
 
+    package static let killGrace: TimeInterval = 2
+    static let drainGrace: TimeInterval = 0.5
+    static let pollInterval: Int32 = 100
+
     @discardableResult
     package static func run(_ executable: URL, _ arguments: [String], stdin: Data? = nil,
-                    environment: [String: String]? = nil, cwd: URL? = nil) throws -> ShellResult {
+                    environment: [String: String]? = nil, cwd: URL? = nil, timeout: TimeInterval? = nil) throws -> ShellResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -48,31 +64,103 @@ package enum Shell {
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
-        let input = Pipe()
-        process.standardInput = stdin == nil ? FileHandle.nullDevice : input
+        let input = stdin == nil ? nil : Pipe()
+        process.standardInput = input ?? FileHandle.nullDevice
         try process.run()
-        if let stdin {
-            input.fileHandleForWriting.write(stdin)
-            try? input.fileHandleForWriting.close()
+        let started = DispatchTime.now()
+        let state = RunState()
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: started + timeout) {
+                guard process.isRunning else { return }
+                state.markTimedOut()
+                process.terminate()
+                DispatchQueue.global().asyncAfter(deadline: .now() + killGrace) {
+                    guard process.isRunning else { return }
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
+        }
+        if let input, let stdin {
+            let handle = input.fileHandleForWriting
+            DispatchQueue.global().async {
+                feed(stdin, to: handle, state: state)
+                try? handle.close()
+            }
         }
         var outData = Data()
         var errData = Data()
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global().async {
-            outData = out.fileHandleForReading.readDataToEndOfFile()
+            outData = drain(out.fileHandleForReading, state: state)
             group.leave()
         }
         group.enter()
         DispatchQueue.global().async {
-            errData = err.fileHandleForReading.readDataToEndOfFile()
+            errData = drain(err.fileHandleForReading, state: state)
             group.leave()
         }
         process.waitUntilExit()
-        group.wait()
+        let limit: DispatchTime = state.timedOut
+            ? .now() + drainGrace
+            : timeout.map { started + $0 + killGrace } ?? .distantFuture
+        if group.wait(timeout: limit) == .timedOut {
+            state.abandon()
+            group.wait()
+        }
+        state.abandon()
+        if state.timedOut {
+            throw RecapError("TIMEOUT", "\(executable.lastPathComponent) did not finish within \(Int(timeout ?? 0)) seconds")
+        }
         return ShellResult(status: process.terminationStatus,
                            stdout: String(decoding: outData, as: UTF8.self),
                            stderr: String(decoding: errData, as: UTF8.self))
+    }
+
+    private static func nonBlocking(_ fd: Int32) {
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+    }
+
+    private static func ready(_ fd: Int32, _ events: Int32) -> Bool {
+        var descriptor = pollfd(fd: fd, events: Int16(events), revents: 0)
+        return poll(&descriptor, 1, pollInterval) > 0
+    }
+
+    private static func feed(_ data: Data, to handle: FileHandle, state: RunState) {
+        let fd = handle.fileDescriptor
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        nonBlocking(fd)
+        data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count, !state.abandoned {
+                guard ready(fd, POLLOUT) else { continue }
+                let written = Darwin.write(fd, base + offset, buffer.count - offset)
+                if written > 0 {
+                    offset += written
+                } else if written < 0, errno != EAGAIN, errno != EINTR {
+                    return
+                }
+            }
+        }
+    }
+
+    private static func drain(_ handle: FileHandle, state: RunState) -> Data {
+        let fd = handle.fileDescriptor
+        nonBlocking(fd)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        while !state.abandoned {
+            guard ready(fd, POLLIN) else { continue }
+            let count = Darwin.read(fd, &buffer, buffer.count)
+            if count > 0 {
+                data.append(buffer, count: count)
+            } else if count == 0 || (errno != EAGAIN && errno != EINTR) {
+                break
+            }
+        }
+        try? handle.close()
+        return data
     }
 
     package static func spawnDetached(_ executable: URL, _ arguments: [String], log: URL) throws -> pid_t {

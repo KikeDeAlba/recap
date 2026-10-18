@@ -174,6 +174,7 @@ struct AnswerSource: Codable, Equatable {
     var line: Int?
     var repo: String?
     var sha: String?
+    var noteId: String? = nil
 }
 
 struct Answer: Codable, Equatable {
@@ -196,7 +197,7 @@ struct SourcesBlock: Equatable {
     var sources: [AnswerSource]
     var atMs: Int?
 
-    static let kinds: Set<String> = ["page", "file", "commit"]
+    static let kinds: Set<String> = ["page", "file", "commit", "note"]
 
     static func parse(_ text: String) -> SourcesBlock? {
         var body = text
@@ -220,10 +221,13 @@ struct SourcesBlock: Equatable {
         let path = (item["path"] as? String).flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
         let repo = (item["repo"] as? String).flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
         let sha = (item["sha"] as? String).flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
+        let noteId = ((item["noteId"] as? String) ?? (item["noteId"] as? Int).map(String.init))
+            .flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
         switch kind {
         case "page" where pageId == nil && path == nil: return nil
         case "file" where path == nil: return nil
         case "commit" where sha == nil: return nil
+        case "note" where noteId == nil: return nil
         default: break
         }
         var label = (item["label"] as? String)?.trimmed ?? ""
@@ -231,9 +235,11 @@ struct SourcesBlock: Equatable {
             switch kind {
             case "page": label = pageId.map { "Página #\($0)" } ?? path ?? ""
             case "file": label = [path ?? "", line.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: ":")
+            case "note": label = "Nota \(noteId ?? "")"
             default: label = String((sha ?? "").prefix(10))
             }
         }
+        if kind == "note" { return AnswerSource(kind: kind, label: label, noteId: noteId) }
         return AnswerSource(kind: kind, label: label, pageId: pageId, path: path, line: line, repo: repo, sha: sha)
     }
 }
