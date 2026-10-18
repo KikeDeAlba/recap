@@ -22,19 +22,30 @@ guarda en `live/answers.jsonl`. Con `found: false` no está documentado: no lo
 completes por tu cuenta.
 
 El cerebro solo se consulta si la reunión tiene proyecto (nunca en `global`).
-Claude no ejecuta gaze: recap hace `gaze search --project <P>` con la pregunta (o,
-sin ella, con los últimos ~30 s de la transcripción en vivo), lee el cuerpo
-completo de las 3 primeras notas y las pone, recortadas, en el prompt. Si esas
-notas responden, la fuente es de tipo `note`. Tras responder, recap guarda la
+Claude no ejecuta gaze: recap hace `gaze search --project=<P>` con la pregunta (o,
+sin ella, con los últimos ~30 s de la transcripción en vivo). Por diseño de gaze,
+eso devuelve también notas de `global` y de los proyectos del mismo grupo de gaze:
+Claude ve notas del proyecto, de su grupo y de `global`, nunca de otros proyectos.
+recap lee el cuerpo completo de las 3 primeras notas y las pone, recortadas y
+escapadas como datos (no pueden salirse del bloque de notas), en el prompt. Si
+esas notas responden, la fuente es de tipo `note`. Tras responder, recap guarda la
 respuesta en gaze como nota `fact` (título = la pregunta, máx. 200 caracteres)
 solo si `found` es true, cita al menos una fuente, ninguna es una nota del
 cerebro y recap verifica todas (la página está en el árbol del proyecto, el
 archivo existe en la raíz de docs o en un repo del proyecto, con la línea citada,
-y el commit existe en un repo del proyecto). Tampoco se guarda si la pregunta o la
-respuesta traen secretos o datos personales (tarjetas, llaves o tokens,
-`password=`, llaves privadas, correos). La nota termina con «Generada por recap a
-partir de la reunión «…» (fecha); sin revisión humana.». Si gaze falta o falla,
-todo sigue como antes; `RECAP_NO_GAZE=1` lo apaga.
+y el commit existe en un repo del proyecto). No se guarda si el prompt ya incluyó
+notas del cerebro (solo se guarda lo hallado sin el cerebro), porque gaze fusiona o
+reemplaza notas casi idénticas y podría pisar una nota escrita por una persona.
+En el cuerpo, las páginas se citan con su título del árbol del proyecto y los
+commits solo con sha y repo (sin etiquetas escritas por el modelo). Tampoco se
+guarda una respuesta de más de 8000 caracteres, ni si la nota completa (título y
+cuerpo, con el título de la reunión) trae secretos o datos personales: tarjetas
+(también con CVV, vencimiento u otros separadores), llaves de acceso, llaves
+privadas, correos, JWT, bearer tokens, tokens `sk_live_`/`github_pat_`/`npm_`,
+credenciales en URLs y `password is …`/`"password": …`/`password=`. La nota termina
+con «Generada por recap a partir de la reunión «…» (fecha); sin revisión humana.».
+Las consultas a gaze vencen a los 10 s y el guardado a los 60 s; si gaze falta,
+falla o vence, recap sigue sin el cerebro. `RECAP_NO_GAZE=1` lo apaga.
 
 Con `live.autoAsk` (encendido por omisión), el live-worker detecta solo las
 preguntas técnicas de la reunión y las responde sin que nadie las pida: esas
