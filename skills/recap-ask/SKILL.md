@@ -33,8 +33,9 @@ no ejecuta gaze) con `gaze search --project=<P>`, que por diseño trae también 
 de `global` y del grupo de gaze del proyecto (nunca de otros proyectos); el texto de
 las notas llega a Claude escapado, como datos. recap guarda como nota `fact` solo las
 respuestas cuyas fuentes verifica, sin secretos ni datos personales en la nota
-completa (JWT, tokens, credenciales en URLs, tarjetas, llaves, correos), de menos de
-8000 caracteres y solo si el prompt no llevó notas del cerebro (para no pisar notas
-humanas). Las consultas vencen a los 10 s y el guardado a los 60 s; si fallan, sigue
+completa (JWT, tokens, credenciales en URLs, Basic auth, frases en español como `contraseña es …`,
+tarjetas, llaves, correos; la lista no es exhaustiva), de 8000 caracteres como máximo
+(la respuesta) y solo si el prompt no llevó notas del cerebro (para no pisar notas
+humanas). Las consultas (y la verificación de commits) vencen a los 10 s y el guardado a los 60 s; si fallan, sigue
 sin el cerebro. Sin proyecto no busca ni guarda. `RECAP_NO_GAZE=1`
 lo desactiva; `recap ask --sources --question "<pregunta>"` muestra gaze y las notas halladas.
