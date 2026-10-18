@@ -158,11 +158,11 @@ private func streamLine(_ text: String) -> String {
         let template = try ResourceText.load("ask-prompt.md")
         let prompt = AskPrompt.render(template: template, request: AskRequest(meeting: meeting(), dir: URL(fileURLWithPath: "/tmp"),
                                                                               question: nil, windowSeconds: 180),
-                                      context: context, segments: segments)
+                                      context: context, segments: segments, selfPath: "/usr/local/bin/recap")
         #expect(!prompt.contains("{{"))
         #expect(prompt.contains("«Daily de CoDi»"))
         #expect(prompt.contains("- #3 Despliegue — codi/despliegue.md"))
-        #expect(prompt.contains("`git -C /src/codi log|show|diff …`") && !prompt.contains("/src/gone"))
+        #expect(prompt.contains("`/usr/local/bin/recap repo-git /src/codi log|show|diff …`") && !prompt.contains("/src/gone"))
         #expect(!prompt.contains("cd /src"))
         #expect(prompt.contains("[00:06:40] Remotos: ¿Cómo se despliega el webhook?"))
         #expect(!prompt.contains("sprint anterior"))
@@ -178,13 +178,13 @@ private func streamLine(_ text: String) -> String {
     @Test func streamArgumentsKeepTheIsolationFlags() {
         let context = ProjectContext(project: "CoDi", docsRoot: "/d", repos: [RepoRef(path: "/r", slug: "r", exists: true),
                                                                           RepoRef(path: "/gone", slug: "gone", exists: false)])
-        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context).joined(separator: " ")],
+        let arguments = ClaudeRunner.streamArguments(tools: [AskPrompt.allowedTools(context, selfPath: "/usr/local/bin/recap").joined(separator: " ")],
                                                      addDirs: ["/d", "/r", "/d"], model: "haiku",
                                                      restrictTools: AskPrompt.availableTools)
         #expect(Array(arguments.prefix(5)) == ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
         #expect(arguments.contains("--strict-mcp-config") && arguments.contains("--no-session-persistence"))
         #expect(arguments[arguments.firstIndex(of: "--allowedTools")! + 1]
-                == "Read Grep Glob Bash(git -C /r log:*) Bash(git -C /r show:*) Bash(git -C /r diff:*)")
+                == "Read Grep Glob Bash(/usr/local/bin/recap repo-git /r log:*) Bash(/usr/local/bin/recap repo-git /r show:*) Bash(/usr/local/bin/recap repo-git /r diff:*)")
         #expect(AskPrompt.allowedTools(ProjectContext(project: nil, docsRoot: nil)) == ["Read", "Grep", "Glob"])
         #expect(!arguments.joined(separator: " ").contains("gone"))
         #expect(arguments.filter { $0 == "--add-dir" }.count == 2)
@@ -383,8 +383,8 @@ private let fakeChecks = SourceChecks(
 
     @Test func claudeGetsNoGazeRules() {
         var context = context()
-        #expect(AskPrompt.allowedTools(context) == ["Read", "Grep", "Glob", "Bash(git -C /r log:*)", "Bash(git -C /r show:*)",
-                                                    "Bash(git -C /r diff:*)"])
+        #expect(AskPrompt.allowedTools(context, selfPath: "/s/recap") == ["Read", "Grep", "Glob", "Bash(/s/recap repo-git /r log:*)", "Bash(/s/recap repo-git /r show:*)",
+                                                    "Bash(/s/recap repo-git /r diff:*)"])
         context.repos = []
         #expect(AskPrompt.allowedTools(context) == ["Read", "Grep", "Glob"])
         let describer = ProgressDescriber(docsRoot: nil, repos: [])

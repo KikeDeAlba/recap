@@ -52,16 +52,15 @@ struct AskRequest {
 
 enum AskPrompt {
     static let readTools = ["Read", "Grep", "Glob"]
-    static let gitSubcommands = ["log", "show", "diff"]
 
-    static func allowedTools(_ context: ProjectContext) -> [String] {
-        readTools + context.existingRepos.flatMap { repo in
-            gitSubcommands.map { "Bash(git -C \(repo.path) \($0):*)" }
-        }
+    static func allowedTools(_ context: ProjectContext, selfPath: String? = RepoGit.selfPath) -> [String] {
+        readTools + context.existingRepos.flatMap { RepoGit.allowRules(repo: $0.path, selfPath: selfPath) }
     }
     static let availableTools = ["Read", "Grep", "Glob", "Bash"]
 
-    static func render(template: String, request: AskRequest, context: ProjectContext, segments: [Segment]) -> String {
+    static func render(template: String, request: AskRequest, context: ProjectContext, segments: [Segment],
+                       selfPath: String? = RepoGit.selfPath) -> String {
+        let git = RepoGit.invocation(selfPath: selfPath)
         let window = LiveTranscript.window(segments, seconds: request.windowSeconds)
         let labelled = request.meeting.mode == .remote
         let title = request.meeting.bitaEntry?.title ?? request.meeting.title
@@ -77,7 +76,11 @@ enum AskPrompt {
                 .joined(separator: "\n")
         let repos = context.existingRepos.isEmpty
             ? "  (sin repositorios registrados)"
-            : context.existingRepos.map { "  - \($0.slug): \($0.path) (git: `git -C \($0.path) log|show|diff …`)" }.joined(separator: "\n")
+            : context.existingRepos.map { repo in
+                RepoGit.isAllowed(repo: repo.path, selfPath: selfPath)
+                    ? "  - \(repo.slug): \(repo.path) (historial: `\(git) \(repo.path) log|show|diff …`)"
+                    : "  - \(repo.slug): \(repo.path) (sin historial de git; solo Read, Grep y Glob)"
+            }.joined(separator: "\n")
         let speakers = labelled
             ? "«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada."
             : "Un solo micrófono en la sala, sin separación por persona."
@@ -92,6 +95,7 @@ enum AskPrompt {
             .replacingOccurrences(of: "{{docsRoot}}", with: context.docsRoot ?? "(desconocida)")
             .replacingOccurrences(of: "{{pages}}", with: pages)
             .replacingOccurrences(of: "{{repos}}", with: repos)
+            .replacingOccurrences(of: "{{git}}", with: git)
             .replacingOccurrences(of: "{{speakers}}", with: speakers)
             .replacingOccurrences(of: "{{transcript}}", with: LiveTranscript.render(window, labelled: labelled))
             .replacingOccurrences(of: "{{brain}}", with: GazeBrain.render(context))

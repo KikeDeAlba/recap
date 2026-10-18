@@ -9,6 +9,7 @@ import { bitaHookCommand } from './commands/hook.ts'
 import { liveWorkerCommand } from './commands/live.ts'
 import { compressVideoCommand, deleteCommand, pruneCommand, stripVideoCommand } from './commands/media.ts'
 import { proposalsCommand } from './commands/proposals.ts'
+import { repoGitCommand } from './commands/repo-git.ts'
 import { listCommand, processCommand, promptCommand, saveSummaryCommand, showCommand, waitCommand } from './commands/query.ts'
 import { discardCommand, importCommand, startCommand, statusCommand, stopCommand } from './commands/recording.ts'
 import { setupCommand } from './commands/setup.ts'
@@ -49,6 +50,7 @@ const COMMANDS: Record<string, Command> = {
   config: configCommand,
   watch: watchCommand,
   'live-worker': liveWorkerCommand,
+  'repo-git': repoGitCommand,
   capabilities: capabilitiesCommand,
 }
 
@@ -95,7 +97,7 @@ export async function main(argv: string[]): Promise<number> {
       throw usageError(`Unknown command "${name}"`, 'Run `recap --help` to see the commands.')
     })
   }
-  if (rest.includes('--help') && name !== 'bita-hook') {
+  if (rest.includes('--help') && name !== 'bita-hook' && name !== 'repo-git') {
     process.stdout.write(`${help()}\n`)
     return 0
   }

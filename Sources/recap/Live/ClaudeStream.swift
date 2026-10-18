@@ -57,6 +57,9 @@ struct ProgressDescriber {
             return "Listando \(input["pattern"] ?? "")\(scope)"
         case "Bash":
             guard var command = input["command"] else { return "Ejecutando un comando" }
+            if let wrapper = command.range(of: " \(RepoGit.commandName) ") {
+                command = "git -C " + command[wrapper.upperBound...]
+            }
             for root in roots { command = command.replacingOccurrences(of: root.prefix, with: root.label) }
             return "Ejecutando \(command)"
         default:
