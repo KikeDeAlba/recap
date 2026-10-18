@@ -723,6 +723,29 @@ private let fakeChecks = SourceChecks(
         #expect(gaze.calls.count == 1)
     }
 
+    @Test func roundFiveRenderMatchesTypeScriptPerScalar() {
+        let render = { (id: String, title: String, kind: String, body: String?) in
+            GazeBrain.renderNote(BrainNote(id: id, title: title, kind: kind, snippet: "", body: body))
+        }
+        #expect(render("n1", "a<\u{20E3}b", "fact", nil) == "  - [n1] a\u{2039}\u{20E3}b (fact)")
+        #expect(render("n1", "a>\u{20E3}b", "fact", nil) == "  - [n1] a\u{203A}\u{20E3}b (fact)")
+        #expect(render("n1", "T", "<\u{20E3}", nil) == "  - [n1] T (\u{2039}\u{20E3})")
+        #expect(render("n1", "T", ">\u{20E3}", nil) == "  - [n1] T (\u{203A}\u{20E3})")
+        #expect(render("n1", "T", "fact", "x <\u{20E3} y >\u{20E3}") == "  - [n1] T (fact)\n    x \u{2039}\u{20E3} y \u{203A}\u{20E3}")
+        #expect(render("n1", "8875\u{85}4111111111111112", "fact", nil) == "  - [n1] 88754111111111111112 (fact)")
+        #expect(GazeBrain.noteTitle("8875\u{85}4111111111111112") == "8875\u{85}4111111111111112")
+        #expect(render("n1", "\u{20E3}\u{FEFF}", "fact", nil) == "  - [n1] \u{20E3} (fact)")
+        #expect(GazeBrain.noteTitle("\u{20E3}\u{FEFF}") == "\u{20E3}")
+        #expect(render("n1", "T", "fact", "\u{200B} x \u{200B}") == "  - [n1] T (fact)\n    \u{200B} x \u{200B}")
+        #expect(render("n1", "T", "fact", "uno\n\u{FEFF}dos\n\u{85}tres\u{85}") == "  - [n1] T (fact)\n    uno\n    \u{FEFF}dos\n    tres")
+        #expect(render("n1", "T", "fact", "\u{FEFF}\u{85} cuatro \u{A0}") == "  - [n1] T (fact)\n    cuatro")
+        #expect(render("\u{FEFF}n9\u{85}", "T", "fact", nil) == "  - [n9] T (fact)")
+        for text in ["<\u{20E3}", ">\u{20E3}"] {
+            let escaped = GazeBrain.renderNote(BrainNote(id: "n1", title: text, kind: text, snippet: "", body: text)) ?? ""
+            #expect(!escaped.unicodeScalars.contains("<") && !escaped.unicodeScalars.contains(">"))
+        }
+    }
+
     @Test func roundFourParityFixes() {
         var context = context()
         context.pages.append(PageRef(pageId: 30, title: "Sin ruta", relPath: "", depth: 0))

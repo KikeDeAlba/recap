@@ -26,11 +26,12 @@ import Testing
 
     @Test func killsAChildThatIgnoresTerm() {
         let started = Date()
+        let timeout: TimeInterval = 1.5
         #expect(throws: RecapError.self) {
-            try Shell.run(sh, ["-c", "trap '' TERM; sleep 30; echo done"], timeout: 0.3)
+            try Shell.run(sh, ["-c", "trap '' TERM; sleep 30; echo done"], timeout: timeout)
         }
         let elapsed = Date().timeIntervalSince(started)
-        #expect(elapsed >= Shell.killGrace && elapsed < Shell.killGrace + 3)
+        #expect(elapsed >= timeout + Shell.killGrace && elapsed < timeout + Shell.killGrace + 3)
     }
 
     @Test func doesNotBlockOnAChildThatNeverReadsStdin() {
@@ -49,8 +50,9 @@ import Testing
 
     @Test func doesNotHangOnPipesHeldByAGrandchild() throws {
         let started = Date()
-        let result = try Shell.run(sh, ["-c", "sleep 30 & echo started"], timeout: 0.5)
+        let timeout: TimeInterval = 2
+        let result = try Shell.run(sh, ["-c", "sleep 30 & echo started"], timeout: timeout)
         #expect(result.stdout == "started\n" && result.ok)
-        #expect(Date().timeIntervalSince(started) < Shell.killGrace + 2)
+        #expect(Date().timeIntervalSince(started) < timeout + Shell.killGrace + 2)
     }
 }

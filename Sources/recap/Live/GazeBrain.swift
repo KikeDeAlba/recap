@@ -321,10 +321,10 @@ enum GazeBrain {
     static let idPattern = "^[A-Za-z0-9][A-Za-z0-9_-]*$"
 
     static func query(question: String?, segments: [Segment]) -> String? {
-        if let question = question?.trimmed, !question.isEmpty { return question }
-        let text = LiveTranscript.window(segments, seconds: queryWindowSeconds).map(\.text.trimmed).filter { !$0.isEmpty }
-            .joined(separator: " ")
-        let tail = String(String.UnicodeScalarView(text.unicodeScalars.suffix(queryLength))).trimmed
+        if let question = question.map(trim), !question.isEmpty { return question }
+        let text = trim(LiveTranscript.window(segments, seconds: queryWindowSeconds).map { trim($0.text) }.filter { !$0.isEmpty }
+            .joined(separator: " "))
+        let tail = trim(String(String.UnicodeScalarView(text.unicodeScalars.suffix(queryLength))))
         return tail.isEmpty ? nil : tail
     }
 
@@ -345,7 +345,7 @@ enum GazeBrain {
     }
 
     static func lookup(_ gaze: GazeCalling, project: String, query: String?) -> [BrainNote] {
-        guard let query = query?.trimmed, !query.isEmpty,
+        guard let query = query.map(trim), !query.isEmpty,
               let response = try? gaze.invoke(searchArguments(project: project, query: query), stdin: nil),
               response.ok, let items = response.data as? [Any] else { return [] }
         let notes = Array(items.compactMap { ($0 as? [String: Any]).flatMap(note) }.filter { validId($0.id) }.prefix(shownNotes))
@@ -369,8 +369,8 @@ enum GazeBrain {
     }
 
     static func note(_ item: [String: Any]) -> BrainNote? {
-        guard let id = noteId(item["id"])?.trimmed, !id.isEmpty else { return nil }
-        return BrainNote(id: id, title: (item["title"] as? String ?? "").trimmed, kind: item["kind"] as? String ?? "",
+        guard let id = noteId(item["id"]).map(trim), !id.isEmpty else { return nil }
+        return BrainNote(id: id, title: trim(item["title"] as? String ?? ""), kind: item["kind"] as? String ?? "",
                          project: item["project"] as? String, snippet: collapse(item["snippet"] as? String ?? ""),
                          score: (item["score"] as? NSNumber)?.doubleValue)
     }
@@ -408,24 +408,66 @@ enum GazeBrain {
         let id = singleLine(note.id)
         guard validId(id) else { return nil }
         let header = "  - [\(id)] \(cut(singleLine(note.title), to: titleLength)) (\(cut(singleLine(note.kind), to: kindLength)))"
-        let body = cut(multiLine(note.body ?? note.snippet).trimmed, to: bodyLength)
+        let body = cut(trim(multiLine(note.body ?? note.snippet)), to: bodyLength)
         guard !body.isEmpty else { return header }
-        return ([header] + body.components(separatedBy: "\n").map { "    \($0)" }).joined(separator: "\n")
+        let lines = body.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "    " + String(String.UnicodeScalarView($0)) }
+        return ([header] + lines).joined(separator: "\n")
     }
 
     static func escapeAngles(_ text: String) -> String {
-        text.replacingOccurrences(of: "<", with: "\u{2039}").replacingOccurrences(of: ">", with: "\u{203A}")
+        String(String.UnicodeScalarView(text.unicodeScalars.map { scalar -> Unicode.Scalar in
+            switch scalar {
+            case "<": "\u{2039}"
+            case ">": "\u{203A}"
+            default: scalar
+            }
+        }))
     }
 
     static func singleLine(_ text: String) -> String {
-        let spaced = escapeAngles(text).replacingOccurrences(of: whitespaceRun, with: " ", options: .regularExpression)
-        return scalars(spaced) { $0.properties.generalCategory != .control }.trimmingCharacters(in: CharacterSet(charactersIn: " "))
+        trim(scalars(collapseWhitespace(escapeAngles(text))) { !isControl($0) })
     }
 
-    static let whitespaceRun = "[\\t\\n\\u000B\\f\\r \\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+"
+    static let whitespace: Set<UInt32> = Set([0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F,
+                                              0x3000, 0xFEFF] + Array(0x2000...0x200A))
+
+    static func isWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+        whitespace.contains(scalar.value)
+    }
+
+    static func isControl(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.properties.generalCategory == .control
+    }
+
+    static func isTrimmed(_ scalar: Unicode.Scalar) -> Bool {
+        isWhitespace(scalar) || scalar.value == 0x85
+    }
+
+    static func trim(_ text: String) -> String {
+        let view = text.unicodeScalars
+        guard let first = view.firstIndex(where: { !isTrimmed($0) }),
+              let last = view.lastIndex(where: { !isTrimmed($0) }) else { return "" }
+        return String(String.UnicodeScalarView(view[first...last]))
+    }
+
+    static func collapseWhitespace(_ text: String) -> String {
+        var output = String.UnicodeScalarView()
+        var inRun = false
+        for scalar in text.unicodeScalars {
+            if isWhitespace(scalar) {
+                if !inRun { output.append(" ") }
+                inRun = true
+            } else {
+                output.append(scalar)
+                inRun = false
+            }
+        }
+        return String(output)
+    }
 
     static func multiLine(_ text: String) -> String {
-        scalars(escapeAngles(text)) { $0 == "\n" || $0 == "\t" || $0.properties.generalCategory != .control }
+        scalars(escapeAngles(text)) { $0 == "\n" || $0 == "\t" || !isControl($0) }
     }
 
     static func scalars(_ text: String, where keep: (Unicode.Scalar) -> Bool) -> String {
@@ -433,7 +475,7 @@ enum GazeBrain {
     }
 
     static func collapse(_ text: String) -> String {
-        text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmed
+        trim(collapseWhitespace(text))
     }
 
     static func length(_ text: String) -> Int {
@@ -522,7 +564,7 @@ enum GazeBrain {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         let title = collapse(meeting.bitaEntry?.title ?? meeting.title)
-        return "\(answer.answer.trimmed)\n\nFuentes:\n\(sources)\n\n"
+        return "\(trim(answer.answer))\n\nFuentes:\n\(sources)\n\n"
             + "Generada por recap a partir de la reunión «\(title)» (\(formatter.string(from: meeting.createdAt))); sin revisión humana."
     }
 
