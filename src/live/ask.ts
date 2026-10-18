@@ -9,7 +9,7 @@ import { streamArguments, streamClaude } from '../pipeline/claude.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import type { Channel, Segment } from '../pipeline/transcript.ts'
 import { performAsk, type PerformOptions } from './asking.ts'
-import { BRAIN_QUERY_SECONDS, brainAvailable, brainQuery, rememberAnswer, renderBrain, searchBrain, type BrainNote, type MeetingStamp } from './brain.ts'
+import { BRAIN_QUERY_SECONDS, brainAvailable, brainNotesShown, brainQuery, rememberAnswer, renderBrain, searchBrain, type BrainNote, type MeetingStamp } from './brain.ts'
 import { existingRepos, type ProjectContext } from './context.ts'
 import { appendLines, liveFiles } from './files.ts'
 import { loadLiveTranscript, renderLive, transcriptWindow } from './merger.ts'
@@ -67,11 +67,11 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
   text = replaceAll(text, '{{now}}', minuteStamp(parseDate(request.now) ?? new Date()))
   text = replaceAll(text, '{{questionBlock}}', questionBlock)
   text = replaceAll(text, '{{docsRoot}}', context.docsRoot ?? '(desconocida)')
-  text = replaceAll(text, '{{brain}}', renderBrain(brainAvailable(context), notes))
   text = replaceAll(text, '{{pages}}', pages)
   text = replaceAll(text, '{{repos}}', reposText)
   text = replaceAll(text, '{{speakers}}', speakers)
   text = replaceAll(text, '{{transcript}}', renderLive(window, labelled))
+  text = replaceAll(text, '{{brain}}', renderBrain(brainAvailable(context), notes))
   return text
 }
 
@@ -81,7 +81,7 @@ export async function runAsk(
   context: ProjectContext,
   emit: (event: AskEvent) => void,
   onSpawn?: (pid: number) => void,
-): Promise<Answer> {
+): Promise<AskOutcome> {
   const segments = loadLiveTranscript(request.dir)
   const explicit = request.question && trimmed(request.question).length > 0 ? trimmed(request.question) : null
   if (explicit === null && segments.length === 0) throw new RecapError('NO_QUESTION', 'The live transcript is empty; pass --question')
@@ -112,7 +112,7 @@ export async function runAsk(
   answer.answeredAt = isoNow()
   appendLines([encodeAnswer(answer)], liveFiles.answers(request.dir))
   emit({ type: 'done', answer })
-  return answer
+  return { answer, context, notesUsed: brainNotesShown(brainAvailable(context), notes) > 0 }
 }
 
 export function meetingStamp(meeting: Meeting): MeetingStamp {
@@ -122,9 +122,10 @@ export function meetingStamp(meeting: Meeting): MeetingStamp {
 export interface AskOutcome {
   answer: Answer
   context: ProjectContext
+  notesUsed: boolean
 }
 
-export type Remember = (context: ProjectContext, answer: Answer, meeting: MeetingStamp, log: (line: string) => void) => Promise<boolean>
+export type Remember = (context: ProjectContext, answer: Answer, meeting: MeetingStamp, log: (line: string) => void, notesUsed: boolean) => Promise<boolean>
 
 export async function askThenRemember(
   options: PerformOptions,
@@ -133,7 +134,7 @@ export async function askThenRemember(
   log: (line: string) => void = () => {},
   remember: Remember = rememberAnswer,
 ): Promise<Answer> {
-  const { answer, context } = await performAsk(options, body)
-  await remember(context, answer, meetingStamp(meeting), log).catch(() => false)
+  const { answer, context, notesUsed } = await performAsk(options, body)
+  await remember(context, answer, meetingStamp(meeting), log, notesUsed).catch(() => false)
   return answer
 }

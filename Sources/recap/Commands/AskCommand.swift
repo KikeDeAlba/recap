@@ -158,7 +158,7 @@ struct AskCommand: ParsableCommand {
             let context = ProjectContextLoader.load(project: MeetingContext.project(found, bita: bita),
                                                     docsRoot: found.bitaDocsRoot, bita: bita, gaze: gaze)
             let session = AskSession(config: config, gaze: gaze, emit: emit)
-            remember = { session.remember($0, request: request, context: context) }
+            remember = { session.remember($0, request: request, context: session.promptContext ?? context) }
             return try session.run(request, context: context)
         }, afterBoard: { answer in remember?(answer) })
     }

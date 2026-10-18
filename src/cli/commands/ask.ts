@@ -78,7 +78,7 @@ async function answer(args: Args, emit: (event: AskEvent) => void) {
     found.meeting,
     async () => {
       const context = await meetingContext(found.meeting, config)
-      const result = await runAsk(
+      return runAsk(
         config,
         { meeting: found.meeting, dir: found.dir, question, windowSeconds: args.int('window') ?? 180, now, auto: args.has('auto'), questionMs, channel, askId: id },
         context,
@@ -87,7 +87,6 @@ async function answer(args: Args, emit: (event: AskEvent) => void) {
           childPid = pid
         },
       )
-      return { answer: result, context }
     },
     (line) => process.stderr.write(`recap: ${line}\n`),
   )

@@ -62,10 +62,11 @@ protocol GazeCalling {
 
 struct GazeClient: GazeCalling {
     static let capabilities = ["memory.search", "memory.write"]
-    static let timeout: TimeInterval = 60
+    static let lookupTimeout: TimeInterval = 10
+    static let rememberTimeout: TimeInterval = 60
 
     let bin: [String]
-    var timeout: TimeInterval = GazeClient.timeout
+    var timeout: TimeInterval? = nil
 
     var command: String { bin.joined(separator: " ") }
 
@@ -75,18 +76,29 @@ struct GazeClient: GazeCalling {
         return GazeClient(bin: tool.bin)
     }
 
+    static func environment(_ base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var environment = base
+        environment["KIT_NO_EVENTS"] = "1"
+        environment["BITA_NO_HOOKS"] = "1"
+        return environment
+    }
+
+    func timeout(for arguments: [String]) -> TimeInterval {
+        timeout ?? (arguments.first == "remember" ? Self.rememberTimeout : Self.lookupTimeout)
+    }
+
     func invoke(_ arguments: [String], stdin: Data?) throws -> BitaResponse {
         guard let executable = bin.first else { throw RecapError("DEPENDENCY_MISSING", "gaze not found") }
-        var environment = ProcessInfo.processInfo.environment
-        environment["KIT_NO_EVENTS"] = "1"
         let result = try Shell.run(URL(fileURLWithPath: executable), Array(bin.dropFirst()) + arguments, stdin: stdin,
-                                   environment: environment, cwd: URL(fileURLWithPath: "/"), timeout: timeout)
+                                   environment: Self.environment(), cwd: URL(fileURLWithPath: "/"),
+                                   timeout: timeout(for: arguments))
         return BitaResponse(stdout: result.stdout, stderr: result.stderr, status: result.status)
     }
 }
 
 struct SourceChecks {
     var resolve: (String) -> String?
+    var isFile: (String) -> Bool
     var lineCount: (String) -> Int?
     var commitExists: (_ repo: String, _ sha: String) -> Bool
 
@@ -95,6 +107,9 @@ struct SourceChecks {
             guard let resolved = realpath(path, nil) else { return nil }
             defer { free(resolved) }
             return String(cString: resolved)
+        },
+        isFile: { path in
+            (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeRegular
         },
         lineCount: { path in
             guard (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeRegular,
@@ -105,47 +120,90 @@ struct SourceChecks {
         commitExists: { repo, sha in
             let git = Shell.which("git") ?? URL(fileURLWithPath: "/usr/bin/git")
             guard let result = try? Shell.run(git, ["-C", repo, "cat-file", "-e", "\(sha)^{commit}"],
-                                              timeout: GazeClient.timeout) else { return false }
+                                              timeout: GazeClient.rememberTimeout) else { return false }
             return result.ok
         }
     )
 }
 
 enum SecretScanner {
-    static let patterns: [(reason: String, pattern: String, options: NSRegularExpression.Options)] = [
-        ("aws key", "(AKIA|ASIA)[0-9A-Z]{16}", []),
-        ("github token", "gh[pousr]_[A-Za-z0-9]{36,}", []),
-        ("gitlab token", "glpat-[A-Za-z0-9_-]{20,}", []),
-        ("api key", "sk-[A-Za-z0-9_-]{20,}", []),
-        ("slack token", "xox[abprs]-[A-Za-z0-9-]{10,}", []),
-        ("private key", "-----BEGIN [A-Z ]*PRIVATE KEY-----", []),
-        ("credential", #"(password|passwd|pwd|secret|token|api[_-]?key)\s*[:=]\s*\S+"#, [.caseInsensitive]),
-        ("email", #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#, []),
+    static let cardRunLimit = 64
+    static let cardWindow = 13...19
+
+    private static func compile(_ pattern: String, _ options: NSRegularExpression.Options = []) -> NSRegularExpression {
+        try! NSRegularExpression(pattern: pattern, options: options)
+    }
+
+    static let cardRun = compile(#"[0-9](?:[\s./\- ]{0,3}[0-9]){0,63}"#)
+
+    static let email = compile(#"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"#)
+
+    static let requiresAt: Set<String> = ["uri-credentials", "email"]
+
+    static let patterns: [(name: String, regex: NSRegularExpression)] = [
+        ("aws-key", compile("(AKIA|ASIA)[0-9A-Z]{16}")),
+        ("github-token", compile("gh[pousr]_[A-Za-z0-9]{36,}")),
+        ("github-token", compile("github_pat_[A-Za-z0-9_]{20,}")),
+        ("gitlab-token", compile("glpat-[A-Za-z0-9_-]{20,}")),
+        ("api-key", compile("sk-[A-Za-z0-9_-]{20,}")),
+        ("api-key", compile("(sk|pk|rk)_(live|test)_[A-Za-z0-9]{10,}")),
+        ("slack-token", compile("xox[abprs]-[A-Za-z0-9-]{10,}")),
+        ("npm-token", compile("npm_[A-Za-z0-9]{36}")),
+        ("private-key", compile("-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+        ("jwt", compile(#"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"#)),
+        ("bearer", compile(#"bearer\s+[A-Za-z0-9._~+/-]{16,}=*"#, [.caseInsensitive])),
+        ("uri-credentials", compile(#"[a-z][a-z0-9+.-]{0,20}://[^\s/:@]{1,64}:[^\s/@]{1,128}@"#, [.caseInsensitive])),
+        ("credential", compile(#"(password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key)["']?\s*(:|=|\bis\b)\s*\S+"#,
+                               [.caseInsensitive])),
+        ("email", email),
     ]
 
-    static let cardPattern = "(?<![0-9])[0-9](?:[ -]?[0-9]){12,18}(?![0-9])"
-
     static func reason(_ text: String) -> String? {
-        if containsCard(text) { return "card number" }
-        let range = NSRange(text.startIndex..., in: text)
-        for entry in patterns {
-            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: entry.options) else { continue }
-            if regex.firstMatch(in: text, range: range) != nil { return entry.reason }
-        }
-        return nil
+        let normalized = text.precomposedStringWithCompatibilityMapping
+        if containsCard(normalized) { return "card" }
+        let range = NSRange(normalized.startIndex..., in: normalized)
+        let hasAt = normalized.contains("@")
+        return patterns.first { entry in
+            (hasAt || !requiresAt.contains(entry.name)) && entry.regex.firstMatch(in: normalized, range: range) != nil
+        }?.name
     }
 
     static func containsCard(_ text: String) -> Bool {
-        guard let regex = try? NSRegularExpression(pattern: cardPattern) else { return false }
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).contains { match in
+        cardRun.matches(in: text, range: NSRange(text.startIndex..., in: text)).contains { match in
             guard let range = Range(match.range, in: text) else { return false }
-            return luhn(String(text[range].filter { $0.isASCII && $0.isNumber }))
+            var digits: [Int] = []
+            var starts: Set<Int> = []
+            var afterSeparator = true
+            for scalar in text[range].unicodeScalars {
+                guard scalar.value >= 0x30 && scalar.value <= 0x39 else {
+                    afterSeparator = true
+                    continue
+                }
+                if afterSeparator { starts.insert(digits.count) }
+                afterSeparator = false
+                digits.append(Int(scalar.value - 0x30))
+            }
+            return luhnWindow(Array(digits.prefix(cardRunLimit)), starts: starts)
         }
+    }
+
+    static func luhnWindow(_ digits: [Int], starts: Set<Int>) -> Bool {
+        for start in starts.sorted() {
+            for length in cardWindow where start + length <= digits.count {
+                if luhn(digits[start..<(start + length)]) { return true }
+            }
+        }
+        return false
     }
 
     static func luhn(_ digits: String) -> Bool {
         let values = digits.compactMap(\.wholeNumberValue)
-        guard (13...19).contains(values.count), values.count == digits.count else { return false }
+        guard values.count == digits.count else { return false }
+        return luhn(values[...])
+    }
+
+    static func luhn(_ values: ArraySlice<Int>) -> Bool {
+        guard cardWindow.contains(values.count) else { return false }
         let sum = values.reversed().enumerated().reduce(0) { total, item in
             guard item.offset % 2 == 1 else { return total + item.element }
             let doubled = item.element * 2
@@ -162,28 +220,41 @@ enum GazeBrain {
     static let queryLength = 300
     static let bodyLength = 1200
     static let titleLength = 200
+    static let kindLength = 32
+    static let answerLength = 8000
     static let unavailable = "  (el cerebro no está disponible)"
     static let empty = "  (sin notas en el cerebro)"
-    static let idPattern = "^[A-Za-z0-9_-]+$"
+    static let idPattern = "^[A-Za-z0-9][A-Za-z0-9_-]*$"
 
     static func query(question: String?, segments: [Segment]) -> String? {
         if let question = question?.trimmed, !question.isEmpty { return question }
         let text = LiveTranscript.window(segments, seconds: queryWindowSeconds).map(\.text.trimmed).filter { !$0.isEmpty }
             .joined(separator: " ")
-        let tail = String(text.suffix(queryLength)).trimmed
+        let tail = String(String.UnicodeScalarView(text.unicodeScalars.suffix(queryLength))).trimmed
         return tail.isEmpty ? nil : tail
     }
 
     static func searchArguments(project: String, query: String) -> [String] {
-        ["search", "--project", project, "--limit", String(searchLimit), "--json", "--", query]
+        ["search", "--project=\(project)", "--limit", String(searchLimit), "--json", "--", query]
+    }
+
+    static func showArguments(id: String) -> [String] {
+        ["show", "--json", "--", id]
+    }
+
+    static func rememberArguments(project: String, title: String) -> [String] {
+        ["remember", "--project=\(project)", "--kind", "fact", "--title=\(title)", "--json", "-"]
+    }
+
+    static func validId(_ id: String) -> Bool {
+        id.range(of: idPattern, options: .regularExpression) != nil
     }
 
     static func lookup(_ gaze: GazeCalling, project: String, query: String?) -> [BrainNote] {
         guard let query = query?.trimmed, !query.isEmpty,
               let response = try? gaze.invoke(searchArguments(project: project, query: query), stdin: nil),
               response.ok, let items = response.data as? [[String: Any]] else { return [] }
-        let notes = Array(items.compactMap(note).filter { $0.id.range(of: idPattern, options: .regularExpression) != nil }
-            .prefix(shownNotes))
+        let notes = Array(items.compactMap(note).filter { validId($0.id) }.prefix(shownNotes))
         var bodies = [String?](repeating: nil, count: notes.count)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: notes.count) { index in
@@ -198,7 +269,7 @@ enum GazeBrain {
     }
 
     static func show(_ gaze: GazeCalling, id: String) -> String? {
-        guard let response = try? gaze.invoke(["show", id, "--json"], stdin: nil), response.ok,
+        guard let response = try? gaze.invoke(showArguments(id: id), stdin: nil), response.ok,
               let data = response.data as? [String: Any], let body = data["body"] as? String else { return nil }
         return body
     }
@@ -206,55 +277,98 @@ enum GazeBrain {
     static func note(_ item: [String: Any]) -> BrainNote? {
         let id = ((item["id"] as? String) ?? (item["id"] as? Int).map(String.init))?.trimmed
         guard let id, !id.isEmpty else { return nil }
-        let snippet = (item["snippet"] as? String ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmed
         return BrainNote(id: id, title: (item["title"] as? String ?? "").trimmed, kind: item["kind"] as? String ?? "",
-                         project: item["project"] as? String, snippet: snippet,
+                         project: item["project"] as? String, snippet: collapse(item["snippet"] as? String ?? ""),
                          score: (item["score"] as? NSNumber)?.doubleValue)
     }
 
-    static func render(_ context: ProjectContext) -> String {
-        guard context.gaze != nil, context.project != nil else { return unavailable }
-        guard !context.brain.isEmpty else { return empty }
-        return context.brain.map(renderNote).joined(separator: "\n")
+    static func available(_ context: ProjectContext) -> Bool {
+        context.gaze != nil && context.project != nil
     }
 
-    static func renderNote(_ note: BrainNote) -> String {
-        let header = "  - [\(note.id)] \(note.title) (\(note.kind))"
-        let body = cut((note.body ?? note.snippet).trimmed, to: bodyLength)
+    static func renderedNotes(_ context: ProjectContext) -> [String] {
+        available(context) ? context.brain.compactMap(renderNote) : []
+    }
+
+    static func notesUsed(_ context: ProjectContext) -> Bool {
+        !renderedNotes(context).isEmpty
+    }
+
+    static func render(_ context: ProjectContext) -> String {
+        guard available(context) else { return unavailable }
+        let notes = renderedNotes(context)
+        return notes.isEmpty ? empty : notes.joined(separator: "\n")
+    }
+
+    static func renderNote(_ note: BrainNote) -> String? {
+        let id = singleLine(note.id)
+        guard validId(id) else { return nil }
+        let header = "  - [\(id)] \(cut(singleLine(note.title), to: titleLength)) (\(cut(singleLine(note.kind), to: kindLength)))"
+        let body = cut(multiLine(note.body ?? note.snippet).trimmed, to: bodyLength)
         guard !body.isEmpty else { return header }
         return ([header] + body.components(separatedBy: "\n").map { "    \($0)" }).joined(separator: "\n")
     }
 
-    static func cut(_ text: String, to length: Int) -> String {
-        text.count > length ? String(text.prefix(length)) + "…" : text
+    static func escapeAngles(_ text: String) -> String {
+        text.replacingOccurrences(of: "<", with: "\u{2039}").replacingOccurrences(of: ">", with: "\u{203A}")
+    }
+
+    static func singleLine(_ text: String) -> String {
+        let spaced = escapeAngles(text).replacingOccurrences(of: whitespaceRun, with: " ", options: .regularExpression)
+        return scalars(spaced) { $0.properties.generalCategory != .control }.trimmingCharacters(in: CharacterSet(charactersIn: " "))
+    }
+
+    static let whitespaceRun = "[\\t\\n\\u000B\\f\\r \\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+"
+
+    static func multiLine(_ text: String) -> String {
+        scalars(escapeAngles(text)) { $0 == "\n" || $0 == "\t" || $0.properties.generalCategory != .control }
+    }
+
+    static func scalars(_ text: String, where keep: (Unicode.Scalar) -> Bool) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter(keep)))
+    }
+
+    static func collapse(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmed
+    }
+
+    static func length(_ text: String) -> Int {
+        text.unicodeScalars.count
+    }
+
+    static func cut(_ text: String, to limit: Int) -> String {
+        guard length(text) > limit else { return text }
+        return String(String.UnicodeScalarView(text.unicodeScalars.prefix(limit))) + "…"
     }
 
     static func noteTitle(_ question: String) -> String {
-        cut(question.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmed, to: titleLength)
+        cut(collapse(question), to: titleLength)
+    }
+
+    static func page(for source: AnswerSource, context: ProjectContext) -> PageRef? {
+        source.pageId.flatMap { id in context.pages.first { $0.pageId == id } }
+            ?? source.path.flatMap { path in context.pages.first { $0.relPath == path } }
     }
 
     static func verifies(_ source: AnswerSource, context: ProjectContext, checks: SourceChecks) -> Bool {
+        guard ![source.path, source.repo].contains(where: { $0?.contains("\0") == true }) else { return false }
         switch source.kind {
         case "page":
-            let byId = source.pageId.map { id in context.pages.contains { $0.pageId == id } } ?? false
-            let byPath = source.path.map { path in context.pages.contains { $0.relPath == path } } ?? false
-            return byId || byPath
+            return page(for: source, context: context) != nil
         case "file":
             guard let path = source.path else { return false }
             let absolute = path.hasPrefix("/") ? path : context.docsRoot.map { URL(fileURLWithPath: $0).appending(path: path).path }
             guard let absolute, let resolved = checks.resolve(absolute) else { return false }
             let roots = ([context.docsRoot].compactMap { $0 } + context.existingRepos.map(\.path)).compactMap(checks.resolve)
             guard roots.contains(where: { resolved == $0 || resolved.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }),
-                  let count = checks.lineCount(resolved) else { return false }
-            return source.line.map { $0 >= 1 && $0 <= count } ?? true
+                  checks.isFile(resolved) else { return false }
+            guard let line = source.line else { return true }
+            guard let count = checks.lineCount(resolved) else { return false }
+            return line >= 1 && line <= count
         case "commit":
             guard let sha = source.sha, sha.range(of: "^[0-9a-fA-F]{4,40}$", options: .regularExpression) != nil,
-                  let repo = source.repo else { return false }
-            let resolvedRepo = checks.resolve(repo)
-            guard let match = context.existingRepos.first(where: { candidate in
-                candidate.path == repo || (resolvedRepo != nil && checks.resolve(candidate.path) == resolvedRepo)
-            }) else { return false }
-            return checks.commitExists(match.path, sha)
+                  let repo = source.repo, context.existingRepos.contains(where: { $0.path == repo }) else { return false }
+            return checks.commitExists(repo, sha)
         default:
             return false
         }
@@ -269,49 +383,56 @@ enum GazeBrain {
     }
 
     static func shouldRemember(_ answer: Answer, context: ProjectContext, checks: SourceChecks) -> Bool {
-        eligible(answer) && unverifiedSource(answer, context: context, checks: checks) == nil
+        !notesUsed(context) && eligible(answer) && length(answer.answer) <= answerLength
+            && unverifiedSource(answer, context: context, checks: checks) == nil
     }
 
-    static func sensitiveReason(_ answer: Answer, title: String) -> String? {
-        [answer.question, title, answer.answer].lazy.compactMap(SecretScanner.reason).first
+    static func sensitiveReason(title: String, body: String) -> String? {
+        [title, body].lazy.compactMap(SecretScanner.reason).first
     }
 
-    static func sourceLine(_ source: AnswerSource) -> String {
+    static func sourceLine(_ source: AnswerSource, context: ProjectContext) -> String {
         switch source.kind {
         case "page":
-            let detail = [source.pageId.map { "#\($0)" }, source.path].compactMap { $0 }.joined(separator: ", ")
-            return "«\(source.label)»" + (detail.isEmpty ? "" : " (\(detail))")
+            let page = page(for: source, context: context)
+            let detail = [(page?.pageId ?? source.pageId).map { "#\($0)" }, page?.relPath ?? source.path]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+            return "«\(page?.title ?? "")»" + (detail.isEmpty ? "" : " (\(detail))")
         case "file":
-            let location = (source.path ?? source.label) + (source.line.map { ":\($0)" } ?? "")
+            let location = (source.path ?? "") + (source.line.map { ":\($0)" } ?? "")
             return location + (source.repo.map { " (\($0))" } ?? "")
         case "commit":
-            let head = [source.sha, source.label].compactMap { $0 }.joined(separator: " ")
-            return head + (source.repo.map { " (\($0))" } ?? "")
+            return (source.sha ?? "") + (source.repo.map { " (\($0))" } ?? "")
         default:
-            return source.label
+            return ""
         }
     }
 
-    static func noteBody(answer: Answer, meeting: Meeting) -> String {
-        let sources = answer.sources.map(sourceLine).map { "- \($0)" }.joined(separator: "\n")
+    static func noteBody(answer: Answer, meeting: Meeting, context: ProjectContext) -> String {
+        let sources = answer.sources.map { "- \(sourceLine($0, context: context))" }.joined(separator: "\n")
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        let title = meeting.bitaEntry?.title ?? meeting.title
+        let title = collapse(meeting.bitaEntry?.title ?? meeting.title)
         return "\(answer.answer.trimmed)\n\nFuentes:\n\(sources)\n\n"
             + "Generada por recap a partir de la reunión «\(title)» (\(formatter.string(from: meeting.createdAt))); sin revisión humana."
     }
 
-    static func rememberArguments(project: String, title: String) -> [String] {
-        ["remember", "--project", project, "--kind", "fact", "--title=\(title)", "--json", "-"]
-    }
-
     static func remember(_ gaze: GazeCalling, answer: Answer, project: String, meeting: Meeting, context: ProjectContext,
                          checks: SourceChecks = .live, log: (String) -> Void) {
+        if notesUsed(context) {
+            log("gaze: not saved (brain notes were used)")
+            return
+        }
         let title = noteTitle(answer.question)
         guard eligible(answer), !title.isEmpty else { return }
-        if let reason = sensitiveReason(answer, title: title) {
-            log("gaze: not saved (\(reason))")
+        if length(answer.answer) > answerLength {
+            log("gaze: not saved (answer too long)")
+            return
+        }
+        let body = noteBody(answer: answer, meeting: meeting, context: context)
+        if let reason = sensitiveReason(title: title, body: body) {
+            log("gaze: not saved (sensitive content: \(reason))")
             return
         }
         if let source = unverifiedSource(answer, context: context, checks: checks) {
@@ -319,8 +440,7 @@ enum GazeBrain {
             return
         }
         do {
-            let response = try gaze.invoke(rememberArguments(project: project, title: title),
-                                           stdin: Data(noteBody(answer: answer, meeting: meeting).utf8))
+            let response = try gaze.invoke(rememberArguments(project: project, title: title), stdin: Data(body.utf8))
             if !response.ok { log("gaze remember failed: \(response.errorMessage ?? "no reason given")") }
         } catch {
             log("gaze remember failed: \(error)")

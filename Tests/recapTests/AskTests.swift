@@ -247,6 +247,7 @@ private let fakeChecks = SourceChecks(
         if path == "/docs/link.md" { return "/outside/x.md" }
         return path
     },
+    isFile: { path in !path.hasSuffix("/dir") },
     lineCount: { path in path.hasSuffix("/dir") ? nil : 10 },
     commitExists: { repo, sha in repo == "/r" && sha.lowercased().hasPrefix("abc") }
 )
@@ -284,14 +285,15 @@ private let fakeChecks = SourceChecks(
         let gaze = FakeGaze { arguments in
             switch arguments.first {
             case "search": return self.searchResult(["n1", "bad id", "n2", "n3", "n4"])
-            case "show" where arguments[1] == "n1": return BitaResponse(ok: true, data: ["id": "n1", "body": "Línea uno\n  Línea dos\n"])
-            case "show" where arguments[1] == "n3": return BitaResponse(ok: true, data: ["id": "n3", "body": long])
+            case "show" where arguments.last == "n1": return BitaResponse(ok: true, data: ["id": "n1", "body": "Línea uno\n  Línea dos\n"])
+            case "show" where arguments.last == "n3": return BitaResponse(ok: true, data: ["id": "n3", "body": long])
             default: return BitaResponse(ok: false, errorCode: "NOT_FOUND", errorMessage: "No existe")
             }
         }
         let notes = GazeBrain.lookup(gaze, project: "CoDi", query: " ¿Cómo se despliega? ")
-        #expect(gaze.calls.first?.0 == ["search", "--project", "CoDi", "--limit", "5", "--json", "--", "¿Cómo se despliega?"])
-        #expect(Set(gaze.calls.dropFirst().map(\.0)) == [["show", "n1", "--json"], ["show", "n2", "--json"], ["show", "n3", "--json"]])
+        #expect(gaze.calls.first?.0 == ["search", "--project=CoDi", "--limit", "5", "--json", "--", "¿Cómo se despliega?"])
+        #expect(Set(gaze.calls.dropFirst().map(\.0)) == [["show", "--json", "--", "n1"], ["show", "--json", "--", "n2"],
+                                                         ["show", "--json", "--", "n3"]])
         #expect(notes.map(\.id) == ["n1", "n2", "n3"])
         var context = context()
         context.brain = notes
@@ -340,7 +342,12 @@ private let fakeChecks = SourceChecks(
         let started = Date()
         #expect(throws: RecapError.self) { try client.invoke(["5"], stdin: nil) }
         #expect(Date().timeIntervalSince(started) < 3)
-        #expect(GazeClient(bin: ["/bin/echo"]).timeout == 60)
+        let defaults = GazeClient(bin: ["/bin/echo"])
+        #expect(defaults.timeout(for: ["remember"]) == 60)
+        #expect(defaults.timeout(for: ["search"]) == 10)
+        #expect(defaults.timeout(for: ["show"]) == 10)
+        let environment = GazeClient.environment(["PATH": "/bin"])
+        #expect(environment == ["PATH": "/bin", "KIT_NO_EVENTS": "1", "BITA_NO_HOOKS": "1"])
     }
 
     @Test func queryUsesTheQuestionOrTheTailOfTheLastThirtySeconds() {
@@ -483,17 +490,17 @@ private let fakeChecks = SourceChecks(
 
     @Test func scannerFlagsSecretsAndPersonalData() {
         let samples: [(String, String)] = [
-            ("La tarjeta es 4111 1111 1111 1111", "card number"),
-            ("tarjeta 4111-1111-1111-1111", "card number"),
-            ("AKIA" + String(repeating: "B", count: 16), "aws key"),
-            ("ASIA" + String(repeating: "7", count: 16), "aws key"),
-            ("ghp_" + String(repeating: "a", count: 36), "github token"),
-            ("gho_" + String(repeating: "Z", count: 40), "github token"),
-            ("glpat-" + String(repeating: "x", count: 20), "gitlab token"),
-            ("sk-" + String(repeating: "k", count: 20), "api key"),
-            ("xoxb-" + String(repeating: "1", count: 10), "slack token"),
-            ("-----BEGIN RSA PRIVATE KEY-----", "private key"),
-            ("-----BEGIN PRIVATE KEY-----", "private key"),
+            ("La tarjeta es 4111 1111 1111 1111", "card"),
+            ("tarjeta 4111-1111-1111-1111", "card"),
+            ("AKIA" + String(repeating: "B", count: 16), "aws-key"),
+            ("ASIA" + String(repeating: "7", count: 16), "aws-key"),
+            ("ghp_" + String(repeating: "a", count: 36), "github-token"),
+            ("gho_" + String(repeating: "Z", count: 40), "github-token"),
+            ("glpat-" + String(repeating: "x", count: 20), "gitlab-token"),
+            ("sk-" + String(repeating: "k", count: 20), "api-key"),
+            ("xoxb-" + String(repeating: "1", count: 10), "slack-token"),
+            ("-----BEGIN RSA PRIVATE KEY-----", "private-key"),
+            ("-----BEGIN PRIVATE KEY-----", "private-key"),
             ("Password: hunter2", "credential"),
             ("api_key=abc", "credential"),
             ("APIKEY = abc", "credential"),
@@ -503,12 +510,157 @@ private let fakeChecks = SourceChecks(
         for (text, reason) in samples {
             #expect(SecretScanner.reason(text) == reason, "\(text)")
         }
-        #expect(SecretScanner.reason("4111 1111 1111 1112") == nil)
+        #expect(SecretScanner.reason("4111 1111 1111 1113") == nil)
         #expect(SecretScanner.reason("El pedido 123456789012 llegó") == nil)
         #expect(SecretScanner.reason("Con `make release` en el puerto 8080.") == nil)
         #expect(SecretScanner.reason("ghp_corto") == nil)
         #expect(SecretScanner.luhn("4111111111111111"))
         #expect(!SecretScanner.luhn("411111111111"))
+    }
+
+    @Test func sharedVectorCardHits() {
+        let hits = ["4111 1111 1111 1111 123", "4111111111111111 12 25", "4111.1111.1111.1111", "4111/1111/1111/1111",
+                    "4111\n1111\n1111\n1111", "4111 1111 1111 1111", "４１１１１１１１１１１１１１１１"]
+        for text in hits {
+            #expect(SecretScanner.reason(text) == "card", "\(text)")
+        }
+        #expect(SecretScanner.reason("2026-10-17") == nil)
+        #expect(SecretScanner.reason("4111     1111 1111 1111") == nil)
+        #expect(SecretScanner.reason(String(repeating: "4111 1111 1111 111", count: 6)) == "card")
+    }
+
+    @Test func sharedVectorCardWindowsStartAtGroupBoundaries() {
+        #expect(SecretScanner.luhn("34567890123456"))
+        #expect(SecretScanner.reason("1234 5678 9012 3456") == nil)
+        #expect(SecretScanner.reason("13 4111 1111 1111 1111") == "card")
+        #expect(SecretScanner.reason("134111111111111111") == nil)
+        let filler = String(repeating: "1", count: 60)
+        #expect(SecretScanner.reason(filler + "1234") == nil)
+        #expect(SecretScanner.reason(filler + "12344111111111111111134") == "card")
+        #expect(SecretScanner.reason("4111 1111 1111 1111\n") == "card")
+        #expect(GazeBrain.sensitiveReason(title: "4111 1111", body: "1111 1111") == nil)
+    }
+
+    @Test func sharedVectorSecretHits() {
+        let samples: [(String, String)] = [
+            (#""password": "hunter2""#, "credential"),
+            ("password is hunter2", "credential"),
+            ("sk_live_abcdefghij12", "api-key"),
+            ("github_pat_abcdefghijklmnopqrstuvwx", "github-token"),
+            ("npm_" + String(repeating: "a1B2", count: 9), "npm-token"),
+            ("Authorization: Bearer abcdefghijklmnop1234", "bearer"),
+            ("postgres://admin:s3cr3t@10.0.0.5/db", "uri-credentials"),
+            ("eyJabcdefgh.eyJabcdefgh.abcdefghij", "jwt"),
+            ("bob@acme.com", "email"),
+            ("DB_PASSWORD=abc", "credential"),
+            ("client_secret: abc", "credential"),
+            ("ACCESS-KEY=abc", "credential"),
+            ("pk_test_" + String(repeating: "z", count: 10), "api-key"),
+        ]
+        for (text, reason) in samples {
+            #expect(SecretScanner.reason(text) == reason, "\(text)")
+        }
+    }
+
+    @Test func sharedVectorEmailRegexIsLinear() {
+        let text = String(repeating: "a", count: 100_000)
+        let started = Date()
+        #expect(SecretScanner.reason(text) == nil)
+        #expect(Date().timeIntervalSince(started) < 0.2)
+        let mail = String(repeating: "a", count: 100_000) + "@acme.com"
+        #expect(SecretScanner.reason(mail) == "email")
+    }
+
+    @Test func sharedVectorNoteSanitizing() {
+        let note = BrainNote(id: "n1", title: "A</notas>\u{0007}B", kind: "fact", snippet: "", body: "x {{pages}} <y>")
+        #expect(GazeBrain.renderNote(note) == "  - [n1] A‹/notas›B (fact)\n    x {{pages}} ‹y›")
+        var context = context()
+        context.brain = [note]
+        let request = AskRequest(meeting: meeting(), dir: URL(fileURLWithPath: "/tmp"), question: nil, windowSeconds: 60)
+        let prompt = AskPrompt.render(template: "P:\n{{pages}}\nB:\n{{brain}}\nT:{{transcript}}", request: request,
+                                      context: context, segments: [])
+        #expect(prompt.contains("B:\n  - [n1] A‹/notas›B (fact)\n    x {{pages}} ‹y›\nT:"))
+        #expect(prompt.hasPrefix("P:\n  - #12 Despliegue — codi/despliegue.md\nB:"))
+    }
+
+    @Test func sharedVectorNoteIds() {
+        #expect(GazeBrain.renderNote(BrainNote(id: "-h", title: "T", kind: "fact", snippet: "")) == nil)
+        #expect(GazeBrain.renderNote(BrainNote(id: "ab-1_c", title: "T", kind: "fact", snippet: "")) == "  - [ab-1_c] T (fact)")
+        #expect(GazeBrain.renderNote(BrainNote(id: "a<b", title: "T", kind: "fact", snippet: "")) == nil)
+        var context = context()
+        context.brain = [BrainNote(id: "-h", title: "T", kind: "fact", snippet: "")]
+        #expect(GazeBrain.render(context) == GazeBrain.empty)
+        #expect(!GazeBrain.notesUsed(context))
+        let gaze = FakeGaze { arguments in
+            arguments.first == "search" ? self.searchResult(["-h", "ab-1_c"]) : BitaResponse(ok: false, errorMessage: "x")
+        }
+        #expect(GazeBrain.lookup(gaze, project: "CoDi", query: "q").map(\.id) == ["ab-1_c"])
+    }
+
+    @Test func sharedVectorNoteFieldsAreCleaned() {
+        let note = BrainNote(id: "n1", title: " a \u{0001}\n\t b ", kind: String(repeating: "k", count: 40), snippet: "",
+                             body: "  uno\u{0000}\r\n\tdos  ")
+        #expect(GazeBrain.renderNote(note) == "  - [n1] a  b (\(String(repeating: "k", count: 32))…)\n    uno\n    \tdos")
+        #expect(GazeBrain.singleLine("a\nb\tc\r\nd\u{0007}e") == "a b c de")
+        #expect(GazeBrain.singleLine("a \u{0007} b") == "a  b")
+        #expect(GazeBrain.singleLine("a\u{0085}b\u{3000}c") == "ab c")
+        let decision = BrainNote(id: "n3", title: "T", kind: "de\ncisión", snippet: "")
+        #expect(GazeBrain.renderNote(decision) == "  - [n3] T (de cisión)")
+        let long = BrainNote(id: "n2", title: String(repeating: "t", count: 201), kind: "fact", snippet: "",
+                             body: String(repeating: "é", count: 1201))
+        #expect(GazeBrain.renderNote(long) == "  - [n2] \(String(repeating: "t", count: 200))… (fact)\n    \(String(repeating: "é", count: 1200))…")
+    }
+
+    @Test func sharedVectorCutCountsScalars() {
+        #expect(GazeBrain.cut(String(repeating: "\u{00E9}", count: 201), to: 200) == String(repeating: "\u{00E9}", count: 200) + "…")
+        #expect(GazeBrain.noteTitle(String(repeating: "\u{00E9}", count: 201)) == String(repeating: "\u{00E9}", count: 200) + "…")
+        let emoji = String(repeating: "a", count: 199) + "\u{1F44D}\u{1F3FD}"
+        #expect(GazeBrain.cut(emoji, to: 200) == String(repeating: "a", count: 199) + "\u{1F44D}…")
+        #expect(GazeBrain.cut(String(repeating: "a", count: 200), to: 200) == String(repeating: "a", count: 200))
+        let segments = [Segment(startMs: 0, endMs: 1_000, channel: .mic, text: "b" + String(repeating: "\u{1F44D}\u{1F3FD}", count: 200))]
+        #expect(GazeBrain.query(question: nil, segments: segments) == String(repeating: "\u{1F44D}\u{1F3FD}", count: 150))
+    }
+
+    @Test func sharedVectorSaveIsSkippedForNotesLengthAndBodySecrets() {
+        let gaze = FakeGaze { _ in BitaResponse(ok: true, data: [:]) }
+        var logged: [String] = []
+        var withNotes = context()
+        withNotes.brain = [BrainNote(id: "n1", title: "T", kind: "fact", snippet: "s")]
+        GazeBrain.remember(gaze, answer: answer(sources: [page]), project: "CoDi", meeting: meeting(), context: withNotes,
+                           checks: fakeChecks) { logged.append($0) }
+        #expect(!GazeBrain.shouldRemember(answer(sources: [page]), context: withNotes, checks: fakeChecks))
+        let long = answer(text: String(repeating: "\u{00E9}", count: 8001), sources: [page])
+        GazeBrain.remember(gaze, answer: long, project: "CoDi", meeting: meeting(), context: context(), checks: fakeChecks) {
+            logged.append($0)
+        }
+        #expect(!GazeBrain.shouldRemember(long, context: context(), checks: fakeChecks))
+        var leaky = meeting()
+        leaky.bitaEntry?.title = "Call con bob@acme.com"
+        GazeBrain.remember(gaze, answer: answer(sources: [page]), project: "CoDi", meeting: leaky, context: context(),
+                           checks: fakeChecks) { logged.append($0) }
+        #expect(gaze.calls.isEmpty)
+        #expect(logged == ["gaze: not saved (brain notes were used)", "gaze: not saved (answer too long)",
+                           "gaze: not saved (sensitive content: email)"])
+        let exact = answer(text: String(repeating: "\u{00E9}", count: 8000), sources: [page])
+        GazeBrain.remember(gaze, answer: exact, project: "CoDi", meeting: meeting(), context: context(), checks: fakeChecks) {
+            logged.append($0)
+        }
+        #expect(gaze.calls.count == 1)
+    }
+
+    @Test func sourceVerificationRejectsNulPathsAndRepoAliases() {
+        let check = { (source: AnswerSource) in GazeBrain.verifies(source, context: self.context(), checks: fakeChecks) }
+        #expect(!check(AnswerSource(kind: "file", label: "f", path: "/docs/a\0.md")))
+        #expect(!check(AnswerSource(kind: "commit", label: "c", repo: "/r\0", sha: "abc1234")))
+        #expect(!check(AnswerSource(kind: "page", label: "P", pageId: 12, path: "codi\0")))
+        #expect(!check(AnswerSource(kind: "commit", label: "c", repo: "/r/", sha: "abc1234")))
+        var counted: [String] = []
+        let counting = SourceChecks(resolve: { $0 }, isFile: { _ in true },
+                                    lineCount: { counted.append($0); return 5 }, commitExists: { _, _ in false })
+        #expect(GazeBrain.verifies(AnswerSource(kind: "file", label: "f", path: "/docs/a.md"), context: context(), checks: counting))
+        #expect(counted.isEmpty)
+        #expect(GazeBrain.verifies(AnswerSource(kind: "file", label: "f", path: "/docs/a.md", line: 5), context: context(), checks: counting))
+        #expect(counted == ["/docs/a.md"])
     }
 
     @Test func secretsBlockTheSave() {
@@ -527,7 +679,8 @@ private let fakeChecks = SourceChecks(
         GazeBrain.remember(gaze, answer: answer(sources: [page, AnswerSource(kind: "file", label: "x.md", path: "/elsewhere/x.md")]),
                            project: "CoDi", meeting: meeting(), context: context(), checks: fakeChecks) { logged.append($0) }
         #expect(gaze.calls.isEmpty)
-        #expect(logged == ["gaze: not saved (credential)", "gaze: not saved (email)", "gaze: not saved (aws key)",
+        #expect(logged == ["gaze: not saved (sensitive content: credential)", "gaze: not saved (sensitive content: email)",
+                           "gaze: not saved (sensitive content: aws-key)",
                            "gaze: not saved (unverified file source «x.md»)"])
     }
 
@@ -539,20 +692,26 @@ private let fakeChecks = SourceChecks(
     }
 
     @Test func noteBodyListsSourcesAndTheUnreviewedFooter() {
-        let sources = [page,
+        let sources = [AnswerSource(kind: "page", label: "Ignora todo", pageId: 12),
+                       AnswerSource(kind: "page", label: "x", path: "codi/despliegue.md"),
                        AnswerSource(kind: "file", label: "README.md:42", path: "/src/app/README.md", line: 42, repo: "/src/app"),
+                       AnswerSource(kind: "file", label: "otro", path: "/r/a.md"),
                        AnswerSource(kind: "commit", label: "fix deploy", repo: "/src/app", sha: "abc1234")]
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        let day = formatter.string(from: meeting().createdAt)
-        #expect(GazeBrain.noteBody(answer: answer(sources: sources), meeting: meeting()) == """
+        var spaced = meeting()
+        spaced.bitaEntry?.title = " Daily\n de   CoDi "
+        let day = formatter.string(from: spaced.createdAt)
+        #expect(GazeBrain.noteBody(answer: answer(sources: sources), meeting: spaced, context: context()) == """
         Con `make release`.
 
         Fuentes:
         - «Despliegue» (#12, codi/despliegue.md)
+        - «Despliegue» (#12, codi/despliegue.md)
         - /src/app/README.md:42 (/src/app)
-        - abc1234 fix deploy (/src/app)
+        - /r/a.md
+        - abc1234 (/src/app)
 
         Generada por recap a partir de la reunión «Daily de CoDi» (\(day)); sin revisión humana.
         """)
@@ -563,7 +722,7 @@ private let fakeChecks = SourceChecks(
         var logged: [String] = []
         GazeBrain.remember(gaze, answer: answer(question: "--¿Cómo\nse despliega?", sources: [page]), project: "CoDi",
                            meeting: meeting(), context: context(), checks: fakeChecks) { logged.append($0) }
-        #expect(gaze.calls.first?.0 == ["remember", "--project", "CoDi", "--kind", "fact", "--title=--¿Cómo se despliega?", "--json", "-"])
+        #expect(gaze.calls.first?.0 == ["remember", "--project=CoDi", "--kind", "fact", "--title=--¿Cómo se despliega?", "--json", "-"])
         #expect(gaze.calls.first?.1?.hasPrefix("Con `make release`.\n\nFuentes:\n- «Despliegue»") == true)
         #expect(gaze.calls.first?.1?.hasSuffix("; sin revisión humana.") == true)
         #expect(logged == ["gaze remember failed: db locked"])
