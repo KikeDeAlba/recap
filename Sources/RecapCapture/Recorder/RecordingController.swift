@@ -65,8 +65,7 @@ package final class RecordingController {
     private func startLiveWorker() {
         do {
             guard let launch = try LiveWorkerLaunch.resolve(option: liveWorker,
-                                                            environment: ProcessInfo.processInfo.environment,
-                                                            executable: Paths.executable) else {
+                                                            environment: ProcessInfo.processInfo.environment) else {
                 log("live worker disabled")
                 return
             }

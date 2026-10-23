@@ -262,19 +262,15 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         return url
     }
 
-    @Test func defaultsToTheSiblingRecap() throws {
-        let dir = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let recap = try executable(named: "recap", in: dir)
-        let launch = try #require(try LiveWorkerLaunch.resolve(option: nil, environment: [:], executable: dir.appending(path: "recap-capture")))
-        #expect(launch.executable.path == recap.path)
-        #expect(launch.arguments(for: URL(fileURLWithPath: "/tmp/m")) == ["live-worker", "/tmp/m"])
-    }
-
-    @Test func otherExecutablesSpawnThemselves() throws {
-        let recap = URL(fileURLWithPath: "/Applications/Recap.app/Contents/MacOS/recap")
-        let launch = try #require(try LiveWorkerLaunch.resolve(option: nil, environment: [:], executable: recap))
-        #expect(launch == LiveWorkerLaunch(executable: recap, arguments: ["live-worker"]))
+    @Test func missingConfigurationIsReported() throws {
+        let error = try #require(throws: RecapError.self) {
+            try LiveWorkerLaunch.resolve(option: nil, environment: [:])
+        }
+        #expect(error.code == "LIVE_WORKER_MISSING")
+        #expect(error.message.contains(LiveWorkerLaunch.environmentKey))
+        #expect(throws: RecapError.self) {
+            try LiveWorkerLaunch.resolve(option: "  ", environment: [LiveWorkerLaunch.environmentKey: ""])
+        }
     }
 
     @Test func theLauncherForwardsTheWorkerSettingThroughOpen() {
@@ -289,24 +285,16 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         #expect(forwarded.suffix(3) == ["--args", "record", dir.path])
     }
 
-    @Test func missingSiblingIsReported() throws {
-        let dir = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(throws: RecapError.self) {
-            try LiveWorkerLaunch.resolve(option: nil, environment: [:], executable: dir.appending(path: "recap-capture"))
-        }
-    }
-
     @Test func optionWinsOverTheEnvironment() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let fromOption = try executable(named: "worker-a", in: dir)
         let fromEnvironment = try executable(named: "worker-b", in: dir)
         let environment = [LiveWorkerLaunch.environmentKey: fromEnvironment.path]
-        let chosen = try #require(try LiveWorkerLaunch.resolve(option: fromOption.path, environment: environment, executable: nil))
+        let chosen = try #require(try LiveWorkerLaunch.resolve(option: fromOption.path, environment: environment))
         #expect(chosen.executable.path == fromOption.path)
         #expect(chosen.arguments == ["live-worker"])
-        let fallback = try #require(try LiveWorkerLaunch.resolve(option: nil, environment: environment, executable: nil))
+        let fallback = try #require(try LiveWorkerLaunch.resolve(option: nil, environment: environment))
         #expect(fallback.executable.path == fromEnvironment.path)
     }
 
@@ -315,21 +303,21 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         defer { try? FileManager.default.removeItem(at: dir) }
         let node = try executable(named: "node", in: dir)
         let raw = "[\"\(node.path)\", \"/opt/recap/src/bin/recap.ts\", \"live-worker\"]"
-        let launch = try #require(try LiveWorkerLaunch.resolve(option: raw, environment: [:], executable: nil))
+        let launch = try #require(try LiveWorkerLaunch.resolve(option: raw, environment: [:]))
         #expect(launch.executable.path == node.path)
         #expect(launch.arguments(for: URL(fileURLWithPath: "/tmp/m")) == ["/opt/recap/src/bin/recap.ts", "live-worker", "/tmp/m"])
     }
 
     @Test func noneDisablesTheWorker() throws {
-        #expect(try LiveWorkerLaunch.resolve(option: "none", environment: [:], executable: nil) == nil)
-        #expect(try LiveWorkerLaunch.resolve(option: nil, environment: [LiveWorkerLaunch.environmentKey: "off"], executable: nil) == nil)
+        #expect(try LiveWorkerLaunch.resolve(option: "none", environment: [:]) == nil)
+        #expect(try LiveWorkerLaunch.resolve(option: nil, environment: [LiveWorkerLaunch.environmentKey: "off"]) == nil)
     }
 
     @Test func invalidCommandsAreRejected() {
-        #expect(throws: RecapError.self) { try LiveWorkerLaunch.resolve(option: "[1, 2]", environment: [:], executable: nil) }
-        #expect(throws: RecapError.self) { try LiveWorkerLaunch.resolve(option: "[]", environment: [:], executable: nil) }
+        #expect(throws: RecapError.self) { try LiveWorkerLaunch.resolve(option: "[1, 2]", environment: [:]) }
+        #expect(throws: RecapError.self) { try LiveWorkerLaunch.resolve(option: "[]", environment: [:]) }
         #expect(throws: RecapError.self) {
-            try LiveWorkerLaunch.resolve(option: "/nonexistent/recap", environment: [:], executable: nil)
+            try LiveWorkerLaunch.resolve(option: "/nonexistent/recap", environment: [:])
         }
     }
 }

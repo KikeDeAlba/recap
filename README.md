@@ -58,7 +58,22 @@ recap import llamada.mov --remote                         # video con dos pistas
 
 Los archivos en disco, los comandos, las opciones y el sobre `--json` son los
 mismos que los del `recap` en Swift, así que las dos versiones leen las mismas
-reuniones. bita solo lleva el tiempo: las páginas, las propuestas, el backlog
+reuniones.
+
+### El `recap` en Swift es legado
+
+`Recap.app` queda solo para grabar: el pipeline (transcripción, minuta,
+propuestas, wrap-up, `recap ask` y el live worker) vive en la CLI de
+TypeScript, que corre con cualquier agente headless. Los subcomandos de
+pipeline del binario Swift `Recap.app/Contents/MacOS/recap` (`process`,
+`prompt`, `save-summary`, `ask`, `proposals`, `live-worker`, `bita-hook`,
+`wait`, `setup`) y sus fuentes (`Sources/recap/Pipeline`, `Sources/recap/Bita`,
+`Sources/recap/Live`) son legado, están atados a Claude Code y se quitarán.
+`make install` ya no enlaza ese binario como `recap`: solo enlaza
+`recap-capture`, así que el `recap` del `PATH` es el de npm. La CLI pasa
+siempre `RECAP_LIVE_WORKER` con su propio worker al lanzar `Recap.app`, y si
+la app instalada no trae `recap-capture` avisa de actualizarla con
+`recap setup`. bita solo lleva el tiempo: las páginas, las propuestas, el backlog
 y la nota de cada entrada viven en [inkwell](https://github.com/KikeDeAlba/inkwell),
 y el volcado del tiempo a Jira lo hace [tally](https://github.com/KikeDeAlba/tally).
 Sin inkwell la reunión se procesa igual: las etapas `proposals` y `wrapup` se
@@ -91,7 +106,7 @@ It downloads the latest `Recap.app` release to `~/Applications`, links `recap` i
 make install
 ```
 
-This builds `Recap.app`, signs it with your first `Apple Development` identity (or ad-hoc when there is none, set `RECAP_SIGN_IDENTITY` to pick another one), copies it to `~/Applications` and links `~/.local/bin/recap`. Make sure `~/.local/bin` is on your `PATH`, or install the link elsewhere with `make install PREFIX_BIN=/opt/homebrew/bin`.
+This builds `Recap.app`, signs it with your first `Apple Development` identity (or ad-hoc when there is none, set `RECAP_SIGN_IDENTITY` to pick another one), copies it to `~/Applications` and links `~/.local/bin/recap-capture` (it does not link the legacy Swift `recap`, so the `recap` on your `PATH` stays the npm CLI). Make sure `~/.local/bin` is on your `PATH`, or install the link elsewhere with `make install PREFIX_BIN=/opt/homebrew/bin`.
 
 Then check the dependencies and grant the permissions:
 
@@ -401,7 +416,7 @@ When `live.enabled` is on (the default, see Configuration), it also cuts the aud
 {"channel":"system","endMs":12000,"seq":2,"startMs":9870}
 ```
 
-Offsets are milliseconds from the start of the recording; chunks without speech have no `file` and no WAV. Then it spawns the live worker, detached, with its output in `live/worker.log`. `--live-worker` (or `RECAP_LIVE_WORKER` when the option is absent) picks it: an executable runs as `<executable> live-worker <meetingDir>`, a JSON array such as `["node", "/path/recap.js", "live-worker"]` is the whole command with `<meetingDir>` appended, and `none` turns it off. Use absolute paths: an app started by `open` gets the minimal launchd `PATH`, and bare names are only searched there and in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. `open` does not pass the caller's environment either; `recap start` forwards `RECAP_LIVE_WORKER` with `open --env`, and other callers should do the same or use `--live-worker`. By default `recap-capture` spawns the `recap` next to it and `recap` spawns itself, which is the behavior of `recap start`.
+Offsets are milliseconds from the start of the recording; chunks without speech have no `file` and no WAV. Then it spawns the live worker, detached, with its output in `live/worker.log`. `--live-worker` (or `RECAP_LIVE_WORKER` when the option is absent) picks it: an executable runs as `<executable> live-worker <meetingDir>`, a JSON array such as `["node", "/path/recap.js", "live-worker"]` is the whole command with `<meetingDir>` appended, and `none` turns it off. Use absolute paths: an app started by `open` gets the minimal launchd `PATH`, and bare names are only searched there and in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. `open` does not pass the caller's environment either; `recap start` forwards `RECAP_LIVE_WORKER` with `open --env`, and other callers should do the same or use `--live-worker`. There is no default worker: without `--live-worker` or `RECAP_LIVE_WORKER` the recording goes on, no worker starts and `recorder.log` says `live worker not started: No live worker configured…`.
 
 ## Development
 
