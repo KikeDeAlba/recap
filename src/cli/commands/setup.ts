@@ -5,7 +5,12 @@ import { padEnd } from '../../core/text.ts'
 import { CHECKED_TOOLS, configuredPath, installHint, locateTool } from '../../core/tools.ts'
 import { errorMessage, usageError } from '../../errors.ts'
 import { BitaClient } from '../../bita/client.ts'
-import { capturePermissions, findCapture, findRecapApp } from '../../capture/capture.ts'
+import { platformContext } from '@kikedealba/kit/platform'
+import { findCapture, findRecapApp } from '../../capture/capture.ts'
+import { selectRecorder } from '../../capture/recorder.ts'
+import { loopbackPath } from '../../capture/sources.ts'
+import { home } from '../../core/paths.ts'
+import { installLoopback } from '../../setup/loopback.ts'
 import { download, installMissing, installRecapApp } from '../../setup/deps.ts'
 import { installAgents, parseAgents, register } from '../../setup/integration.ts'
 import { removeLegacyHook } from '../../setup/legacy.ts'
@@ -62,17 +67,33 @@ export async function setupCommand(argv: string[]): Promise<number> {
         checks.push({ name: 'app', ok: false, detail: `could not install Recap.app: ${errorMessage(error)}` })
       }
     }
-    const capture = await findCapture()
+    const ctx = platformContext({ home: home() })
+    const recorder = selectRecorder(ctx, config)
+    if (recorder.kind === 'windows' && !existsSync(loopbackPath(ctx)) && !args.has('skip-app')) {
+      try {
+        progress('Installing recap-loopback (the Windows audio capture helper)...')
+        await installLoopback(ctx, progress)
+      } catch (error) {
+        checks.push({ name: 'loopback', ok: false, detail: `could not install recap-loopback: ${errorMessage(error)}` })
+      }
+    }
+    const readiness = await recorder.check()
+    const capture = readiness.ok
+    const launcher = recorder.kind === 'mac-app' ? await findCapture() : null
     checks.push({
       name: 'capture',
-      ok: capture !== null || process.platform !== 'darwin',
-      detail: capture
-        ? capture.kind === 'app'
-          ? capture.app
-          : capture.binary
-        : process.platform === 'darwin'
-          ? 'Recap.app is missing; run `recap setup` without --skip-app'
-          : 'recording is not available on this system; use `recap import <file>`',
+      ok: capture || recorder.kind !== 'mac-app',
+      detail: launcher
+        ? launcher.kind === 'app'
+          ? launcher.app
+          : launcher.binary
+        : capture
+          ? recorder.kind === 'windows'
+            ? `ffmpeg and ${loopbackPath(ctx)}`
+            : 'ffmpeg with PulseAudio input and pactl'
+          : recorder.kind === 'mac-app'
+            ? 'Recap.app is missing; run `recap setup` without --skip-app'
+            : `optional, recording is off until you install ${readiness.missing.join(', ')}: ${readiness.hint ?? 'run `recap setup`'}; \`recap import <file>\` works without it`,
     })
     checks.push({ name: 'root', ok: true, detail: rootDir(config) })
 
@@ -92,9 +113,9 @@ export async function setupCommand(argv: string[]): Promise<number> {
     }
 
     const bita = args.has('skip-bita') ? null : await BitaClient.create(config, {})
-    const subscribe = capture !== null && bita !== null
+    const subscribe = capture && bita !== null
     try {
-      const file = await register(capture !== null, subscribe)
+      const file = await register(capture, subscribe)
       checks.push({ name: 'registry', ok: true, detail: file })
     } catch (error) {
       checks.push({ name: 'registry', ok: false, detail: errorMessage(error) })
@@ -114,9 +135,9 @@ export async function setupCommand(argv: string[]): Promise<number> {
       checks.push({ name: `agent:${step.agent}`, ok: step.state !== 'failed', detail: `${step.item}: ${step.detail}` })
     }
 
-    if (capture) {
+    if (capture && recorder.kind === 'mac-app') {
       try {
-        const report = await capturePermissions(capture, !args.has('skip-permissions'))
+        const report = await recorder.permissions(!args.has('skip-permissions'))
         const rerun = args.has('skip-permissions') ? '; run `recap setup` in a terminal to grant it' : ''
         checks.push({ name: 'microphone', ok: report.microphone === 'granted', detail: report.microphone === 'granted' ? 'granted' : `${report.microphone}${rerun}` })
         checks.push({
