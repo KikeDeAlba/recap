@@ -14,7 +14,9 @@ function source() {
   if (helper) process.stderr.write(`${JSON.stringify({ event: 'started', channels, rate: 48000 })}\n`)
   const frames = 4800
   let position = 0
+  const silent = Boolean(process.env.FAKE_SILENT && args.join(' ').includes(process.env.FAKE_SILENT))
   const timer = setInterval(() => {
+    if (silent) return
     const block = Buffer.alloc(frames * channels * 2)
     for (let frame = 0; frame < frames; frame += 1) {
       const value = Math.round(8000 * Math.sin((2 * Math.PI * 440 * (position + frame)) / 48000))

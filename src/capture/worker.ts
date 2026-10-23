@@ -11,6 +11,7 @@ import type { Channel } from '../pipeline/transcript.ts'
 import { RecapError, errorMessage } from '../errors.ts'
 import { BYTES_PER_SAMPLE, FrameAligner, downmix } from './audio.ts'
 import { LiveTap } from './live-tap.ts'
+import { recoverCapture, withRecoveryLock, type Recovery } from './recover.ts'
 import { CAPTURE_DIR, STOP_REQUEST, encoderArguments, intermediateFile, muxArguments, type PcmFormat, type SourceSpec } from './sources.ts'
 
 export interface SupervisorOptions {
@@ -76,6 +77,7 @@ export class CaptureSupervisor {
   private tap: LiveTap | null = null
   private origin: number | null = null
   private stopping = false
+  private stopAsked = false
   private stopSignal: () => void = () => undefined
   private readonly stopRequested: Promise<void>
   private failure: string | null = null
@@ -89,6 +91,7 @@ export class CaptureSupervisor {
   }
 
   requestStop(): void {
+    this.stopAsked = true
     this.stopSignal()
   }
 
@@ -213,6 +216,7 @@ export class CaptureSupervisor {
     const started = await waitUntil((this.options.startTimeoutMs ?? 20_000) / 1000, 0.05, () => {
       const dead = this.sources.find((source) => source.exitCode !== undefined && source.startedAt === null)
       if (dead) throw new RecapError('CAPTURE_FAILED', `The ${dead.spec.channel} capture exited before recording: ${trimmed(dead.stderr) || `exit ${dead.exitCode}`}`)
+      if (this.stopAsked && this.sources.some((source) => source.startedAt !== null)) return true
       return this.sources.every((source) => source.startedAt !== null)
     })
     if (!started) {
@@ -281,19 +285,26 @@ export class CaptureSupervisor {
     const meeting = loadMeeting(this.dir)
     const output = path.join(this.dir, AUDIO_FILE)
     let muxError: string | null = null
+    let recovery: Recovery | null = null
     const recorded = this.sources.filter((source) => source.startedAt !== null && existsSync(intermediateFile(this.dir, source.spec.channel)))
     if (recorded.length === this.sources.length && recorded.length > 0) {
       const result = await exec(this.options.ffmpeg, muxArguments(recorded.map((source) => intermediateFile(this.dir, source.spec.channel)), output))
       if (result.status === 0 && existsSync(output)) rmSync(path.join(this.dir, CAPTURE_DIR), { recursive: true, force: true })
       else muxError = `Cannot write ${path.basename(output)}: ${trimmed(result.stderr) || `exit ${result.status}`}`
     } else {
-      muxError = 'The capture produced no audio'
+      const attempt = withRecoveryLock(this.dir, () => recoverCapture(this.dir, meeting.mode, this.options.ffmpeg))
+      recovery = attempt.ok ? attempt.value : null
+      if (!recovery) muxError = 'The capture produced no audio'
     }
     const error = this.failure ?? muxError
     updateMeeting(this.dir, (item) => {
       item.status = existsSync(output) ? 'recorded' : 'failed'
       item.endedAt = isoNow()
       delete item.recorderPid
+      if (recovery?.synthetic.length) {
+        item['syntheticTracks'] = recovery.synthetic
+        this.options.log(`no audio arrived from ${recovery.synthetic.join(' and ')}; wrote silence for it`)
+      }
       if (error) item.error = error
     })
     this.options.log(error ? `stopped with error: ${error}` : `stopped; wrote ${path.basename(output)} for the ${meeting.mode} meeting`)

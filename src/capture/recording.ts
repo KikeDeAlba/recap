@@ -8,7 +8,7 @@ import { MeetingStore, isActiveStatus, loadMeeting, recordingPath, updateMeeting
 import { isAlive, signalProcess, signalTree, waitUntil } from '../core/proc.ts'
 import { RecapError } from '../errors.ts'
 import { selectRecorder, type Recorder } from './recorder.ts'
-import { applyRecovery, recoverCapture } from './recover.ts'
+import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
@@ -94,7 +94,9 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
     if (recorder.kind !== 'mac-app') await waitUntil(5, 0.1, () => !isAlive(pid))
   }
   if (isActiveStatus(current.status)) {
-    const recovery = recorder.kind === 'mac-app' ? null : recoverCapture(dir, current.mode)
+    const mode = current.mode
+    const attempt = recorder.kind === 'mac-app' ? null : withRecoveryLock(dir, () => recoverCapture(dir, mode))
+    const recovery = attempt?.ok ? attempt.value : null
     current = updateMeeting(dir, (item) => {
       item.status = exists(recordingPath(dir, item.mode)) ? 'recorded' : 'failed'
       item.endedAt = isoNow()

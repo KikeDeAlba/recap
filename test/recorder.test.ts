@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { platformContext, type Platform, type PlatformContext } from '@kikedealba/kit/platform'
@@ -21,7 +21,7 @@ import {
 import { CaptureSupervisor, leadingSilence } from '../src/capture/worker.ts'
 import { liveWorkerFor } from '../src/cli/commands/capture.ts'
 import { loadMeeting, reconcile } from '../src/core/meeting.ts'
-import { recoverCapture, recoveryArguments } from '../src/capture/recover.ts'
+import { RECOVER_LOCK, recoverCapture, recoveryArguments, withRecoveryLock } from '../src/capture/recover.ts'
 import { isAlive, waitUntil } from '../src/core/proc.ts'
 import { channelsOf } from '../src/pipeline/pipeline.ts'
 import { meeting, meetingDir, tempDir } from './helpers.ts'
@@ -149,26 +149,32 @@ test('finds the monitor with pactl get-default-sink, or pactl info on older vers
   assert.equal(sourceSpecs('remote', ctxFor('linux'), { ffmpeg: 'ffmpeg' })[1]?.args.includes('@DEFAULT_MONITOR@'), true)
 })
 
-async function supervise(t: { after: (fn: () => void) => void }, platform: Platform, mode: 'remote' | 'in-person', options: { fail?: string; die?: string; stop?: 'file' | 'call' } = {}) {
+async function supervise(t: { after: (fn: () => void) => void }, platform: Platform, mode: 'remote' | 'in-person', options: { fail?: string; die?: string; silent?: string; stop?: 'file' | 'call' } = {}) {
   const ffmpeg = fakeTool(t, 'ffmpeg')
   const { dir } = meetingDir(t, { status: 'starting', mode })
   const logFile = path.join(dir, 'fake.log')
   process.env['FAKE_LOG'] = logFile
   if (options.fail) process.env['FAKE_FAIL'] = options.fail
   if (options.die) process.env['FAKE_DIE'] = options.die
+  if (options.silent) process.env['FAKE_SILENT'] = options.silent
   t.after(() => {
     delete process.env['FAKE_LOG']
     delete process.env['FAKE_FAIL']
     delete process.env['FAKE_DIE']
+    delete process.env['FAKE_SILENT']
   })
   const ctx = ctxFor(platform)
   const specs = sourceSpecs(mode, ctx, { ffmpeg, loopback: ffmpeg, monitor: 'sink.monitor' })
   const lines: string[] = []
   const supervisor = new CaptureSupervisor(dir, { ffmpeg, specs, live: { maxChunkSeconds: 10 }, liveWorker: null, log: (line) => lines.push(line), pollMs: 20, startTimeoutMs: 5_000, stopTimeoutMs: 3_000 })
   const running = supervisor.run()
+  if (options.silent) {
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    supervisor.requestStop()
+  }
   const started = await waitUntil(5, 0.02, () => loadMeeting(dir).status !== 'starting')
   assert.ok(started)
-  if (loadMeeting(dir).status === 'recording') {
+  if (loadMeeting(dir).status === 'recording' && !options.silent) {
     assert.equal(loadMeeting(dir).recorderPid, process.pid)
     await new Promise((resolve) => setTimeout(resolve, 1_200))
     if (options.die) await waitUntil(5, 0.02, () => loadMeeting(dir).status !== 'recording')
@@ -231,6 +237,54 @@ test('the supervisor keeps the audio and says which source stopped by itself', {
   assert.equal(stored.status, 'recorded')
   assert.match(stored.error ?? '', /The system capture stopped by itself/)
   assert.ok(existsSync(path.join(dir, 'recording.m4a')))
+})
+
+test('a normal stop with a source that never sent audio records silence for it', { skip: !posix && 'needs a POSIX shell' }, async (t) => {
+  const { dir, code, calls, lines } = await supervise(t, 'linux', 'remote', { silent: 'sink.monitor' })
+  assert.equal(code, 0, lines.join('\n'))
+  const stored = loadMeeting(dir)
+  assert.equal(stored.status, 'recorded')
+  assert.equal(stored.error, undefined)
+  assert.deepEqual(stored['syntheticTracks'], ['system'])
+  assert.ok(existsSync(path.join(dir, 'recording.m4a')))
+  assert.ok(!existsSync(path.join(dir, CAPTURE_DIR)))
+  const mux = calls.find((args) => args.includes('lavfi')) ?? []
+  assert.ok(mux.includes('anullsrc=r=48000:cl=stereo'))
+})
+
+test('recovery takes a per-meeting lock and leaves the meeting alone while another process holds it', { skip: !posix && 'needs a POSIX shell' }, async (t) => {
+  const ffmpeg = fakeTool(t, 'ffmpeg')
+  mkdirSync(path.dirname(process.env['RECAP_CONFIG_PATH'] ?? ''), { recursive: true })
+  writeFileSync(process.env['RECAP_CONFIG_PATH'] ?? '', JSON.stringify({ tools: { ffmpeg } }))
+  t.after(() => rmSync(process.env['RECAP_CONFIG_PATH'] ?? '', { force: true }))
+  const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  t.after(() => holder.kill('SIGKILL'))
+  const prepare = () => {
+    const located = meetingDir(t, { status: 'recording', mode: 'in-person', recorderPid: 999_999, startedAt: '2026-01-01T00:00:00Z' })
+    mkdirSync(path.join(located.dir, CAPTURE_DIR))
+    writeFileSync(path.join(located.dir, CAPTURE_DIR, 'mic.aac'), 'mic')
+    return located
+  }
+  const busy = prepare()
+  writeFileSync(path.join(busy.dir, RECOVER_LOCK), String(holder.pid))
+  const untouched = reconcile(busy.meeting, busy.dir)
+  assert.equal(untouched.status, 'recording')
+  assert.equal(loadMeeting(busy.dir).status, 'recording')
+  assert.ok(!existsSync(path.join(busy.dir, 'recording.m4a')))
+  assert.ok(existsSync(path.join(busy.dir, RECOVER_LOCK)))
+  const stale = prepare()
+  writeFileSync(path.join(stale.dir, RECOVER_LOCK), String(holder.pid))
+  const old = new Date(Date.now() - 20 * 60_000)
+  utimesSync(path.join(stale.dir, RECOVER_LOCK), old, old)
+  assert.equal(reconcile(stale.meeting, stale.dir).status, 'recorded')
+  assert.ok(!existsSync(path.join(stale.dir, RECOVER_LOCK)))
+  const orphan = prepare()
+  writeFileSync(path.join(orphan.dir, RECOVER_LOCK), '999999')
+  assert.equal(reconcile(orphan.meeting, orphan.dir).status, 'recorded')
+  assert.ok(existsSync(path.join(orphan.dir, 'recording.m4a')))
+  assert.deepEqual(withRecoveryLock(orphan.dir, () => 7), { ok: true, value: 7 })
+  writeFileSync(path.join(orphan.dir, RECOVER_LOCK), String(holder.pid))
+  assert.deepEqual(withRecoveryLock(orphan.dir, () => 7), { ok: false })
 })
 
 test('reconcile recovers capture/*.aac when the supervisor died', { skip: !posix && 'needs a POSIX shell' }, async (t) => {

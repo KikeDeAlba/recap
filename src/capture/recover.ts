@@ -3,12 +3,35 @@ import { rmSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { loadConfig } from '../core/config.ts'
 import { exists } from '../core/fsutil.ts'
+import { ProcessLock } from '../core/lock.ts'
 import type { Meeting, MeetingMode } from '../core/meeting.ts'
 import { expandTilde } from '../core/paths.ts'
 import type { Channel } from '../pipeline/transcript.ts'
 import { CAPTURE_DIR, CAPTURE_RATE, captureChannels, channelCount, encoderBitrate, intermediateFile, muxArguments } from './sources.ts'
 
 export const RECOVERED_FILE = 'recording.m4a'
+export const RECOVER_LOCK = 'recover.lock'
+export const STALE_LOCK_MS = 15 * 60_000
+
+export function withRecoveryLock<T>(dir: string, work: () => T, now: number = Date.now()): { ok: true; value: T } | { ok: false } {
+  const file = path.join(dir, RECOVER_LOCK)
+  try {
+    if (now - statSync(file).mtimeMs > STALE_LOCK_MS) rmSync(file, { force: true })
+  } catch {
+    undefined
+  }
+  let lock: ProcessLock
+  try {
+    lock = new ProcessLock(file, 'RECOVERY_BUSY', (pid) => `The capture of this meeting is being recovered by pid ${pid}`)
+  } catch {
+    return { ok: false }
+  }
+  try {
+    return { ok: true, value: work() }
+  } finally {
+    lock.release()
+  }
+}
 
 export interface Recovery {
   file: string
