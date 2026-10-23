@@ -8,7 +8,7 @@ import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { platformContext } from '@kikedealba/kit/platform'
 import { MeetingWatcher, describeSettled, watchDisabled } from '../src/cli/commands/watch.ts'
 import { saveMeeting, type Meeting } from '../src/core/meeting.ts'
-import { CLAUDE_PLUGIN, installAgents, integration, userSkillSources } from '../src/setup/integration.ts'
+import { ANTIGRAVITY_RULES, CLAUDE_PLUGIN, installAgents, integration, userSkillSources } from '../src/setup/integration.ts'
 import { PACKAGE_ROOT } from '../src/version.ts'
 import { meeting, sandboxEnv, tempDir } from './helpers.ts'
 
@@ -170,4 +170,21 @@ test('the watcher survives a missing root and can be turned off', (t) => {
   assert.equal(watchDisabled({ RECAP_MONITOR: '0' }), true)
   assert.equal(watchDisabled({}), false)
   assert.equal(describeSettled(meeting({ status: 'failed', error: 'no audio' }), '/x').message, 'recap: meeting "Daily" failed: no audio (m); run `recap process m` to resume (FYI: act on it only if this session is handling that meeting)')
+})
+
+test('Antigravity gets the skills and a short always-on rule pointing to the skill', { skip: process.platform === 'win32' && 'needs symlinks' }, async (t) => {
+  const dir = tempDir(t)
+  const env = sandboxEnv(dir)
+  const ctx = platformContext({ env, home: dir })
+  const rules = readFileSync(ANTIGRAVITY_RULES, 'utf8')
+  assert.ok(!rules.startsWith('---'))
+  assert.ok(rules.trim().split('\n').length <= 4)
+  assert.match(rules, /skill `recap`/)
+  const steps = await installAgents(['antigravity'], { ctx, homes: { antigravity: path.join(dir, '.gemini', 'config') }, exec: async () => '', locate: async () => null })
+  const root = path.join(env['XDG_DATA_HOME'] ?? '', 'kikedealba', 'agents', 'antigravity', 'recap')
+  const written = readFileSync(path.join(root, 'rules', 'recap.md'), 'utf8')
+  assert.match(written, /^---\ntrigger: always_on\n---\n/)
+  assert.ok(written.includes(rules.trim()))
+  assert.ok(existsSync(path.join(root, 'skills', 'recap', 'SKILL.md')))
+  assert.ok(steps.some((step) => step.agent === 'antigravity'))
 })

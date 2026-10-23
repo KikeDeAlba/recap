@@ -5,7 +5,6 @@ import { isRecord, parseJsonSafe } from '../core/json.ts'
 import { durationSeconds, type Meeting } from '../core/meeting.ts'
 import { formatDuration, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
-import { resultText } from './claude.ts'
 import { loadResource } from './resources.ts'
 import { meetingHeader } from './transcript.ts'
 
@@ -56,8 +55,7 @@ export function saveSummary(body: string, meeting: Meeting, dir: string): void {
   writeAtomic(path.join(dir, 'summary.md'), `# ${meeting.title}\n\n${meetingHeader(meeting)}\n\n${content}\n`)
 }
 
-export function extractSummary(output: string): string {
-  const result = resultText(output)
+export function extractSummary(result: string): string {
   const start = result.indexOf('## Resumen')
   return start === -1 ? result : result.slice(start)
 }

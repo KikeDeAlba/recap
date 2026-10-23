@@ -5,12 +5,11 @@ import { isoNow } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { asIntLoose, extractBetween, isRecord, swiftPretty } from '../core/json.ts'
 import { withDirectoryLockAsync } from '../core/lock.ts'
-import { home } from '../core/paths.ts'
 import type { Meeting } from '../core/meeting.ts'
 import { fold, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError, errorMessage } from '../errors.ts'
 import { entryPages, loadProjectContext, meetingProject, type PageRef, type ProjectContext } from '../live/context.ts'
-import { resultText, runClaude } from '../pipeline/claude.ts'
+import { runReadAgent } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import type { Channel } from '../pipeline/transcript.ts'
 import { callInkwell, type ToolCalling } from './client.ts'
@@ -265,8 +264,7 @@ export class ProposalGenerator {
     this.log = log
     this.claude =
       claude ??
-      (async (prompt, dirs) =>
-        resultText(await runClaude({ prompt, cwd: dirs[dirs.length - 1] ?? home(), config, tools: ['Read Grep Glob'], addDirs: dirs, model: config.summaryModel })))
+      ((prompt, dirs) => runReadAgent(prompt, dirs, config, { warn: log }))
   }
 
   candidates(meeting: Meeting, context: ProjectContext, linked: readonly PageRef[]): PageRef[] {

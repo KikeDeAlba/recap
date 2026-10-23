@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { agents } from '@kikedealba/kit'
 import type { Config } from '../core/config.ts'
 import { settingsOf } from '../core/config.ts'
 import { isoNow, minuteStamp, parseDate } from '../core/dates.ts'
 import type { Meeting } from '../core/meeting.ts'
 import { replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
-import { streamArguments, streamClaude } from '../pipeline/claude.ts'
+import { agentEnvironment, agentError, resolveAgent, streamArguments, streamClaude, type AgentDependencies } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import type { Channel, Segment } from '../pipeline/transcript.ts'
 import { performAsk, type PerformOptions } from './asking.ts'
@@ -92,12 +93,19 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
   return text
 }
 
+export function withReadableDirs(prompt: string, dirs: readonly string[]): string {
+  const unique = [...new Set(dirs)]
+  if (unique.length === 0) return prompt
+  return `${prompt}\n\nCarpetas que puedes leer para responder (solo lectura, rutas absolutas):\n${unique.map((dir) => `- ${dir}`).join('\n')}\n`
+}
+
 export async function runAsk(
   config: Config,
   request: AskRequest,
   context: ProjectContext,
   emit: (event: AskEvent) => void,
   onSpawn?: (pid: number) => void,
+  dependencies: AgentDependencies = {},
 ): Promise<AskOutcome> {
   const segments = loadLiveTranscript(request.dir)
   const explicit = request.question && trimmed(request.question).length > 0 ? trimmed(request.question) : null
@@ -106,19 +114,43 @@ export async function runAsk(
   const prompt = renderAskPrompt(loadResource('ask-prompt.md'), request, context, segments, notes)
   if (explicit !== null) emit({ type: 'question', text: explicit })
   const describer = new ProgressDescriber(context.docsRoot, existingRepos(context))
-  const args = streamArguments([allowedTools(context).join(' ')], askAddDirs(context), settingsOf(config).assistModel, AVAILABLE_TOOLS)
   const reducer = new AskStreamReducer(explicit)
-  const result = await streamClaude(
-    prompt,
-    request.dir,
-    config,
-    args,
-    (line) => {
-      for (const event of reducer.consume(line, describer)) emit(event)
-    },
-    onSpawn,
-  )
-  const { events, answer } = reducer.finish(result.status, result.stderr, randomUUID().toLowerCase(), request.now, transcriptWindow(segments, request.windowSeconds))
+  const choice = await resolveAgent(config, 'live', dependencies)
+  let status = 0
+  let stderr = ''
+  if (choice.agent === 'claude') {
+    const args = streamArguments([allowedTools(context).join(' ')], askAddDirs(context), settingsOf(config).assistModel, AVAILABLE_TOOLS)
+    const result = await (dependencies.stream ?? streamClaude)(
+      prompt,
+      request.dir,
+      choice.bin,
+      config,
+      args,
+      (line) => {
+        for (const event of reducer.consume(line, describer)) emit(event)
+      },
+      onSpawn,
+    )
+    status = result.status
+    stderr = result.stderr
+  } else {
+    const runner = dependencies.runner ?? agents.runHeadless
+    try {
+      const result = await runner({
+        agent: choice.agent,
+        bin: choice.bin,
+        prompt: withReadableDirs(prompt, askAddDirs(context)),
+        cwd: request.dir,
+        access: 'read',
+        env: agentEnvironment(choice.bin, config),
+        ...(onSpawn ? { onSpawn } : {}),
+      })
+      reducer.complete(result.text)
+    } catch (error) {
+      throw agentError(error, choice.agent)
+    }
+  }
+  const { events, answer } = reducer.finish(status, stderr, randomUUID().toLowerCase(), request.now, transcriptWindow(segments, request.windowSeconds))
   answer.auto = request.auto ? true : undefined
   if (request.questionMs !== undefined || request.channel !== undefined) {
     answer.questionMs = request.questionMs

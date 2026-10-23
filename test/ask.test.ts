@@ -8,7 +8,7 @@ import { AVAILABLE_TOOLS, NO_GIT_HISTORY, allowedTools, askAddDirs, renderAskPro
 import { emptyContext, loadProjectContext } from '../src/live/context.ts'
 import { jsonLine } from '../src/live/files.ts'
 import { AnswerAssembler, AskStreamReducer, ProgressDescriber, encodeAskEvent, parseSourcesBlock, parseStreamLine, type AskEvent } from '../src/live/stream.ts'
-import { streamArguments } from '../src/pipeline/claude.ts'
+import { streamArguments } from '../src/pipeline/agent.ts'
 import { loadResource } from '../src/pipeline/resources.ts'
 import { RecapError } from '../src/errors.ts'
 import { PACKAGE_ROOT } from '../src/version.ts'

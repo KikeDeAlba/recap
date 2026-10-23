@@ -19,7 +19,9 @@ recap setup --install-deps
 ```
 
 Requisitos: Node 24 o superior, ffmpeg, whisper.cpp (`whisper-cli`) y
-[Claude Code](https://claude.com/claude-code) para las minutas.
+un agente de código para las minutas: [Claude Code](https://claude.com/claude-code)
+por omisión, o Codex, Gemini CLI, Antigravity CLI (`agy`) u opencode con `agent` en la
+configuración.
 
 `recap setup` hace todo lo demás:
 
@@ -70,7 +72,7 @@ Para trabajar en el paquete: `pnpm install`, `pnpm test`, `pnpm typecheck` y
 - macOS 15 or later (ScreenCaptureKit microphone capture), Apple Silicon recommended
 - Xcode command line tools (Swift 6)
 - `brew install ffmpeg whisper-cpp`
-- [Claude Code](https://claude.com/claude-code) for summaries
+- [Claude Code](https://claude.com/claude-code) for summaries (or another coding agent, see `agent` below)
 
 ## Install with bita
 
@@ -323,7 +325,9 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
   "vocabulary": ["CoDi", "webhook", "PostgreSQL"],
   "summaryModel": "sonnet",
   "whisperModel": "~/.local/share/recap/models/ggml-large-v3-turbo.bin",
+  "agent": "claude",
   "live": {
+    "agent": "claude",
     "enabled": true,
     "openWindow": true,
     "proposals": true,
@@ -341,11 +345,12 @@ Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a
 }
 ```
 
+- `agent` is the coding agent that writes the summary, the proposals and the wrapup: `claude` (default), `codex`, `gemini`, `antigravity` or `opencode`, run headless and read-only through kit's `runHeadless`; recap writes every output file itself. `live.agent` overrides it for `recap ask` and question detection. Only Claude Code streams the live answer (`stream-json`). With any other agent `recap ask` loses, compared to Claude Code: the streamed deltas and the progress lines (the answer arrives at once), `--add-dir` (the docs root and the repositories are listed in the prompt as folders to read instead), the per-repository `recap repo-git` allowlist (the agent only has its own read-only mode, so git history may be unavailable) and `live.assistModel`. Question detection runs Claude Code with no tools (`--disallowedTools Read,Grep,Glob` on top of kit's read mode) and a 60 s timeout; summary, proposals and wrapup get 30 minutes; `recap ask` keeps no timeout of its own with Claude Code and kit's 10 minutes with the others. If the chosen agent is not installed, recap uses the first one it finds (Claude Code first) and prints `<agent> is not installed; using <other> instead` once per process. A prompt too long for the command line (agy on Windows) fails with `PROMPT_TOO_LONG`. `summaryModel`, `assistModel` and `autoAskModel` only apply to Claude Code; the other agents use their own default model. Failures come back as `AGENT_FAILED` (or `AGENT_OUTPUT` when the output has no answer).
 - `vocabulary` is passed to whisper as a glossary and fixes most misheard product names.
 - `tools` holds absolute paths to the external commands. `recap setup` fills it in, so the pipeline also works when it is started with a minimal `PATH` (for example from a menu bar app).
 - `recap setup` downloads the whisper and VAD models to `~/.local/share/recap/models`.
 - `live` controls the live assistant; every key is optional. `enabled` turns the live transcription on, `openWindow` lets bita-desktop open its floating window while recording, `proposals` turns the `proposals` stage on, `maxChunkSeconds` (5–60) is the longest live chunk, `assistModel` is the model for `recap ask` (Claude Code's default when unset), `autoAsk` turns question detection on, `autoAskModel` is the model that detects them (`haiku` by default), `autoAskMinSeconds` (3–120) is the shortest time between two detections, and `autoAskConcurrency` (1–6) is how many detected questions are answered at once.
-- `recap config get [<key>] --json` and `recap config set <key> <value> --json` read and change the `live.*` keys.
+- `recap config get [<key>] --json` and `recap config set <key> <value> --json` read and change the `live.*` keys, `live.agent` included (`default` clears it).
 
 Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`, `RECAP_NO_GAZE` (`1` turns off the gaze brain (search and saving) in `recap ask`, the live worker and the app).
 

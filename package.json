@@ -21,6 +21,7 @@
     "claude-code",
     "codex",
     "gemini-cli",
+    "antigravity",
     "opencode"
   ],
   "type": "module",
@@ -50,7 +51,7 @@
     "recap": "node src/bin/recap.ts"
   },
   "dependencies": {
-    "@kikedealba/kit": "^0.3.0"
+    "@kikedealba/kit": "^0.7.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
