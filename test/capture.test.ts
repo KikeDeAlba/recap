@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { launchArguments, liveWorkerCommand, outdatedAppWarning } from '../src/capture/capture.ts'
+import { launchArguments, launchRecorder, liveWorkerCommand, outdatedAppWarning } from '../src/capture/capture.ts'
 import { selfCommand } from '../src/core/self.ts'
 import { bitaSubscription, capabilities, manifest } from '../src/setup/integration.ts'
 import { successEnvelope } from '@kikedealba/kit/envelope'
@@ -80,5 +80,29 @@ test('falls back to the package path when the recap on PATH is another version o
     assert.deepEqual(registered.bin, selfCommand())
     assert.deepEqual(registered.subscribes[0]?.command, [...selfCommand(), 'bita-hook'])
     assert.deepEqual(await liveWorkerCommand(ctx), [...selfCommand(), 'live-worker'])
+  }
+})
+
+test('launchRecorder warns to update Recap.app only when it has no recap-capture', { skip: process.platform !== 'darwin' && 'Recap.app is macOS only' }, async (t) => {
+  const previous = process.env['RECAP_APP']
+  t.after(() => {
+    process.env['RECAP_APP'] = previous
+  })
+  for (const modern of [false, true]) {
+    const app = path.join(tempDir(t), 'Recap.app')
+    const macos = path.join(app, 'Contents', 'MacOS')
+    mkdirSync(macos, { recursive: true })
+    writeFileSync(path.join(macos, 'recap'), '')
+    if (modern) writeFileSync(path.join(macos, 'recap-capture'), '')
+    process.env['RECAP_APP'] = app
+    const warnings: string[] = []
+    const launches: string[][] = []
+    await launchRecorder('/m', (line) => warnings.push(line), async (args) => {
+      launches.push(args)
+      return { status: 0, signal: null, stdout: '', stderr: '' }
+    })
+    assert.deepEqual(warnings, modern ? [] : [outdatedAppWarning(app)])
+    assert.equal(launches.length, 1)
+    assert.ok(launches[0]?.some((arg) => arg.startsWith('RECAP_LIVE_WORKER=')))
   }
 })

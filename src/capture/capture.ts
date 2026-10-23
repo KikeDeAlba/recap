@@ -70,14 +70,14 @@ export async function launchArguments(app: string, dir: string, log: string, mod
   return ['-g', '-n', '-a', app, ...env, '--stdout', log, '--stderr', log, '--args', ...command]
 }
 
-export async function launchRecorder(dir: string, warn: (line: string) => void = (line) => process.stderr.write(`recap: ${line}\n`)): Promise<void> {
+export async function launchRecorder(dir: string, warn: (line: string) => void = (line) => process.stderr.write(`recap: ${line}\n`), open: (args: string[]) => ReturnType<typeof exec> = (args) => exec('/usr/bin/open', args)): Promise<void> {
   const launcher = await findCapture()
   if (!launcher) throw captureUnavailable()
   const log = path.join(dir, 'recorder.log')
   if (launcher.kind === 'app') {
     const modern = hasCaptureBinary(launcher.app)
     if (!modern) warn(outdatedAppWarning(launcher.app))
-    const result = await exec('/usr/bin/open', await launchArguments(launcher.app, dir, log, modern))
+    const result = await open(await launchArguments(launcher.app, dir, log, modern))
     if (result.status !== 0) throw new RecapError('LAUNCH_FAILED', `Cannot launch ${path.basename(launcher.app)}: ${trimmed(result.stderr)}`)
     return
   }
