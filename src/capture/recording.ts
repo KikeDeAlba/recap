@@ -8,7 +8,7 @@ import { MeetingStore, isActiveStatus, loadMeeting, recordingPath, updateMeeting
 import { isAlive, signalProcess, signalTree, waitUntil } from '../core/proc.ts'
 import { RecapError } from '../errors.ts'
 import { selectRecorder, type Recorder } from './recorder.ts'
-import { recoverCapture, recoveryNote } from './recover.ts'
+import { applyRecovery, recoverCapture } from './recover.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
@@ -99,7 +99,8 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
       item.status = exists(recordingPath(dir, item.mode)) ? 'recorded' : 'failed'
       item.endedAt = isoNow()
       delete item.recorderPid
-      item.error = recovery ? recoveryNote(recovery) : 'The recorder exited without closing the file cleanly'
+      item.error = 'The recorder exited without closing the file cleanly'
+      applyRecovery(item, recovery)
     })
   }
   return current

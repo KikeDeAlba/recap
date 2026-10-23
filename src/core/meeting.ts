@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { RecapError, errorMessage } from '../errors.ts'
-import { recoverCapture, recoveryNote } from '../capture/recover.ts'
+import { applyRecovery, recoverCapture } from '../capture/recover.ts'
 import type { Config } from './config.ts'
 import { rootDir } from './config.ts'
 import { idStamp, isoDate, isoNow, parseDate } from './dates.ts'
@@ -173,7 +173,8 @@ export function reconcile(meeting: Meeting, dir: string): Meeting {
       current.status = size > 0 && current.startedAt !== undefined ? 'recorded' : 'failed'
       current.endedAt = modified ? isoDate(modified) : isoNow()
       delete current.recorderPid
-      current.error = recovery ? recoveryNote(recovery) : 'The recorder exited without closing the file cleanly'
+      current.error = 'The recorder exited without closing the file cleanly'
+      applyRecovery(current, recovery)
     })
   } catch {
     return meeting

@@ -21,7 +21,7 @@ import {
 import { CaptureSupervisor, leadingSilence } from '../src/capture/worker.ts'
 import { liveWorkerFor } from '../src/cli/commands/capture.ts'
 import { loadMeeting, reconcile } from '../src/core/meeting.ts'
-import { recoverCapture, recoveryNote } from '../src/capture/recover.ts'
+import { recoverCapture, recoveryArguments } from '../src/capture/recover.ts'
 import { isAlive, waitUntil } from '../src/core/proc.ts'
 import { channelsOf } from '../src/pipeline/pipeline.ts'
 import { meeting, meetingDir, tempDir } from './helpers.ts'
@@ -247,14 +247,44 @@ test('reconcile recovers capture/*.aac when the supervisor died', { skip: !posix
   assert.match(recovered.error ?? '', /recovered recording\.m4a from capture\/ with mic and system/)
   assert.ok(existsSync(path.join(dir, 'recording.m4a')))
   assert.ok(!existsSync(path.join(dir, CAPTURE_DIR)))
+  assert.equal(recovered['syntheticTracks'], undefined)
   const partial = meetingDir(t, { status: 'recording', mode: 'remote', recorderPid: 999_999, startedAt: '2026-01-01T00:00:00Z' })
   mkdirSync(path.join(partial.dir, CAPTURE_DIR))
   writeFileSync(path.join(partial.dir, CAPTURE_DIR, 'mic.aac'), 'mic')
-  const note = recoverCapture(partial.dir, 'remote', ffmpeg)
-  assert.deepEqual(note && { channels: note.channels, missing: note.missing }, { channels: ['mic'], missing: ['system'] })
-  assert.match(note ? recoveryNote(note) : '', /system track is missing/)
-  assert.ok(existsSync(path.join(partial.dir, CAPTURE_DIR, 'mic.aac')))
+  const filled = reconcile(partial.meeting, partial.dir)
+  assert.equal(filled.status, 'recorded')
+  assert.deepEqual(filled['syntheticTracks'], ['system'])
+  assert.deepEqual(loadMeeting(partial.dir)['syntheticTracks'], ['system'])
+  assert.match(filled.error ?? '', /system track is synthetic silence/)
+  assert.ok(existsSync(path.join(partial.dir, 'recording.m4a')))
+  assert.ok(!existsSync(path.join(partial.dir, CAPTURE_DIR)))
   assert.equal(recoverCapture(partial.dir, 'remote', ffmpeg), null)
+})
+
+test('recovery fills a missing track with silence in its own format', () => {
+  const both = recoveryArguments('/m', ['mic', 'system'], ['mic', 'system'], '/m/recording.m4a')
+  assert.ok(!both.includes('lavfi'))
+  const noSystem = recoveryArguments('/m', ['mic', 'system'], ['mic'], '/m/recording.m4a')
+  assert.deepEqual(noSystem.slice(5, 12), ['-i', path.join('/m', 'capture', 'mic.aac'), '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-map'])
+  assert.deepEqual(noSystem.slice(noSystem.indexOf('-c:a:0')), ['-c:a:0', 'copy', '-c:a:1', 'aac', '-b:a:1', '96k', '-ac:a:1', '2', '-ar:a:1', '48000', '-shortest', '-movflags', '+faststart', '/m/recording.m4a'])
+  const noMic = recoveryArguments('/m', ['mic', 'system'], ['system'], '/m/recording.m4a')
+  assert.equal(noMic[noMic.indexOf('lavfi') + 2], 'anullsrc=r=48000:cl=mono')
+  assert.deepEqual(noMic.slice(noMic.indexOf('-c:a:0'), noMic.indexOf('-c:a:0') + 10), ['-c:a:0', 'aac', '-b:a:0', '64k', '-ac:a:0', '1', '-ar:a:0', '48000', '-c:a:1', 'copy'])
+})
+
+test('integration: real ffmpeg recovers a remote capture with a synthetic system track', { skip: (!posix || realFfmpeg() === null) && 'needs ffmpeg on PATH' }, (t) => {
+  const ffmpeg = realFfmpeg() ?? 'ffmpeg'
+  const { dir } = meetingDir(t, { status: 'recording', mode: 'remote' })
+  mkdirSync(path.join(dir, CAPTURE_DIR))
+  const mic = path.join(dir, CAPTURE_DIR, 'mic.aac')
+  assert.equal(spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=f=440:r=48000:d=2', '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-f', 'adts', mic]).status, 0)
+  const recovery = recoverCapture(dir, 'remote', ffmpeg)
+  assert.deepEqual(recovery?.synthetic, ['system'])
+  const probe = spawnSync(path.join(path.dirname(ffmpeg), 'ffprobe'), ['-v', 'error', '-show_entries', 'stream=codec_name,channels,sample_rate,duration', '-of', 'csv=p=0', path.join(dir, 'recording.m4a')], { encoding: 'utf8' })
+  const streams = probe.stdout.trim().split('\n').map((line) => line.split(','))
+  assert.deepEqual(streams.map(([codec, rate, channels]) => [codec, rate, channels]), [['aac', '48000', '1'], ['aac', '48000', '2']])
+  const [micDuration, systemDuration] = streams.map((stream) => Number(stream[3]))
+  assert.ok(Math.abs((micDuration ?? 0) - (systemDuration ?? 0)) < 0.2, probe.stdout)
 })
 
 test('stopping the ffmpeg recorder writes stop.request and interrupts the supervisor', { skip: !posix && 'needs POSIX signals' }, async (t) => {
