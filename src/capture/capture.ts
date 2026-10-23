@@ -58,20 +58,26 @@ export function hasCaptureBinary(app: string): boolean {
   return exists(path.join(app, 'Contents', 'MacOS', 'recap-capture'))
 }
 
+export function outdatedAppWarning(app: string): string {
+  return `${path.basename(app)} at ${app} has no recap-capture and runs its legacy recorder; update it with \`recap setup\` (it downloads the current Recap.app from the GitHub release).`
+}
+
 export async function launchArguments(app: string, dir: string, log: string, modern = hasCaptureBinary(app), ctx?: PlatformContext): Promise<string[]> {
-  if (!modern) return ['-g', '-n', '-a', app, '--stdout', log, '--stderr', log, '--args', 'record', dir]
   const worker = await liveWorkerCommand(ctx)
   const searchPath = workerPath(worker, ctx?.env)
   const env = ['--env', `RECAP_LIVE_WORKER=${JSON.stringify(worker)}`, ...(searchPath === null ? [] : ['--env', `PATH=${searchPath}`])]
-  return ['-g', '-n', '-a', app, ...env, '--stdout', log, '--stderr', log, '--args', 'capture', 'record', dir]
+  const command = modern ? ['capture', 'record', dir] : ['record', dir]
+  return ['-g', '-n', '-a', app, ...env, '--stdout', log, '--stderr', log, '--args', ...command]
 }
 
-export async function launchRecorder(dir: string): Promise<void> {
+export async function launchRecorder(dir: string, warn: (line: string) => void = (line) => process.stderr.write(`recap: ${line}\n`)): Promise<void> {
   const launcher = await findCapture()
   if (!launcher) throw captureUnavailable()
   const log = path.join(dir, 'recorder.log')
   if (launcher.kind === 'app') {
-    const result = await exec('/usr/bin/open', await launchArguments(launcher.app, dir, log))
+    const modern = hasCaptureBinary(launcher.app)
+    if (!modern) warn(outdatedAppWarning(launcher.app))
+    const result = await exec('/usr/bin/open', await launchArguments(launcher.app, dir, log, modern))
     if (result.status !== 0) throw new RecapError('LAUNCH_FAILED', `Cannot launch ${path.basename(launcher.app)}: ${trimmed(result.stderr)}`)
     return
   }

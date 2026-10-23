@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { launchArguments, liveWorkerCommand } from '../src/capture/capture.ts'
+import { launchArguments, liveWorkerCommand, outdatedAppWarning } from '../src/capture/capture.ts'
 import { selfCommand } from '../src/core/self.ts'
 import { bitaSubscription, capabilities, manifest } from '../src/setup/integration.ts'
 import { successEnvelope } from '@kikedealba/kit/envelope'
@@ -33,7 +33,17 @@ test('launches the capture subcommand of Recap.app with the TypeScript live work
   assert.equal(args.filter((arg) => arg === '--env').length, 1)
   assert.deepEqual(args.slice(-4), ['--args', 'capture', 'record', '/m'])
   assert.deepEqual(await liveWorkerCommand(ctx), [...selfCommand(), 'live-worker'])
-  assert.deepEqual((await launchArguments('/Applications/Recap.app', '/m', '/m/recorder.log', false, ctx)).slice(-3), ['--args', 'record', '/m'])
+})
+
+test('a Recap.app without recap-capture still gets the TypeScript live worker and an update warning', async (t) => {
+  const { ctx } = shimContext(t, '0.0.0-other')
+  const args = await launchArguments('/Applications/Recap.app', '/m', '/m/recorder.log', false, ctx)
+  assert.equal(args[args.indexOf('--env') + 1], `RECAP_LIVE_WORKER=${JSON.stringify(await liveWorkerCommand(ctx))}`)
+  assert.deepEqual(args.slice(-3), ['--args', 'record', '/m'])
+  assert.ok(!args.includes('capture'))
+  const warning = outdatedAppWarning('/Applications/Recap.app')
+  assert.match(warning, /no recap-capture/)
+  assert.match(warning, /recap setup/)
 })
 
 test('the manifest subscribes to bita meeting events only when it can record', async (t) => {
