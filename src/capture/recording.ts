@@ -1,13 +1,13 @@
 import { rmSync } from 'node:fs'
 import type { Config } from '../core/config.ts'
-import { loadConfig } from '../core/config.ts'
+import { loadConfig, settingsOf } from '../core/config.ts'
 import { clearActive, currentRecording, loadActive, saveActive } from '../core/active.ts'
 import { isoNow } from '../core/dates.ts'
 import { exists } from '../core/fsutil.ts'
 import { MeetingStore, isActiveStatus, loadMeeting, recordingPath, updateMeeting, type BitaTarget, type Located, type Meeting, type MeetingMode } from '../core/meeting.ts'
 import { isAlive, signalProcess, waitUntil } from '../core/proc.ts'
 import { RecapError } from '../errors.ts'
-import { launchRecorder } from './capture.ts'
+import { selectRecorder, type Recorder } from './recorder.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
@@ -22,10 +22,12 @@ export async function startRecording(options: {
   bita?: BitaTarget | undefined
   timeout: number
   config?: Config
+  recorder?: Recorder
 }): Promise<Located> {
   const current = currentRecording()
   if (current) throw new RecapError('ALREADY_RECORDING', `"${current.meeting.title}" is already being recorded. Stop it first.`)
   const config = options.config ?? loadConfig()
+  const recorder = options.recorder ?? selectRecorder(undefined, config)
   const store = new MeetingStore(config)
   const { meeting, dir } = store.create({
     title: options.title.length === 0 ? defaultTitle(options.mode) : options.title,
@@ -35,7 +37,7 @@ export async function startRecording(options: {
     bita: options.bita,
   })
   try {
-    await launchRecorder(dir)
+    await recorder.launch(dir, { live: settingsOf(config).enabled })
   } catch (error) {
     rmSync(dir, { recursive: true, force: true })
     throw error
@@ -68,10 +70,10 @@ export async function startRecording(options: {
   return { meeting: latest, dir }
 }
 
-async function stopRecorder(meeting: Meeting, dir: string, timeout: number): Promise<Meeting> {
+async function stopRecorder(meeting: Meeting, dir: string, timeout: number, recorder: Recorder = selectRecorder()): Promise<Meeting> {
   const pid = meeting.recorderPid
   if (pid === undefined) throw new RecapError('RECORDER_UNKNOWN', `The recorder process for "${meeting.title}" is unknown`)
-  signalProcess(pid, 'SIGINT')
+  await recorder.stop(meeting, dir)
   let current = meeting
   const stopped = await waitUntil(timeout, 0.25, () => {
     try {

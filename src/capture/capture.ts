@@ -32,12 +32,16 @@ export async function findCapture(): Promise<CaptureLauncher | null> {
   return binary ? { kind: 'binary', binary } : null
 }
 
-export function captureUnavailable(): RecapError {
-  const hint =
-    process.platform === 'darwin'
-      ? 'Install Recap.app with `recap setup` (it downloads it from the GitHub release), or set RECAP_APP.'
-      : 'Recording is only available on macOS for now. Record with any app and process the file with `recap import <file>`.'
-  return new RecapError('CAPTURE_UNAVAILABLE', 'The recorder (recap-capture) is not available on this machine', { hint })
+export function captureUnavailable(missing: readonly string[] = [], detail?: string): RecapError {
+  if (process.platform === 'darwin') {
+    return new RecapError('CAPTURE_UNAVAILABLE', 'The recorder (recap-capture) is not available on this machine', {
+      hint: 'Install Recap.app with `recap setup` (it downloads it from the GitHub release), or set RECAP_APP.',
+    })
+  }
+  const what = missing.length > 0 ? `: missing ${missing.join(', ')}` : ''
+  return new RecapError('CAPTURE_UNAVAILABLE', `The recorder is not ready on this machine${what}`, {
+    hint: detail ?? 'Run `recap setup` to check what the recorder needs, or record with any app and process the file with `recap import <file>`.',
+  })
 }
 
 export async function liveWorkerCommand(ctx?: PlatformContext): Promise<string[]> {

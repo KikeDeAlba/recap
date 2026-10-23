@@ -6,7 +6,7 @@ import { RecapError } from '../errors.ts'
 import type { Config } from './config.ts'
 import { configFile, expandTilde, home } from './paths.ts'
 
-export type ToolName = 'ffmpeg' | 'ffprobe' | 'whisper-cli' | 'claude' | 'bita'
+export type ToolName = 'ffmpeg' | 'ffprobe' | 'whisper-cli' | 'claude' | 'bita' | 'pactl'
 
 export const CHECKED_TOOLS: ToolName[] = ['ffmpeg', 'whisper-cli', 'claude', 'bita']
 
@@ -25,6 +25,8 @@ export function installHint(tool: ToolName, platform: NodeJS.Platform = process.
       return 'npm install -g @anthropic-ai/claude-code'
     case 'bita':
       return 'npm install -g @kikedealba/bita'
+    case 'pactl':
+      return 'sudo pacman -S libpulse (Debian/Ubuntu: sudo apt install pulseaudio-utils)'
   }
 }
 
