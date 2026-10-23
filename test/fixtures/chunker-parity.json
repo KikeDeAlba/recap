@@ -1,0 +1,551 @@
+{
+  "cases" : [
+    {
+      "expected" : [
+        {
+          "count" : 105600,
+          "endMs" : 6600,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        },
+        {
+          "count" : 80160,
+          "endMs" : 11610,
+          "hasSpeech" : true,
+          "seq" : 2,
+          "startMs" : 6600
+        },
+        {
+          "count" : 6240,
+          "endMs" : 12000,
+          "hasSpeech" : false,
+          "seq" : 3,
+          "startMs" : 11610
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 96000
+            },
+            {
+              "amp" : 33,
+              "kind" : "alternate",
+              "samples" : 16000
+            },
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 64000
+            },
+            {
+              "amp" : 33,
+              "kind" : "alternate",
+              "samples" : 16000
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : true,
+      "name" : "cuts at silence once the chunk is long enough",
+      "options" : {
+        "maxSeconds" : 20,
+        "minSeconds" : 5
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 80000,
+          "endMs" : 5000,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 32000
+            },
+            {
+              "amp" : 0,
+              "kind" : "alternate",
+              "samples" : 16000
+            },
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 32000
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : true,
+      "name" : "does not cut short pauses before the minimum",
+      "options" : {
+        "maxSeconds" : 20,
+        "minSeconds" : 5
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 240480,
+          "endMs" : 15030,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9830,
+              "kind" : "square",
+              "period" : 80,
+              "samples" : 240000
+            },
+            {
+              "amp" : 655,
+              "kind" : "square",
+              "period" : 80,
+              "samples" : 4800
+            },
+            {
+              "amp" : 9830,
+              "kind" : "square",
+              "period" : 80,
+              "samples" : 240000
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : false,
+      "name" : "cuts long speech at the quietest point",
+      "options" : {
+        "maxSeconds" : 20,
+        "minSeconds" : 5
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 97440,
+          "endMs" : 6090,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        },
+        {
+          "count" : 70080,
+          "endMs" : 10470,
+          "hasSpeech" : true,
+          "seq" : 2,
+          "startMs" : 6090
+        },
+        {
+          "count" : 70080,
+          "endMs" : 14850,
+          "hasSpeech" : true,
+          "seq" : 3,
+          "startMs" : 10470
+        },
+        {
+          "count" : 70080,
+          "endMs" : 19230,
+          "hasSpeech" : true,
+          "seq" : 4,
+          "startMs" : 14850
+        },
+        {
+          "count" : 70080,
+          "endMs" : 23610,
+          "hasSpeech" : true,
+          "seq" : 5,
+          "startMs" : 19230
+        },
+        {
+          "count" : 102240,
+          "endMs" : 30000,
+          "hasSpeech" : true,
+          "seq" : 6,
+          "startMs" : 23610
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 480000
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : true,
+      "name" : "never exceeds the maximum with uniform audio",
+      "options" : {
+        "maxSeconds" : 8,
+        "minSeconds" : 5
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 80160,
+          "endMs" : 5010,
+          "hasSpeech" : false,
+          "seq" : 1,
+          "startMs" : 0
+        },
+        {
+          "count" : 80160,
+          "endMs" : 10020,
+          "hasSpeech" : false,
+          "seq" : 2,
+          "startMs" : 5010
+        },
+        {
+          "count" : 31680,
+          "endMs" : 12000,
+          "hasSpeech" : false,
+          "seq" : 3,
+          "startMs" : 10020
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 0,
+              "kind" : "alternate",
+              "samples" : 192000
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : true,
+      "name" : "marks silent chunks",
+      "options" : {
+        "maxSeconds" : 20,
+        "minSeconds" : 5
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 32000,
+          "endMs" : 2000,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        },
+        {
+          "count" : 16000,
+          "endMs" : 11000,
+          "hasSpeech" : true,
+          "seq" : 2,
+          "startMs" : 10000
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 32000
+            }
+          ],
+          "startMs" : 0
+        },
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9830,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 16000
+            }
+          ],
+          "startMs" : 10000
+        }
+      ],
+      "flush" : true,
+      "name" : "starts a new chunk after a gap",
+      "options" : {
+        "maxSeconds" : 20,
+        "minSeconds" : 5
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 105600,
+          "endMs" : 6600,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        },
+        {
+          "count" : 93120,
+          "endMs" : 12420,
+          "hasSpeech" : true,
+          "seq" : 2,
+          "startMs" : 6600
+        },
+        {
+          "count" : 160320,
+          "endMs" : 22440,
+          "hasSpeech" : true,
+          "seq" : 3,
+          "startMs" : 12420
+        },
+        {
+          "count" : 56960,
+          "endMs" : 26000,
+          "hasSpeech" : true,
+          "seq" : 4,
+          "startMs" : 22440
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 441,
+          "segments" : [
+            {
+              "amp" : 120,
+              "kind" : "noise",
+              "samples" : 32000,
+              "seed" : 7
+            },
+            {
+              "amp" : 6000,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 64000
+            },
+            {
+              "amp" : 150,
+              "kind" : "noise",
+              "samples" : 12800,
+              "seed" : 11
+            },
+            {
+              "amp" : 3000,
+              "kind" : "square",
+              "period" : 64,
+              "samples" : 80000
+            },
+            {
+              "amp" : 90,
+              "kind" : "noise",
+              "samples" : 24000,
+              "seed" : 3
+            },
+            {
+              "amp" : 12000,
+              "kind" : "triangle",
+              "period" : 51,
+              "samples" : 144000
+            },
+            {
+              "amp" : 60,
+              "kind" : "noise",
+              "samples" : 6400,
+              "seed" : 5
+            },
+            {
+              "amp" : 2000,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 52800
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : true,
+      "name" : "defaults with speech, pauses and background noise",
+      "options" : {
+
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 185760,
+          "endMs" : 11860,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 250
+        },
+        {
+          "count" : 144000,
+          "endMs" : 20860,
+          "hasSpeech" : true,
+          "seq" : 2,
+          "startMs" : 11860
+        },
+        {
+          "count" : 38240,
+          "endMs" : 23250,
+          "hasSpeech" : true,
+          "seq" : 3,
+          "startMs" : 20860
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 1600,
+          "segments" : [
+            {
+              "amp" : 900,
+              "kind" : "noise",
+              "samples" : 96000,
+              "seed" : 42
+            },
+            {
+              "amp" : 14000,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 80000
+            },
+            {
+              "amp" : 900,
+              "kind" : "noise",
+              "samples" : 32000,
+              "seed" : 43
+            },
+            {
+              "amp" : 14000,
+              "kind" : "triangle",
+              "period" : 97,
+              "samples" : 112000
+            },
+            {
+              "amp" : 900,
+              "kind" : "noise",
+              "samples" : 48000,
+              "seed" : 44
+            }
+          ],
+          "startMs" : 250
+        }
+      ],
+      "flush" : true,
+      "name" : "adapts the noise floor to loud background",
+      "options" : {
+        "maxSeconds" : 12
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 65760,
+          "endMs" : 4110,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 0
+        },
+        {
+          "count" : 8037,
+          "endMs" : 4612,
+          "hasSpeech" : false,
+          "seq" : 2,
+          "startMs" : 4110
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 997,
+          "segments" : [
+            {
+              "amp" : 8000,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 59200
+            },
+            {
+              "amp" : 2,
+              "kind" : "alternate",
+              "samples" : 14400
+            },
+            {
+              "amp" : 8000,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 197
+            }
+          ],
+          "startMs" : 0
+        }
+      ],
+      "flush" : true,
+      "name" : "odd blocks and partial final frame",
+      "options" : {
+        "maxSeconds" : 10,
+        "minSeconds" : 3,
+        "silenceSeconds" : 0.4
+      }
+    },
+    {
+      "expected" : [
+        {
+          "count" : 320,
+          "endMs" : 520,
+          "hasSpeech" : true,
+          "seq" : 1,
+          "startMs" : 500
+        }
+      ],
+      "feeds" : [
+        {
+          "block" : 160,
+          "segments" : [
+            {
+              "amp" : 9000,
+              "kind" : "triangle",
+              "period" : 73,
+              "samples" : 320
+            }
+          ],
+          "startMs" : 500
+        }
+      ],
+      "flush" : true,
+      "name" : "tiny tail only",
+      "options" : {
+
+      }
+    }
+  ]
+}

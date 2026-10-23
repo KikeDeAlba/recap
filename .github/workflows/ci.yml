@@ -32,3 +32,25 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm test
+
+  loopback:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: native/loopback
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/loopback
+
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+      - run: cargo test --locked

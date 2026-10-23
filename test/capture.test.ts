@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { launchArguments, liveWorkerCommand } from '../src/capture/capture.ts'
+import { launchArguments, launchRecorder, liveWorkerCommand, outdatedAppWarning } from '../src/capture/capture.ts'
 import { selfCommand } from '../src/core/self.ts'
 import { bitaSubscription, capabilities, manifest } from '../src/setup/integration.ts'
 import { successEnvelope } from '@kikedealba/kit/envelope'
@@ -33,7 +33,17 @@ test('launches the capture subcommand of Recap.app with the TypeScript live work
   assert.equal(args.filter((arg) => arg === '--env').length, 1)
   assert.deepEqual(args.slice(-4), ['--args', 'capture', 'record', '/m'])
   assert.deepEqual(await liveWorkerCommand(ctx), [...selfCommand(), 'live-worker'])
-  assert.deepEqual((await launchArguments('/Applications/Recap.app', '/m', '/m/recorder.log', false, ctx)).slice(-3), ['--args', 'record', '/m'])
+})
+
+test('a Recap.app without recap-capture still gets the TypeScript live worker and an update warning', async (t) => {
+  const { ctx } = shimContext(t, '0.0.0-other')
+  const args = await launchArguments('/Applications/Recap.app', '/m', '/m/recorder.log', false, ctx)
+  assert.equal(args[args.indexOf('--env') + 1], `RECAP_LIVE_WORKER=${JSON.stringify(await liveWorkerCommand(ctx))}`)
+  assert.deepEqual(args.slice(-3), ['--args', 'record', '/m'])
+  assert.ok(!args.includes('capture'))
+  const warning = outdatedAppWarning('/Applications/Recap.app')
+  assert.match(warning, /no recap-capture/)
+  assert.match(warning, /recap setup/)
 })
 
 test('the manifest subscribes to bita meeting events only when it can record', async (t) => {
@@ -70,5 +80,29 @@ test('falls back to the package path when the recap on PATH is another version o
     assert.deepEqual(registered.bin, selfCommand())
     assert.deepEqual(registered.subscribes[0]?.command, [...selfCommand(), 'bita-hook'])
     assert.deepEqual(await liveWorkerCommand(ctx), [...selfCommand(), 'live-worker'])
+  }
+})
+
+test('launchRecorder warns to update Recap.app only when it has no recap-capture', { skip: process.platform !== 'darwin' && 'Recap.app is macOS only' }, async (t) => {
+  const previous = process.env['RECAP_APP']
+  t.after(() => {
+    process.env['RECAP_APP'] = previous
+  })
+  for (const modern of [false, true]) {
+    const app = path.join(tempDir(t), 'Recap.app')
+    const macos = path.join(app, 'Contents', 'MacOS')
+    mkdirSync(macos, { recursive: true })
+    writeFileSync(path.join(macos, 'recap'), '')
+    if (modern) writeFileSync(path.join(macos, 'recap-capture'), '')
+    process.env['RECAP_APP'] = app
+    const warnings: string[] = []
+    const launches: string[][] = []
+    await launchRecorder('/m', (line) => warnings.push(line), async (args) => {
+      launches.push(args)
+      return { status: 0, signal: null, stdout: '', stderr: '' }
+    })
+    assert.deepEqual(warnings, modern ? [] : [outdatedAppWarning(app)])
+    assert.equal(launches.length, 1)
+    assert.ok(launches[0]?.some((arg) => arg.startsWith('RECAP_LIVE_WORKER=')))
   }
 })

@@ -15,7 +15,7 @@ import { RecapError, errorMessage } from '../errors.ts'
 import { INKWELL_CAPABILITIES, StageSkipped, inkwellForStage } from '../bita/client.ts'
 import { ProposalGenerator } from '../bita/proposals.ts'
 import { runWrapup } from '../bita/wrapup.ts'
-import { runSummaryClaude } from './claude.ts'
+import { runSummaryAgent } from './agent.ts'
 import { STAGES, allStagesSatisfied, stageApplies, stageComplete, stageIsOptional, stageSkipped, type Stage } from './stages.ts'
 import { extractSummary, saveSummary, summaryPromptFor, type FrameInfo } from './summary.ts'
 import { mergeTranscripts, orderedSegment, parseWhisper, transcriptMarkdown, type Channel, type Segment } from './transcript.ts'
@@ -265,7 +265,7 @@ export class Pipeline {
 
   async summarize(meeting: Meeting): Promise<void> {
     const prompt = summaryPromptFor(meeting, this.dir)
-    const output = await runSummaryClaude(prompt, this.dir, this.config)
+    const output = await runSummaryAgent(prompt, this.dir, this.config, { warn: this.log })
     saveSummary(extractSummary(output), meeting, this.dir)
   }
 

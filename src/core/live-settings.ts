@@ -1,3 +1,4 @@
+import { agents } from '@kikedealba/kit'
 import { RecapError } from '../errors.ts'
 import { trimmed } from './text.ts'
 
@@ -7,6 +8,7 @@ export interface LiveConfig {
   proposals?: boolean | undefined
   maxChunkSeconds?: number | undefined
   assistModel?: string | undefined
+  agent?: agents.HeadlessAgent | undefined
   autoAsk?: boolean | undefined
   autoAskModel?: string | undefined
   autoAskMinSeconds?: number | undefined
@@ -33,6 +35,7 @@ export interface LiveSettings {
   proposals: boolean
   maxChunkSeconds: number
   assistModel: string | null
+  agent: agents.HeadlessAgent | null
   autoAsk: boolean
   autoAskModel: string
   autoAskMinSeconds: number
@@ -62,6 +65,7 @@ export function liveSettings(config: LiveConfig | undefined): LiveSettings {
     proposals: bool(config?.proposals, true),
     maxChunkSeconds: clamp(int(config?.maxChunkSeconds, DEFAULTS.maxChunkSeconds), RANGES.chunkSeconds),
     assistModel: model(config?.assistModel),
+    agent: agents.isHeadlessAgent(config?.agent) ? config.agent : null,
     autoAsk: bool(config?.autoAsk, true),
     autoAskModel: model(config?.autoAskModel) ?? DEFAULTS.autoAskModel,
     autoAskMinSeconds: clamp(int(config?.autoAskMinSeconds, DEFAULTS.autoAskMinSeconds), RANGES.autoAskSeconds),
@@ -76,6 +80,7 @@ export const CONFIG_KEYS = [
   'live.openWindow',
   'live.proposals',
   'live.assistModel',
+  'live.agent',
   'live.maxChunkSeconds',
   'live.autoAsk',
   'live.autoAskModel',
@@ -102,6 +107,8 @@ export function configValue(key: ConfigKey, live: LiveConfig | undefined): Confi
       return settings.proposals
     case 'live.assistModel':
       return settings.assistModel
+    case 'live.agent':
+      return settings.agent
     case 'live.maxChunkSeconds':
       return settings.maxChunkSeconds
     case 'live.autoAsk':
@@ -144,6 +151,13 @@ function optionalModel(raw: string): string | undefined {
   return ['', 'null', 'none', 'default'].includes(text.toLowerCase()) ? undefined : text
 }
 
+function parseAgent(raw: string): agents.HeadlessAgent | undefined {
+  const text = trimmed(raw).toLowerCase()
+  if (['', 'null', 'none', 'default'].includes(text)) return undefined
+  if (agents.isHeadlessAgent(text)) return text
+  throw new RecapError('CONFIG_VALUE_INVALID', `live.agent takes one of ${agents.HEADLESS_AGENTS.join(', ')} or default`)
+}
+
 export function applyConfigValue(key: ConfigKey, raw: string, live: LiveConfig | undefined): LiveConfig {
   const next: LiveConfig = { ...(live ?? {}) }
   switch (key) {
@@ -158,6 +172,9 @@ export function applyConfigValue(key: ConfigKey, raw: string, live: LiveConfig |
       break
     case 'live.assistModel':
       next.assistModel = optionalModel(raw)
+      break
+    case 'live.agent':
+      next.agent = parseAgent(raw)
       break
     case 'live.maxChunkSeconds':
       next.maxChunkSeconds = parseRange(key, raw, RANGES.chunkSeconds, 'seconds')

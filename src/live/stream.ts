@@ -397,6 +397,11 @@ export class AskStreamReducer {
     return events
   }
 
+  complete(text: string): void {
+    this.resultText = text
+    this.resultError = false
+  }
+
   private questionEvent(): AskEvent[] {
     if (this.questionSent || this.assembler.question === null) return []
     this.questionSent = true
@@ -413,7 +418,7 @@ export class AskStreamReducer {
     }
     if (this.resultError || (status !== 0 && this.resultText === null)) {
       const detail = this.resultText ?? trimmed(stderr)
-      throw new RecapError('CLAUDE_FAILED', detail.length === 0 ? `claude exited with status ${status}` : suffix(detail, 500))
+      throw new RecapError('AGENT_FAILED', detail.length === 0 ? `claude exited with status ${status}` : suffix(detail, 500))
     }
     let canonical = this.assembler
     if (this.resultText !== null && trimmed(this.resultText).length > 0) {
@@ -423,7 +428,7 @@ export class AskStreamReducer {
       canonical = fresh
     }
     const answer = buildAnswer(id, askedAt, this.explicitQuestion, canonical, segments)
-    if (answer.answer.length === 0) throw new RecapError('CLAUDE_FAILED', 'claude returned an empty answer')
+    if (answer.answer.length === 0) throw new RecapError('AGENT_FAILED', 'the agent returned an empty answer')
     if (!this.deltaSent) events.push({ type: 'delta', text: answer.answer })
     if (!this.questionSent && answer.question.length > 0) {
       this.questionSent = true

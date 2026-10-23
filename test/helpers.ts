@@ -62,13 +62,16 @@ export function sandboxEnv(dir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.P
     RECAP_STATE_DIR: path.join(dir, 'state'),
     RECAP_DATA_DIR: path.join(dir, 'data'),
     RECAP_APP: path.join(dir, 'NoRecap.app'),
+    RECAP_CAPTURE: path.join(dir, 'no-recap-capture'),
+    RECAP_LOOPBACK: path.join(dir, 'no-recap-loopback.exe'),
+    RECAP_PACTL: path.join(dir, 'no-pactl'),
     ...extra,
   }
 }
 
 export function useSandbox(dir: string): void {
   const env = sandboxEnv(dir)
-  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'KIT_REGISTRY_DIR', 'RECAP_ROOT', 'RECAP_CONFIG_PATH', 'RECAP_STATE_DIR', 'RECAP_DATA_DIR', 'RECAP_APP']) {
+  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'KIT_REGISTRY_DIR', 'RECAP_ROOT', 'RECAP_CONFIG_PATH', 'RECAP_STATE_DIR', 'RECAP_DATA_DIR', 'RECAP_APP', 'RECAP_CAPTURE', 'RECAP_LOOPBACK', 'RECAP_PACTL']) {
     process.env[key] = env[key]
   }
 }

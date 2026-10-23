@@ -2,7 +2,6 @@ import Foundation
 
 package struct LiveWorkerLaunch: Equatable {
     package static let environmentKey = "RECAP_LIVE_WORKER"
-    package static let defaultExecutableName = "recap"
     package static let defaultArguments = ["live-worker"]
     package static let disabledValues: Set<String> = ["none", "off", "false", "0"]
 
@@ -18,11 +17,13 @@ package struct LiveWorkerLaunch: Equatable {
         arguments + [meetingDir.path]
     }
 
-    package static func resolve(option: String?, environment: [String: String], executable: URL?) throws -> LiveWorkerLaunch? {
+    package static func resolve(option: String?, environment: [String: String]) throws -> LiveWorkerLaunch? {
         let configured = [option, environment[environmentKey]]
             .compactMap { $0?.trimmed }
             .first { !$0.isEmpty }
-        guard let configured else { return try sibling(of: executable) }
+        guard let configured else {
+            throw RecapError("LIVE_WORKER_MISSING", "No live worker configured: pass --live-worker or set \(environmentKey) (the recap CLI sets it when it launches the recorder), or set it to none to record without live transcription")
+        }
         if disabledValues.contains(configured.lowercased()) { return nil }
         if configured.hasPrefix("[") { return try parseCommand(configured) }
         return LiveWorkerLaunch(executable: try locate(configured), arguments: defaultArguments)
@@ -34,20 +35,6 @@ package struct LiveWorkerLaunch: Equatable {
             throw RecapError("LIVE_WORKER_INVALID", "The live worker command must be a JSON array of strings with the executable first, got \(raw)")
         }
         return LiveWorkerLaunch(executable: try locate(first), arguments: Array(command.dropFirst()))
-    }
-
-    private static func sibling(of executable: URL?) throws -> LiveWorkerLaunch {
-        guard let executable else {
-            throw RecapError("LIVE_WORKER_MISSING", "Cannot locate the current executable to find \(defaultExecutableName)")
-        }
-        guard executable.lastPathComponent == CaptureTool.name else {
-            return LiveWorkerLaunch(executable: executable, arguments: defaultArguments)
-        }
-        let candidate = executable.deletingLastPathComponent().appending(path: defaultExecutableName)
-        guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
-            throw RecapError("LIVE_WORKER_MISSING", "\(candidate.path) not found; pass --live-worker or set \(environmentKey)")
-        }
-        return LiveWorkerLaunch(executable: candidate, arguments: defaultArguments)
     }
 
     private static func locate(_ path: String) throws -> URL {

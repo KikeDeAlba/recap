@@ -1,0 +1,19 @@
+[package]
+name = "recap-loopback"
+version = "0.13.0"
+edition = "2021"
+license = "MIT"
+description = "Captures the default Windows output (loopback) or microphone as raw PCM for recap"
+publish = false
+
+[[bin]]
+name = "recap-loopback"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.26"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

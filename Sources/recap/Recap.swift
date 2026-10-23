@@ -10,6 +10,7 @@ struct Recap: ParsableCommand {
         abstract: "Record meetings, transcribe them locally and summarize them with Claude Code.",
         version: version,
         subcommands: [
+            // TODO(recap): remove the Swift pipeline subcommands and sources; the TypeScript CLI owns the pipeline.
             StartCommand.self,
             StopCommand.self,
             DiscardCommand.self,

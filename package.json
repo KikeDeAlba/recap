@@ -1,6 +1,6 @@
 {
   "name": "@kikedealba/recap",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Meeting recorder CLI: local transcription with whisper.cpp, minutes written by Claude Code, live answers, bita timers and inkwell docs.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
@@ -21,6 +21,7 @@
     "claude-code",
     "codex",
     "gemini-cli",
+    "antigravity",
     "opencode"
   ],
   "type": "module",
@@ -34,6 +35,7 @@
   "files": [
     "dist",
     "Resources/*.md",
+    "assets/*.json",
     "skills",
     "README.md",
     "LICENSE"
@@ -49,7 +51,7 @@
     "recap": "node src/bin/recap.ts"
   },
   "dependencies": {
-    "@kikedealba/kit": "^0.3.0"
+    "@kikedealba/kit": "^0.7.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

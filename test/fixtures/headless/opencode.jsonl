@@ -1,0 +1,4 @@
+{"type": "step_start", "sessionID": "ses_recap", "part": {"type": "step-start"}}
+{"type": "text", "sessionID": "ses_recap", "part": {"type": "text", "text": "Aquí va:\n\n"}}
+{"type": "text", "sessionID": "ses_recap", "part": {"type": "text", "text": "## Resumen\nSe revisó el avance."}}
+{"type": "step_finish", "sessionID": "ses_recap", "part": {"type": "step-finish"}}

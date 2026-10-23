@@ -69,9 +69,9 @@ test('parses showinfo times and caps frames evenly', () => {
   assert.equal(picked.at(-1), 99)
 })
 
-test('extracts the summary from claude output and rejects errors', () => {
-  assert.equal(extractSummary('{"type":"result","is_error":false,"result":"Aquí va:\\n\\n## Resumen\\nTodo bien."}'), '## Resumen\nTodo bien.')
-  assert.throws(() => extractSummary('{"type":"result","is_error":true,"result":"Credit balance is too low"}'), RecapError)
+test('extracts the summary from the agent answer', () => {
+  assert.equal(extractSummary('Aquí va:\n\n## Resumen\nTodo bien.'), '## Resumen\nTodo bien.')
+  assert.equal(extractSummary('Sin encabezado.'), 'Sin encabezado.')
 })
 
 test('slugs fold accents and punctuation', () => {
