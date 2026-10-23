@@ -49,3 +49,49 @@ jobs:
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  loopback:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the tag and the manifest have to agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(jq -r .version package.json)"
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' native/loopback/Cargo.toml | head -1)"
+          if [ "$tag" != "$manifest" ] || [ "$tag" != "$crate" ]; then
+            echo "the release is $tag, package.json says $manifest and Cargo.toml says $crate" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/loopback
+
+      - run: cargo build --release --locked
+        working-directory: native/loopback
+
+      - name: pack the zip and its checksum
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset="recap-loopback-${version}-windows-x64.zip"
+          mkdir -p dist
+          cp native/loopback/target/release/recap-loopback.exe dist/
+          (cd dist && 7z a -tzip "$asset" recap-loopback.exe)
+          (cd dist && sha256sum "$asset" > "$asset.sha256")
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: attach them to the release
+        run: gh release upload "$GITHUB_REF_NAME" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
