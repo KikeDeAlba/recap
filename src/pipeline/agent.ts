@@ -18,11 +18,26 @@ export interface AgentChoice {
   fallback: boolean
 }
 
+export type ClaudeStreamer = (
+  prompt: string,
+  cwd: string,
+  bin: string,
+  config: Config,
+  args: readonly string[],
+  onLine: (line: string) => void,
+  onSpawn?: (pid: number) => void,
+) => Promise<ExecResult>
+
 export interface AgentDependencies {
   runner?: HeadlessRunner | undefined
+  stream?: ClaudeStreamer | undefined
   pick?: AgentPicker | undefined
   warn?: ((line: string) => void) | undefined
 }
+
+export const PIPELINE_TIMEOUT_MS = 30 * 60_000
+export const DETECT_TIMEOUT_MS = 60_000
+export const KIT_CLAUDE_READ_TOOLS: readonly string[] = ['Read', 'Grep', 'Glob']
 
 export const ISOLATION = ['--setting-sources', 'project', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands']
 
@@ -45,6 +60,13 @@ export function streamArguments(tools: readonly string[], addDirs: readonly stri
   return ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...claudeOptions(tools, addDirs, model, restrictTools)]
 }
 
+export function headlessToolArguments(restrictTools: readonly string[] | null | undefined): string[] {
+  if (!restrictTools) return []
+  const added = restrictTools.filter((tool) => !KIT_CLAUDE_READ_TOOLS.includes(tool))
+  const removed = KIT_CLAUDE_READ_TOOLS.filter((tool) => !restrictTools.includes(tool))
+  return [...(added.length > 0 ? ['--tools', added.join(',')] : []), ...(removed.length > 0 ? ['--disallowedTools', removed.join(',')] : [])]
+}
+
 export function preferredAgent(config: Config, scope: AgentScope): HeadlessAgent {
   return scope === 'live' ? liveAgent(config) : configuredAgent(config)
 }
@@ -55,6 +77,12 @@ export function fallbackWarning(choice: AgentChoice): string {
 
 function defaultWarn(line: string): void {
   process.stderr.write(`${line}\n`)
+}
+
+const warnedFallbacks = new Set<string>()
+
+export function resetFallbackWarnings(): void {
+  warnedFallbacks.clear()
 }
 
 export async function resolveAgent(config: Config, scope: AgentScope, dependencies: AgentDependencies = {}): Promise<AgentChoice> {
@@ -68,7 +96,11 @@ export async function resolveAgent(config: Config, scope: AgentScope, dependenci
     })
   }
   const choice = { agent: picked.agent, bin: picked.bin, preferred, fallback: picked.agent !== preferred }
-  if (choice.fallback) (dependencies.warn ?? defaultWarn)(fallbackWarning(choice))
+  const key = `${choice.preferred}>${choice.agent}`
+  if (choice.fallback && !warnedFallbacks.has(key)) {
+    warnedFallbacks.add(key)
+    ;(dependencies.warn ?? defaultWarn)(fallbackWarning(choice))
+  }
   return choice
 }
 
@@ -81,6 +113,12 @@ export function agentEnvironment(bin: string, config: Config): NodeJS.ProcessEnv
 
 export function agentError(error: unknown, agent: HeadlessAgent): RecapError {
   if (error instanceof RecapError) return error
+  if (error instanceof agents.HeadlessError && error.code === 'PROMPT_TOO_LONG') {
+    return new RecapError(
+      'PROMPT_TOO_LONG',
+      `El texto de la reunión es demasiado largo para pasárselo a ${agent} en la línea de comandos. Elige otro agente en la clave \`agent\` (o \`live.agent\`) de la configuración de recap, por ejemplo \`claude\`.`,
+    )
+  }
   if (error instanceof agents.HeadlessError) {
     const code = error.code === 'PARSE' ? 'AGENT_OUTPUT' : error.code === 'UNAVAILABLE' ? 'DEPENDENCY_MISSING' : 'AGENT_FAILED'
     return new RecapError(code, `${agent}: ${suffix(trimmed(error.message), 500)}`)
@@ -97,6 +135,7 @@ export interface AgentCall {
   addDirs: readonly string[]
   model: string | null | undefined
   restrictTools?: readonly string[] | null
+  timeoutMs?: number | undefined
   dependencies?: AgentDependencies | undefined
 }
 
@@ -110,7 +149,8 @@ export async function runAgent(call: AgentCall): Promise<string> {
     cwd: call.cwd,
     access: 'read',
     env: agentEnvironment(choice.bin, call.config),
-    ...(claude ? { extraArgs: claudeOptions(call.tools, call.addDirs, call.model, call.restrictTools) } : {}),
+    ...(call.timeoutMs !== undefined ? { timeoutMs: call.timeoutMs } : {}),
+    ...(claude ? { extraArgs: [...claudeOptions(call.tools, call.addDirs, call.model), ...headlessToolArguments(call.restrictTools)] } : {}),
   }
   const runner = call.dependencies?.runner ?? agents.runHeadless
   let text: string
@@ -124,22 +164,14 @@ export async function runAgent(call: AgentCall): Promise<string> {
 }
 
 export function runSummaryAgent(prompt: string, dir: string, config: Config, dependencies?: AgentDependencies): Promise<string> {
-  return runAgent({ prompt, cwd: dir, config, tools: ['Read'], addDirs: [dir], model: config.summaryModel, dependencies })
+  return runAgent({ prompt, cwd: dir, config, tools: ['Read'], addDirs: [dir], model: config.summaryModel, timeoutMs: PIPELINE_TIMEOUT_MS, dependencies })
 }
 
 export function runReadAgent(prompt: string, dirs: readonly string[], config: Config, dependencies?: AgentDependencies): Promise<string> {
-  return runAgent({ prompt, cwd: dirs[dirs.length - 1] ?? home(), config, tools: ['Read Grep Glob'], addDirs: dirs, model: config.summaryModel, dependencies })
+  return runAgent({ prompt, cwd: dirs[dirs.length - 1] ?? home(), config, tools: ['Read Grep Glob'], addDirs: dirs, model: config.summaryModel, timeoutMs: PIPELINE_TIMEOUT_MS, dependencies })
 }
 
-export async function streamClaude(
-  prompt: string,
-  cwd: string,
-  bin: string,
-  config: Config,
-  args: readonly string[],
-  onLine: (line: string) => void,
-  onSpawn?: (pid: number) => void,
-): Promise<ExecResult> {
+export const streamClaude: ClaudeStreamer = async (prompt, cwd, bin, config, args, onLine, onSpawn) => {
   let buffer = ''
   const result = await exec(bin, args, {
     input: prompt,

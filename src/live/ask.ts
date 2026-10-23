@@ -93,6 +93,12 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
   return text
 }
 
+export function withReadableDirs(prompt: string, dirs: readonly string[]): string {
+  const unique = [...new Set(dirs)]
+  if (unique.length === 0) return prompt
+  return `${prompt}\n\nCarpetas que puedes leer para responder (solo lectura, rutas absolutas):\n${unique.map((dir) => `- ${dir}`).join('\n')}\n`
+}
+
 export async function runAsk(
   config: Config,
   request: AskRequest,
@@ -112,9 +118,9 @@ export async function runAsk(
   const choice = await resolveAgent(config, 'live', dependencies)
   let status = 0
   let stderr = ''
-  if (choice.agent === 'claude' && !dependencies.runner) {
+  if (choice.agent === 'claude') {
     const args = streamArguments([allowedTools(context).join(' ')], askAddDirs(context), settingsOf(config).assistModel, AVAILABLE_TOOLS)
-    const result = await streamClaude(
+    const result = await (dependencies.stream ?? streamClaude)(
       prompt,
       request.dir,
       choice.bin,
@@ -133,7 +139,7 @@ export async function runAsk(
       const result = await runner({
         agent: choice.agent,
         bin: choice.bin,
-        prompt,
+        prompt: withReadableDirs(prompt, askAddDirs(context)),
         cwd: request.dir,
         access: 'read',
         env: agentEnvironment(choice.bin, config),
