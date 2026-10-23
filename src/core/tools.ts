@@ -53,7 +53,12 @@ function ctx() {
   return platformContext({ home: home() })
 }
 
+export const TOOL_OVERRIDES: Partial<Record<ToolName, string>> = { pactl: 'RECAP_PACTL' }
+
 export async function locateTool(tool: ToolName, config: Config): Promise<string | null> {
+  const key = TOOL_OVERRIDES[tool]
+  const override = key ? process.env[key] : undefined
+  if (override) return isExecutable(override) ? override : null
   const configured = configuredPath(tool, config)
   if (configured) {
     const file = expandTilde(configured)

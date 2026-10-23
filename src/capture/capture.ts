@@ -15,7 +15,8 @@ export type CaptureLauncher = { kind: 'app'; app: string } | { kind: 'binary'; b
 
 export function appCandidates(): string[] {
   const override = process.env['RECAP_APP']
-  return [...(override ? [override] : []), path.join(home(), 'Applications', 'Recap.app'), '/Applications/Recap.app']
+  if (override) return [override]
+  return [path.join(home(), 'Applications', 'Recap.app'), '/Applications/Recap.app']
 }
 
 export function findRecapApp(): string | null {
@@ -27,7 +28,7 @@ export async function findCapture(): Promise<CaptureLauncher | null> {
   const app = findRecapApp()
   if (app) return { kind: 'app', app }
   const override = process.env['RECAP_CAPTURE']
-  if (override && exists(override)) return { kind: 'binary', binary: override }
+  if (override) return exists(override) ? { kind: 'binary', binary: override } : null
   const binary = await which('recap-capture')
   return binary ? { kind: 'binary', binary } : null
 }
