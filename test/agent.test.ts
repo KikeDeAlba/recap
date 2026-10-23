@@ -19,7 +19,7 @@ const FILES: Record<HeadlessAgent, string> = {
   claude: 'claude.json',
   codex: 'codex.jsonl',
   gemini: 'gemini.json',
-  antigravity: 'antigravity.json',
+  antigravity: 'antigravity.jsonl',
   opencode: 'opencode.jsonl',
 }
 
@@ -129,7 +129,7 @@ test('agent failures become AGENT_FAILED and empty answers are rejected', async 
   await assert.rejects(runAgent({ prompt: 'p', cwd: '/', config: { agent: 'codex' }, tools: [], addDirs: [], model: null, dependencies: failing.dependencies }), (error: unknown) => {
     return error instanceof RecapError && error.code === 'AGENT_FAILED' && error.message.includes('usage limit')
   })
-  const empty = fakeRun('antigravity', () => '{"conversation_id":"c","status":"SUCCESS","response":"   "}')
+  const empty = fakeRun('antigravity', () => '{"event":"result","result":{"conversation_id":"c","status":"SUCCESS","response":"   ","num_turns":1}}\n')
   await assert.rejects(runAgent({ prompt: 'p', cwd: '/', config: { agent: 'antigravity' }, tools: [], addDirs: [], model: null, dependencies: empty.dependencies }), RecapError)
 })
 
