@@ -82,7 +82,7 @@ export async function setupCommand(argv: string[]): Promise<number> {
     const launcher = recorder.kind === 'mac-app' ? await findCapture() : null
     checks.push({
       name: 'capture',
-      ok: capture,
+      ok: capture || recorder.kind !== 'mac-app',
       detail: launcher
         ? launcher.kind === 'app'
           ? launcher.app
@@ -93,7 +93,7 @@ export async function setupCommand(argv: string[]): Promise<number> {
             : 'ffmpeg with PulseAudio input and pactl'
           : recorder.kind === 'mac-app'
             ? 'Recap.app is missing; run `recap setup` without --skip-app'
-            : `missing ${readiness.missing.join(', ')}: ${readiness.hint ?? 'run `recap setup`'}`,
+            : `optional, recording is off until you install ${readiness.missing.join(', ')}: ${readiness.hint ?? 'run `recap setup`'}; \`recap import <file>\` works without it`,
     })
     checks.push({ name: 'root', ok: true, detail: rootDir(config) })
 
