@@ -7,7 +7,7 @@ import { RecapError } from '../errors.ts'
 import type { Config } from './config.ts'
 import { configFile, expandTilde, home } from './paths.ts'
 
-export type ToolName = 'ffmpeg' | 'ffprobe' | 'whisper-cli' | 'bita' | agents.HeadlessAgent
+export type ToolName = 'ffmpeg' | 'ffprobe' | 'whisper-cli' | 'bita' | 'pactl' | agents.HeadlessAgent
 
 export function checkedTools(config: Config): ToolName[] {
   const wanted = [...new Set([configuredAgent(config), liveAgent(config)])]
@@ -44,6 +44,8 @@ export function installHint(tool: ToolName, platform: NodeJS.Platform = process.
           : 'brew install whisper-cpp (Homebrew on Linux) or build whisper.cpp from https://github.com/ggml-org/whisper.cpp'
     case 'bita':
       return 'npm install -g @kikedealba/bita'
+    case 'pactl':
+      return 'sudo pacman -S libpulse (Debian/Ubuntu: sudo apt install pulseaudio-utils)'
     default:
       return AGENT_HINTS[tool]
   }
@@ -72,7 +74,12 @@ function ctx() {
   return platformContext({ home: home() })
 }
 
+export const TOOL_OVERRIDES: Partial<Record<ToolName, string>> = { pactl: 'RECAP_PACTL' }
+
 export async function locateTool(tool: ToolName, config: Config): Promise<string | null> {
+  const key = TOOL_OVERRIDES[tool]
+  const override = key ? process.env[key] : undefined
+  if (override) return isExecutable(override) ? override : null
   const configured = configuredPath(tool, config)
   if (configured) {
     const file = expandTilde(configured)

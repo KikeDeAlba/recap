@@ -1,13 +1,14 @@
 import { rmSync } from 'node:fs'
 import type { Config } from '../core/config.ts'
-import { loadConfig } from '../core/config.ts'
+import { loadConfig, settingsOf } from '../core/config.ts'
 import { clearActive, currentRecording, loadActive, saveActive } from '../core/active.ts'
 import { isoNow } from '../core/dates.ts'
 import { exists } from '../core/fsutil.ts'
 import { MeetingStore, isActiveStatus, loadMeeting, recordingPath, updateMeeting, type BitaTarget, type Located, type Meeting, type MeetingMode } from '../core/meeting.ts'
-import { isAlive, signalProcess, waitUntil } from '../core/proc.ts'
+import { isAlive, signalProcess, signalTree, waitUntil } from '../core/proc.ts'
 import { RecapError } from '../errors.ts'
-import { launchRecorder } from './capture.ts'
+import { selectRecorder, type Recorder } from './recorder.ts'
+import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
@@ -22,10 +23,12 @@ export async function startRecording(options: {
   bita?: BitaTarget | undefined
   timeout: number
   config?: Config
+  recorder?: Recorder
 }): Promise<Located> {
   const current = currentRecording()
   if (current) throw new RecapError('ALREADY_RECORDING', `"${current.meeting.title}" is already being recorded. Stop it first.`)
   const config = options.config ?? loadConfig()
+  const recorder = options.recorder ?? selectRecorder(undefined, config)
   const store = new MeetingStore(config)
   const { meeting, dir } = store.create({
     title: options.title.length === 0 ? defaultTitle(options.mode) : options.title,
@@ -35,7 +38,7 @@ export async function startRecording(options: {
     bita: options.bita,
   })
   try {
-    await launchRecorder(dir)
+    await recorder.launch(dir, { live: settingsOf(config).enabled })
   } catch (error) {
     rmSync(dir, { recursive: true, force: true })
     throw error
@@ -53,7 +56,7 @@ export async function startRecording(options: {
     throw new RecapError('RECORDER_FAILED', latest.error ?? `The recorder failed to start. See ${path.join(dir, 'recorder.log')}`)
   }
   if (!settled || latest.status !== 'recording') {
-    if (latest.recorderPid !== undefined) signalProcess(latest.recorderPid, 'SIGKILL')
+    if (latest.recorderPid !== undefined) forceKill(recorder, latest.recorderPid)
     try {
       updateMeeting(dir, (item) => {
         item.status = 'failed'
@@ -68,10 +71,15 @@ export async function startRecording(options: {
   return { meeting: latest, dir }
 }
 
-async function stopRecorder(meeting: Meeting, dir: string, timeout: number): Promise<Meeting> {
+function forceKill(recorder: Recorder, pid: number): void {
+  if (recorder.kind === 'mac-app') signalProcess(pid, 'SIGKILL')
+  else signalTree(pid, 'SIGKILL')
+}
+
+async function stopRecorder(meeting: Meeting, dir: string, timeout: number, recorder: Recorder = selectRecorder()): Promise<Meeting> {
   const pid = meeting.recorderPid
   if (pid === undefined) throw new RecapError('RECORDER_UNKNOWN', `The recorder process for "${meeting.title}" is unknown`)
-  signalProcess(pid, 'SIGINT')
+  await recorder.stop(meeting, dir)
   let current = meeting
   const stopped = await waitUntil(timeout, 0.25, () => {
     try {
@@ -81,13 +89,20 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number): Pro
     }
     return current.status === 'recorded' || current.status === 'failed' || !isAlive(pid)
   })
-  if (!stopped) signalProcess(pid, 'SIGKILL')
+  if (!stopped) {
+    forceKill(recorder, pid)
+    if (recorder.kind !== 'mac-app') await waitUntil(5, 0.1, () => !isAlive(pid))
+  }
   if (isActiveStatus(current.status)) {
+    const mode = current.mode
+    const attempt = recorder.kind === 'mac-app' ? null : withRecoveryLock(dir, () => recoverCapture(dir, mode))
+    const recovery = attempt?.ok ? attempt.value : null
     current = updateMeeting(dir, (item) => {
       item.status = exists(recordingPath(dir, item.mode)) ? 'recorded' : 'failed'
       item.endedAt = isoNow()
       delete item.recorderPid
       item.error = 'The recorder exited without closing the file cleanly'
+      applyRecovery(item, recovery)
     })
   }
   return current

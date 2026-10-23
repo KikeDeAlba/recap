@@ -6,18 +6,42 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  npm:
+  verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+  npm:
+    needs: [verify, loopback]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -34,18 +58,78 @@ jobs:
             exit 1
           fi
 
-      - run: pnpm typecheck
+      - name: embed the helper checksum
+        env:
+          LOOPBACK_ASSET: ${{ needs.loopback.outputs.asset }}
+          LOOPBACK_SHA256: ${{ needs.loopback.outputs.sha256 }}
+        run: |
+          jq -n --arg asset "$LOOPBACK_ASSET" --arg sha "$LOOPBACK_SHA256" '{($asset): $sha}' > assets/loopback-checksums.json
+          cat assets/loopback-checksums.json
 
-      - run: pnpm test
+      - name: the checksums file has to ship in the tarball
+        run: |
+          npm pack --dry-run --json | jq -e '.[0].files | map(.path) | index("assets/loopback-checksums.json")' > /dev/null
 
       - name: install the tarball the way a person would, and run it
+        env:
+          LOOPBACK_SHA256: ${{ needs.loopback.outputs.sha256 }}
         run: |
           tarball="$(npm pack --pack-destination "$RUNNER_TEMP" --silent | tail -1)"
           npm install -g --prefix "$RUNNER_TEMP/prefix" "$RUNNER_TEMP/$tarball"
           "$RUNNER_TEMP/prefix/bin/recap" capabilities --json
           test -f "$RUNNER_TEMP/prefix/lib/node_modules/@kikedealba/recap/Resources/summary-prompt.md"
           test -f "$RUNNER_TEMP/prefix/lib/node_modules/@kikedealba/recap/skills/recap/SKILL.md"
+          grep -q "$LOOPBACK_SHA256" "$RUNNER_TEMP/prefix/lib/node_modules/@kikedealba/recap/assets/loopback-checksums.json"
 
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  loopback:
+    needs: verify
+    runs-on: windows-latest
+    outputs:
+      asset: ${{ steps.pack.outputs.asset }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: the tag and the manifest have to agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(jq -r .version package.json)"
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' native/loopback/Cargo.toml | head -1)"
+          if [ "$tag" != "$manifest" ] || [ "$tag" != "$crate" ]; then
+            echo "the release is $tag, package.json says $manifest and Cargo.toml says $crate" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - run: cargo build --release --locked
+        working-directory: native/loopback
+
+      - name: pack the zip and its checksum
+        id: pack
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset="recap-loopback-${version}-windows-x64.zip"
+          mkdir -p dist
+          cp native/loopback/target/release/recap-loopback.exe dist/
+          (cd dist && 7z a -tzip "$asset" recap-loopback.exe)
+          (cd dist && sha256sum "$asset" > "$asset.sha256")
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 "dist/$asset.sha256")" >> "$GITHUB_OUTPUT"
+
+      - name: attach them to the release
+        run: gh release upload "$GITHUB_REF_NAME" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

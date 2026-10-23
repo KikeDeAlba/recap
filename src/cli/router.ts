@@ -1,10 +1,11 @@
 import { agents } from '@kikedealba/kit'
 import { readManifest } from '@kikedealba/kit/registry'
 import { usageError } from '../errors.ts'
-import { findCapture } from '../capture/capture.ts'
+import { selectRecorder } from '../capture/recorder.ts'
 import { capabilities } from '../setup/integration.ts'
 import { VERSION } from '../version.ts'
 import { askCommand } from './commands/ask.ts'
+import { captureWorkerCommand } from './commands/capture.ts'
 import { configCommand } from './commands/config.ts'
 import { bitaHookCommand } from './commands/hook.ts'
 import { liveWorkerCommand } from './commands/live.ts'
@@ -22,7 +23,7 @@ type Command = (argv: string[]) => Promise<number>
 async function capabilitiesCommand(argv: string[]): Promise<number> {
   return output('capabilities', argv.includes('--json'), async () => {
     const registered = await readManifest('recap').catch(() => null)
-    const capture = (await findCapture()) !== null
+    const capture = (await selectRecorder().check()).ok
     const data = { name: 'recap', version: VERSION, envelope: 1, capabilities: capabilities(capture), emits: [] as string[] }
     return { data: { ...data, ...(registered ? { subscribes: registered.subscribes } : {}) }, text: data.capabilities.join('\n') }
   })
@@ -51,6 +52,7 @@ const COMMANDS: Record<string, Command> = {
   config: configCommand,
   watch: watchCommand,
   'live-worker': liveWorkerCommand,
+  'capture-worker': captureWorkerCommand,
   'repo-git': repoGitCommand,
   capabilities: capabilitiesCommand,
 }
@@ -59,7 +61,7 @@ export function help(): string {
   return [
     `recap ${VERSION} — record meetings, transcribe them locally and summarize them with a coding agent (Claude Code by default)`,
     '',
-    'Recording (macOS, through Recap.app):',
+    'Recording (macOS through Recap.app; Linux with ffmpeg and PulseAudio/PipeWire; Windows with ffmpeg and recap-loopback):',
     '  recap start --remote|--in-person [title] [--bita-entry id] [--display id] [--timeout s]',
     '  recap stop [--no-process] [--timeout s]',
     '  recap discard [meeting] [--bita-entry id]',
