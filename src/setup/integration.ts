@@ -72,6 +72,8 @@ export function userSkillSources(): agents.SkillSource[] {
   return names.map((name) => ({ name, dir: path.join(dir, name) }))
 }
 
+export const ANTIGRAVITY_RULES = path.join(PACKAGE_ROOT, 'Resources', 'antigravity-rules.md')
+
 export function integration(): agents.AgentIntegration {
   return {
     tool: 'recap',
@@ -84,6 +86,7 @@ export function integration(): agents.AgentIntegration {
         allow: ['Bash(recap status:*)', 'Bash(recap list:*)', 'Bash(recap show:*)', 'Bash(recap wait:*)', 'Bash(recap prompt:*)', 'Bash(recap --version)'],
       },
     },
+    antigravity: { rules: ANTIGRAVITY_RULES },
   }
 }
 
