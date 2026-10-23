@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { agents } from '@kikedealba/kit'
 import { RecapError, errorMessage } from '../errors.ts'
 import { readText, writeAtomic, exists } from './fsutil.ts'
 import { isRecord, swiftPretty } from './json.ts'
@@ -10,6 +11,7 @@ export interface Config {
   language?: string | undefined
   whisperModel?: string | undefined
   summaryModel?: string | undefined
+  agent?: agents.HeadlessAgent | undefined
   vocabulary?: string[] | undefined
   tools?: Record<string, string> | undefined
   live?: LiveConfig | undefined
@@ -31,6 +33,11 @@ function checkString(config: Record<string, unknown>, key: string): void {
   if (config[key] !== undefined && config[key] !== null && typeof config[key] !== 'string') throw new Error(`${key} must be a string`)
 }
 
+function checkAgent(value: unknown, key: string): void {
+  if (value === undefined || value === null || agents.isHeadlessAgent(value)) return
+  throw new Error(`${key} must be one of ${agents.HEADLESS_AGENTS.join(', ')}`)
+}
+
 export function parseConfig(text: string): Config {
   const value = JSON.parse(text) as unknown
   if (!isRecord(value)) throw new Error('the configuration must be a JSON object')
@@ -42,6 +49,8 @@ export function parseConfig(text: string): Config {
     if (!isRecord(value['tools']) || !Object.values(value['tools']).every((item) => typeof item === 'string')) throw new Error('tools must map names to paths')
   }
   if (value['live'] !== undefined && value['live'] !== null && !isRecord(value['live'])) throw new Error('live must be an object')
+  checkAgent(value['agent'], 'agent')
+  if (isRecord(value['live'])) checkAgent(value['live']['agent'], 'live.agent')
   const cleaned: Config = {}
   for (const [key, item] of Object.entries(value)) if (item !== null) cleaned[key] = item
   return cleaned

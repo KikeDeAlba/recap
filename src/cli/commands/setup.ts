@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { release } from 'node:os'
 import { MODELS, loadConfig, rootDir, saveConfig, vadModelPath, whisperModelPath } from '../../core/config.ts'
 import { padEnd } from '../../core/text.ts'
-import { CHECKED_TOOLS, configuredPath, installHint, locateTool } from '../../core/tools.ts'
+import { checkedTools, configuredPath, installHint, locateTool } from '../../core/tools.ts'
 import { errorMessage, usageError } from '../../errors.ts'
 import { BitaClient } from '../../bita/client.ts'
 import { capturePermissions, findCapture, findRecapApp } from '../../capture/capture.ts'
@@ -43,7 +43,7 @@ export async function setupCommand(argv: string[]): Promise<number> {
       for (const item of report.manual) checks.push({ name: 'install', ok: false, detail: item })
     }
     const tools = { ...(config.tools ?? {}) }
-    for (const tool of CHECKED_TOOLS) {
+    for (const tool of checkedTools(config)) {
       const found = await locateTool(tool, config)
       const optional = tool === 'bita'
       checks.push({ name: tool, ok: found !== null || optional, detail: found ?? `${optional ? 'optional, ' : ''}missing: ${installHint(tool)}` })

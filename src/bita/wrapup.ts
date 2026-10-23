@@ -6,7 +6,7 @@ import { extractBetween, isRecord, swiftDefault } from '../core/json.ts'
 import { durationSeconds, emptyWrapup, updateMeeting, type BitaEntrySnapshot, type Meeting } from '../core/meeting.ts'
 import { fold, formatDuration, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
-import { resultText, runSummaryClaude } from '../pipeline/claude.ts'
+import { runSummaryAgent } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import { INKWELL_CAPABILITIES, INKWELL_HINT, StageSkipped, callBita, callInkwell, lookupInkwell, meetingTarget, requireBita, type ToolCalling } from './client.ts'
 import { entryPages } from '../live/context.ts'
@@ -232,7 +232,7 @@ export async function runWrapup(meeting: Meeting, dir: string, config: Config, d
     docs = found.client
   }
   const bita = dependencies?.bita ?? (await requireBita(config, meetingTarget(meeting)))
-  const claude = dependencies?.claude ?? (async (prompt: string) => resultText(await runSummaryClaude(prompt, dir, config)))
+  const claude = dependencies?.claude ?? ((prompt: string) => runSummaryAgent(prompt, dir, config, { warn: dependencies?.log }))
   const snapshot = meeting.bitaEntry ?? { title: meeting.title, pageIds: [] }
   const wrapup = { ...emptyWrapup(), ...(meeting.wrapup ?? {}) }
 

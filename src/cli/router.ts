@@ -1,3 +1,4 @@
+import { agents } from '@kikedealba/kit'
 import { readManifest } from '@kikedealba/kit/registry'
 import { usageError } from '../errors.ts'
 import { findCapture } from '../capture/capture.ts'
@@ -56,7 +57,7 @@ const COMMANDS: Record<string, Command> = {
 
 export function help(): string {
   return [
-    `recap ${VERSION} — record meetings, transcribe them locally and summarize them with Claude Code`,
+    `recap ${VERSION} — record meetings, transcribe them locally and summarize them with a coding agent (Claude Code by default)`,
     '',
     'Recording (macOS, through Recap.app):',
     '  recap start --remote|--in-person [title] [--bita-entry id] [--display id] [--timeout s]',
@@ -74,7 +75,7 @@ export function help(): string {
     '  recap compress-video <meeting> --preset light|medium|max | strip-video <meeting> | prune <meeting> --intermediates | delete <meeting>',
     '  recap config get [key] | config set <key> <value>',
     '  recap watch [--interval s]: one line per meeting that finishes processing; RECAP_MONITOR=off turns it off',
-    '  recap setup [--install-deps] [--skip-models] [--skip-permissions] [--skip-bita] [--skip-app] [--agents detected|all|none|claude,opencode,codex,gemini]',
+    `  recap setup [--install-deps] [--skip-models] [--skip-permissions] [--skip-bita] [--skip-app] [--agents detected|all|none|${agents.AGENTS.join(',')}]`,
     '  recap capabilities',
     '',
     'Stages: audio, transcribe, frames, summarize, proposals, wrapup. Every command takes --json.',

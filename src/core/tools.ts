@@ -1,14 +1,35 @@
 import { constants, accessSync, statSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import path from 'node:path'
+import { agents } from '@kikedealba/kit'
 import { childEnvironment, platformContext, which } from '@kikedealba/kit/platform'
 import { RecapError } from '../errors.ts'
 import type { Config } from './config.ts'
 import { configFile, expandTilde, home } from './paths.ts'
 
-export type ToolName = 'ffmpeg' | 'ffprobe' | 'whisper-cli' | 'claude' | 'bita'
+export type ToolName = 'ffmpeg' | 'ffprobe' | 'whisper-cli' | 'bita' | agents.HeadlessAgent
 
-export const CHECKED_TOOLS: ToolName[] = ['ffmpeg', 'whisper-cli', 'claude', 'bita']
+export function checkedTools(config: Config): ToolName[] {
+  const wanted = [...new Set([configuredAgent(config), liveAgent(config)])]
+  return ['ffmpeg', 'whisper-cli', ...wanted, 'bita']
+}
+
+export function configuredAgent(config: Config): agents.HeadlessAgent {
+  return agents.isHeadlessAgent(config.agent) ? config.agent : 'claude'
+}
+
+export function liveAgent(config: Config): agents.HeadlessAgent {
+  const live = config.live?.agent
+  return agents.isHeadlessAgent(live) ? live : configuredAgent(config)
+}
+
+const AGENT_HINTS: Record<agents.HeadlessAgent, string> = {
+  claude: 'npm install -g @anthropic-ai/claude-code',
+  codex: 'npm install -g @openai/codex',
+  gemini: 'npm install -g @google/gemini-cli',
+  opencode: 'npm install -g opencode-ai',
+  antigravity: 'install the Antigravity CLI (agy)',
+}
 
 export function installHint(tool: ToolName, platform: NodeJS.Platform = process.platform): string {
   switch (tool) {
@@ -21,10 +42,10 @@ export function installHint(tool: ToolName, platform: NodeJS.Platform = process.
         : platform === 'win32'
           ? 'download whisper-bin-x64.zip from https://github.com/ggml-org/whisper.cpp/releases and put whisper-cli.exe on PATH'
           : 'brew install whisper-cpp (Homebrew on Linux) or build whisper.cpp from https://github.com/ggml-org/whisper.cpp'
-    case 'claude':
-      return 'npm install -g @anthropic-ai/claude-code'
     case 'bita':
       return 'npm install -g @kikedealba/bita'
+    default:
+      return AGENT_HINTS[tool]
   }
 }
 
@@ -64,6 +85,7 @@ export async function locateTool(tool: ToolName, config: Config): Promise<string
       if (isExecutable(sibling)) return sibling
     }
   }
+  if (agents.isHeadlessAgent(tool)) return agents.findAgentBinary(tool, { ctx: ctx() })
   return which(tool, ctx(), toolDirs(config))
 }
 
