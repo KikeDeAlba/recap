@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { platformContext, type Platform, type PlatformContext } from '@kikedealba/kit/platform'
@@ -18,9 +18,10 @@ import {
   parseDefaultSink,
   sourceSpecs,
 } from '../src/capture/sources.ts'
-import { CaptureSupervisor } from '../src/capture/worker.ts'
+import { CaptureSupervisor, leadingSilence } from '../src/capture/worker.ts'
 import { liveWorkerFor } from '../src/cli/commands/capture.ts'
-import { loadMeeting } from '../src/core/meeting.ts'
+import { loadMeeting, reconcile } from '../src/core/meeting.ts'
+import { recoverCapture, recoveryNote } from '../src/capture/recover.ts'
 import { isAlive, waitUntil } from '../src/core/proc.ts'
 import { channelsOf } from '../src/pipeline/pipeline.ts'
 import { meeting, meetingDir, tempDir } from './helpers.ts'
@@ -83,23 +84,12 @@ test('encodes each source to AAC and muxes them with -c copy in the channelsOf o
   assert.ok(mic.includes('-nostdin'))
   const system = encoderArguments('system', { channels: 2, rate: 48_000 }, 'system.aac')
   assert.deepEqual(system.slice(system.indexOf('-b:a'), system.indexOf('-b:a') + 4), ['-b:a', '96k', '-ac', '2'])
-  assert.deepEqual(muxArguments([{ file: 'mic.aac', offsetMs: 0 }, { file: 'system.aac', offsetMs: 137 }], 'recording.m4a').slice(5), [
-    '-i',
-    'mic.aac',
-    '-itsoffset',
-    '0.137',
-    '-i',
-    'system.aac',
-    '-map',
-    '0:a:0',
-    '-map',
-    '1:a:0',
-    '-c',
-    'copy',
-    '-movflags',
-    '+faststart',
-    'recording.m4a',
-  ])
+  const mux = muxArguments(['mic.aac', 'system.aac'], 'recording.m4a')
+  assert.deepEqual(mux.slice(5), ['-i', 'mic.aac', '-i', 'system.aac', '-map', '0:a:0', '-map', '1:a:0', '-c', 'copy', '-movflags', '+faststart', 'recording.m4a'])
+  assert.ok(!mux.includes('-itsoffset'))
+  assert.equal(leadingSilence(250, { channels: 2, rate: 48_000 }).length, 12_000 * 2 * 2)
+  assert.equal(leadingSilence(0, { channels: 1, rate: 48_000 }).length, 0)
+  assert.ok(leadingSilence(10, { channels: 1, rate: 48_000 }).every((byte) => byte === 0))
 })
 
 test('reads the default sink and the PulseAudio input of ffmpeg', () => {
@@ -128,11 +118,17 @@ function fakeTool(t: { after: (fn: () => void) => void }, name: string, body?: s
 test('the Linux recorder reports what is missing', { skip: !posix && 'needs a POSIX shell' }, async (t) => {
   const ffmpeg = fakeTool(t, 'ffmpeg')
   const pactl = fakeTool(t, 'pactl', '#!/bin/sh\nexit 0\n')
-  const ready = await new FfmpegRecorder(ctxFor('linux'), { tools: { ffmpeg, pactl } }).check()
+  const sandboxed = process.env['RECAP_PACTL']
+  t.after(() => {
+    process.env['RECAP_PACTL'] = sandboxed
+  })
+  assert.deepEqual((await new FfmpegRecorder(ctxFor('linux'), { tools: { ffmpeg, pactl } }).check()).missing, ['pactl'])
+  process.env['RECAP_PACTL'] = pactl
+  const ready = await new FfmpegRecorder(ctxFor('linux'), { tools: { ffmpeg } }).check()
   assert.deepEqual(ready, { ok: true, missing: [] })
   process.env['FAKE_NO_PULSE'] = '1'
   t.after(() => delete process.env['FAKE_NO_PULSE'])
-  const noPulse = await new FfmpegRecorder(ctxFor('linux'), { tools: { ffmpeg, pactl } }).check()
+  const noPulse = await new FfmpegRecorder(ctxFor('linux'), { tools: { ffmpeg } }).check()
   assert.deepEqual(noPulse.missing, ['ffmpeg-pulse'])
   const windows = await new FfmpegRecorder(ctxFor('win32', { RECAP_LOOPBACK: path.join(tempDir(t), 'none.exe') }), { tools: { ffmpeg } }).check()
   assert.deepEqual(windows.missing, ['recap-loopback'])
@@ -144,17 +140,26 @@ test('finds the monitor with pactl get-default-sink, or pactl info on older vers
   assert.equal(await defaultMonitor(modern), 'alsa_output.pci.monitor')
   const old = fakeTool(t, 'pactl', '#!/bin/sh\n[ "$1" = info ] && printf "Server: x\\nDefault Sink: bluez_sink.headset\\n" && exit 0\necho "No valid command" >&2\nexit 1\n')
   assert.equal(await defaultMonitor(old), 'bluez_sink.headset.monitor')
+  const localized = fakeTool(t, 'pactl', '#!/bin/sh\n[ "$LC_ALL" = C ] || { echo "Receptor predeterminado: x"; exit 0; }\n[ "$1" = info ] && echo "Default Sink: english.sink" && exit 0\nexit 1\n')
+  assert.equal(await defaultMonitor(localized), 'english.sink.monitor')
+  const broken = fakeTool(t, 'pactl', '#!/bin/sh\nexit 1\n')
+  const notes: string[] = []
+  assert.equal(await defaultMonitor(broken, (line) => notes.push(line)), '@DEFAULT_MONITOR@')
+  assert.equal(notes.length, 1)
+  assert.equal(sourceSpecs('remote', ctxFor('linux'), { ffmpeg: 'ffmpeg' })[1]?.args.includes('@DEFAULT_MONITOR@'), true)
 })
 
-async function supervise(t: { after: (fn: () => void) => void }, platform: Platform, mode: 'remote' | 'in-person', options: { fail?: string; stop?: 'file' | 'call' } = {}) {
+async function supervise(t: { after: (fn: () => void) => void }, platform: Platform, mode: 'remote' | 'in-person', options: { fail?: string; die?: string; stop?: 'file' | 'call' } = {}) {
   const ffmpeg = fakeTool(t, 'ffmpeg')
   const { dir } = meetingDir(t, { status: 'starting', mode })
   const logFile = path.join(dir, 'fake.log')
   process.env['FAKE_LOG'] = logFile
   if (options.fail) process.env['FAKE_FAIL'] = options.fail
+  if (options.die) process.env['FAKE_DIE'] = options.die
   t.after(() => {
     delete process.env['FAKE_LOG']
     delete process.env['FAKE_FAIL']
+    delete process.env['FAKE_DIE']
   })
   const ctx = ctxFor(platform)
   const specs = sourceSpecs(mode, ctx, { ffmpeg, loopback: ffmpeg, monitor: 'sink.monitor' })
@@ -166,7 +171,8 @@ async function supervise(t: { after: (fn: () => void) => void }, platform: Platf
   if (loadMeeting(dir).status === 'recording') {
     assert.equal(loadMeeting(dir).recorderPid, process.pid)
     await new Promise((resolve) => setTimeout(resolve, 1_200))
-    if (options.stop === 'call') supervisor.requestStop()
+    if (options.die) await waitUntil(5, 0.02, () => loadMeeting(dir).status !== 'recording')
+    else if (options.stop === 'call') supervisor.requestStop()
     else writeFileSync(path.join(dir, STOP_REQUEST), 'now')
   }
   const code = await running
@@ -216,6 +222,39 @@ test('the supervisor marks the meeting failed when a source cannot start', { ski
   assert.equal(stored.status, 'failed')
   assert.match(stored.error ?? '', /system capture exited before recording: device busy/)
   assert.equal(stored.recorderPid, undefined)
+})
+
+test('the supervisor keeps the audio and says which source stopped by itself', { skip: !posix && 'needs a POSIX shell' }, async (t) => {
+  const { dir, code } = await supervise(t, 'linux', 'remote', { die: 'sink.monitor' })
+  assert.equal(code, 1)
+  const stored = loadMeeting(dir)
+  assert.equal(stored.status, 'recorded')
+  assert.match(stored.error ?? '', /The system capture stopped by itself/)
+  assert.ok(existsSync(path.join(dir, 'recording.m4a')))
+})
+
+test('reconcile recovers capture/*.aac when the supervisor died', { skip: !posix && 'needs a POSIX shell' }, async (t) => {
+  const ffmpeg = fakeTool(t, 'ffmpeg')
+  mkdirSync(path.dirname(process.env['RECAP_CONFIG_PATH'] ?? ''), { recursive: true })
+  writeFileSync(process.env['RECAP_CONFIG_PATH'] ?? '', JSON.stringify({ tools: { ffmpeg } }))
+  t.after(() => rmSync(process.env['RECAP_CONFIG_PATH'] ?? '', { force: true }))
+  const { dir, meeting: stored } = meetingDir(t, { status: 'recording', mode: 'remote', recorderPid: 999_999, startedAt: '2026-01-01T00:00:00Z' })
+  mkdirSync(path.join(dir, CAPTURE_DIR))
+  writeFileSync(path.join(dir, CAPTURE_DIR, 'mic.aac'), 'mic')
+  writeFileSync(path.join(dir, CAPTURE_DIR, 'system.aac'), 'system')
+  const recovered = reconcile(stored, dir)
+  assert.equal(recovered.status, 'recorded')
+  assert.match(recovered.error ?? '', /recovered recording\.m4a from capture\/ with mic and system/)
+  assert.ok(existsSync(path.join(dir, 'recording.m4a')))
+  assert.ok(!existsSync(path.join(dir, CAPTURE_DIR)))
+  const partial = meetingDir(t, { status: 'recording', mode: 'remote', recorderPid: 999_999, startedAt: '2026-01-01T00:00:00Z' })
+  mkdirSync(path.join(partial.dir, CAPTURE_DIR))
+  writeFileSync(path.join(partial.dir, CAPTURE_DIR, 'mic.aac'), 'mic')
+  const note = recoverCapture(partial.dir, 'remote', ffmpeg)
+  assert.deepEqual(note && { channels: note.channels, missing: note.missing }, { channels: ['mic'], missing: ['system'] })
+  assert.match(note ? recoveryNote(note) : '', /system track is missing/)
+  assert.ok(existsSync(path.join(partial.dir, CAPTURE_DIR, 'mic.aac')))
+  assert.equal(recoverCapture(partial.dir, 'remote', ffmpeg), null)
 })
 
 test('stopping the ffmpeg recorder writes stop.request and interrupts the supervisor', { skip: !posix && 'needs POSIX signals' }, async (t) => {

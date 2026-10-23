@@ -8,6 +8,7 @@ function source() {
     process.stderr.write('device busy\n')
     process.exit(1)
   }
+  if (process.env.FAKE_DIE && args.join(' ').includes(process.env.FAKE_DIE)) setTimeout(() => process.exit(3), 600)
   const helper = args.includes('--source')
   const channels = Number(args[args.indexOf(helper ? '--channels' : '-ac') + 1]) || 1
   if (helper) process.stderr.write(`${JSON.stringify({ event: 'started', channels, rate: 48000 })}\n`)

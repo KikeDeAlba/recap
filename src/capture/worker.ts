@@ -9,7 +9,7 @@ import { suffix, trimmed } from '../core/text.ts'
 import { liveFiles } from '../live/files.ts'
 import type { Channel } from '../pipeline/transcript.ts'
 import { RecapError, errorMessage } from '../errors.ts'
-import { FrameAligner, downmix } from './audio.ts'
+import { BYTES_PER_SAMPLE, FrameAligner, downmix } from './audio.ts'
 import { LiveTap } from './live-tap.ts'
 import { CAPTURE_DIR, STOP_REQUEST, encoderArguments, intermediateFile, muxArguments, type PcmFormat, type SourceSpec } from './sources.ts'
 
@@ -57,6 +57,11 @@ function startedEvent(line: string): PcmFormat | null {
   } catch {
     return null
   }
+}
+
+export function leadingSilence(delayMs: number, format: PcmFormat): Buffer {
+  const frames = Math.max(0, Math.round((delayMs * format.rate) / 1000))
+  return Buffer.alloc(frames * format.channels * BYTES_PER_SAMPLE)
 }
 
 function launch(command: string, args: readonly string[], stdout: 'pipe' | 'ignore'): ChildProcess {
@@ -188,6 +193,7 @@ export class CaptureSupervisor {
       state.startedAt = now
       this.origin ??= now
       state.encoder = this.startEncoder(state.spec.channel, format)
+      state.encoder.stdin?.write(leadingSilence(now - this.origin, format))
       this.tap?.open(state.spec.channel, format.rate, now - this.origin)
     }
     state.encoder?.stdin?.write(pcm)
@@ -277,8 +283,7 @@ export class CaptureSupervisor {
     let muxError: string | null = null
     const recorded = this.sources.filter((source) => source.startedAt !== null && existsSync(intermediateFile(this.dir, source.spec.channel)))
     if (recorded.length === this.sources.length && recorded.length > 0) {
-      const inputs = recorded.map((source) => ({ file: intermediateFile(this.dir, source.spec.channel), offsetMs: (source.startedAt ?? 0) - (this.origin ?? 0) }))
-      const result = await exec(this.options.ffmpeg, muxArguments(inputs, output))
+      const result = await exec(this.options.ffmpeg, muxArguments(recorded.map((source) => intermediateFile(this.dir, source.spec.channel)), output))
       if (result.status === 0 && existsSync(output)) rmSync(path.join(this.dir, CAPTURE_DIR), { recursive: true, force: true })
       else muxError = `Cannot write ${path.basename(output)}: ${trimmed(result.stderr) || `exit ${result.status}`}`
     } else {

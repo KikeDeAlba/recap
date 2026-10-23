@@ -5,9 +5,10 @@ import { clearActive, currentRecording, loadActive, saveActive } from '../core/a
 import { isoNow } from '../core/dates.ts'
 import { exists } from '../core/fsutil.ts'
 import { MeetingStore, isActiveStatus, loadMeeting, recordingPath, updateMeeting, type BitaTarget, type Located, type Meeting, type MeetingMode } from '../core/meeting.ts'
-import { isAlive, signalProcess, waitUntil } from '../core/proc.ts'
+import { isAlive, signalProcess, signalTree, waitUntil } from '../core/proc.ts'
 import { RecapError } from '../errors.ts'
 import { selectRecorder, type Recorder } from './recorder.ts'
+import { recoverCapture, recoveryNote } from './recover.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
@@ -55,7 +56,7 @@ export async function startRecording(options: {
     throw new RecapError('RECORDER_FAILED', latest.error ?? `The recorder failed to start. See ${path.join(dir, 'recorder.log')}`)
   }
   if (!settled || latest.status !== 'recording') {
-    if (latest.recorderPid !== undefined) signalProcess(latest.recorderPid, 'SIGKILL')
+    if (latest.recorderPid !== undefined) forceKill(recorder, latest.recorderPid)
     try {
       updateMeeting(dir, (item) => {
         item.status = 'failed'
@@ -68,6 +69,11 @@ export async function startRecording(options: {
   }
   saveActive({ meetingId: latest.id, dir, mode: options.mode, startedAt: latest.startedAt ?? isoNow() })
   return { meeting: latest, dir }
+}
+
+function forceKill(recorder: Recorder, pid: number): void {
+  if (recorder.kind === 'mac-app') signalProcess(pid, 'SIGKILL')
+  else signalTree(pid, 'SIGKILL')
 }
 
 async function stopRecorder(meeting: Meeting, dir: string, timeout: number, recorder: Recorder = selectRecorder()): Promise<Meeting> {
@@ -83,13 +89,17 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
     }
     return current.status === 'recorded' || current.status === 'failed' || !isAlive(pid)
   })
-  if (!stopped) signalProcess(pid, 'SIGKILL')
+  if (!stopped) {
+    forceKill(recorder, pid)
+    if (recorder.kind !== 'mac-app') await waitUntil(5, 0.1, () => !isAlive(pid))
+  }
   if (isActiveStatus(current.status)) {
+    const recovery = recorder.kind === 'mac-app' ? null : recoverCapture(dir, current.mode)
     current = updateMeeting(dir, (item) => {
       item.status = exists(recordingPath(dir, item.mode)) ? 'recorded' : 'failed'
       item.endedAt = isoNow()
       delete item.recorderPid
-      item.error = 'The recorder exited without closing the file cleanly'
+      item.error = recovery ? recoveryNote(recovery) : 'The recorder exited without closing the file cleanly'
     })
   }
   return current

@@ -9,6 +9,7 @@ export const CAPTURE_RATE = 48_000
 export const CAPTURE_DIR = 'capture'
 export const STOP_REQUEST = 'stop.request'
 export const LOOPBACK_NAME = 'recap-loopback'
+export const DEFAULT_MONITOR = '@DEFAULT_MONITOR@'
 
 export interface PcmFormat {
   channels: number
@@ -74,7 +75,7 @@ export function sourceSpecs(mode: MeetingMode, ctx: PlatformContext, tools: Sour
       if (channel === 'mic' && tools.micDevice) return { channel, command: tools.ffmpeg, args: dshowArguments(tools.micDevice, channels), format }
       return { channel, command: tools.loopback ?? loopbackPath(ctx), args: ['--source', channel, '--rate', String(CAPTURE_RATE), '--channels', String(channels)], format: null }
     }
-    const device = channel === 'mic' ? 'default' : (tools.monitor ?? 'default.monitor')
+    const device = channel === 'mic' ? 'default' : (tools.monitor ?? DEFAULT_MONITOR)
     return { channel, command: tools.ffmpeg, args: pulseArguments(device, channels), format }
   })
 }
@@ -112,18 +113,10 @@ export function encoderArguments(channel: Channel, format: PcmFormat, output: st
   ]
 }
 
-export interface MuxInput {
-  file: string
-  offsetMs: number
-}
-
-export function muxArguments(inputs: readonly MuxInput[], output: string): string[] {
+export function muxArguments(files: readonly string[], output: string): string[] {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y']
-  for (const input of inputs) {
-    if (input.offsetMs > 0) args.push('-itsoffset', (input.offsetMs / 1000).toFixed(3))
-    args.push('-i', input.file)
-  }
-  inputs.forEach((_, index) => args.push('-map', `${index}:a:0`))
+  for (const file of files) args.push('-i', file)
+  files.forEach((_, index) => args.push('-map', `${index}:a:0`))
   args.push('-c', 'copy', '-movflags', '+faststart', output)
   return args
 }

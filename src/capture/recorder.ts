@@ -12,7 +12,7 @@ import { trimmed } from '../core/text.ts'
 import { installHint, locateTool, requireTool } from '../core/tools.ts'
 import { RecapError } from '../errors.ts'
 import { capturePermissions, captureUnavailable, findCapture, launchRecorder, type PermissionReport } from './capture.ts'
-import { STOP_REQUEST, hasPulseInput, loopbackPath, micDevice, monitorOf, parseDefaultSink, type SourceTools } from './sources.ts'
+import { DEFAULT_MONITOR, STOP_REQUEST, hasPulseInput, loopbackPath, micDevice, monitorOf, parseDefaultSink, type SourceTools } from './sources.ts'
 
 export type RecorderKind = 'mac-app' | 'ffmpeg-linux' | 'windows'
 
@@ -62,14 +62,16 @@ export class MacAppRecorder implements Recorder {
   }
 }
 
-export async function defaultMonitor(pactl: string): Promise<string> {
-  const direct = await exec(pactl, ['get-default-sink'])
-  const sink = direct.status === 0 ? trimmed(direct.stdout) : ''
+export async function defaultMonitor(pactl: string, log: (line: string) => void = () => undefined): Promise<string> {
+  const env = { ...process.env, LC_ALL: 'C', LANG: 'C' }
+  const direct = await exec(pactl, ['get-default-sink'], { env }).catch(() => null)
+  const sink = direct?.status === 0 ? trimmed(direct.stdout) : ''
   if (sink.length > 0) return monitorOf(sink)
-  const info = await exec(pactl, ['info'])
-  const parsed = info.status === 0 ? parseDefaultSink(info.stdout) : null
-  if (!parsed) throw new RecapError('NO_SINK', `pactl did not report the default output: ${trimmed(direct.stderr + info.stderr)}`)
-  return monitorOf(parsed)
+  const info = await exec(pactl, ['info'], { env }).catch(() => null)
+  const parsed = info?.status === 0 ? parseDefaultSink(info.stdout) : null
+  if (parsed) return monitorOf(parsed)
+  log(`pactl did not report the default output; recording ${DEFAULT_MONITOR}`)
+  return DEFAULT_MONITOR
 }
 
 export class FfmpegRecorder implements Recorder {
