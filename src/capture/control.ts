@@ -8,7 +8,7 @@ import { exists, readText } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
 import type { Located, Meeting } from '../core/meeting.ts'
 import { exec, isAlive, signalNumber, sleep, type ExecResult } from '../core/proc.ts'
-import { trimmed } from '../core/text.ts'
+import { printable, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { controlDir } from './control-dir.ts'
 import { captureBinary, captureUnavailable, findCapture, hasCaptureBinary, type CaptureLauncher } from './capture.ts'
@@ -293,7 +293,7 @@ function readReply(text: string, id: string): unknown {
   if (reply['ok'] === true) return reply['data']
   const error = isRecord(reply['error']) ? reply['error'] : {}
   const code = typeof error['code'] === 'string' ? error['code'] : 'CAPTURE_FAILED'
-  const message = typeof error['message'] === 'string' ? error['message'] : 'The recorder could not do it'
+  const message = typeof error['message'] === 'string' ? printable(error['message']) : 'The recorder could not do it'
   throw new RecapError(code, message)
 }
 
@@ -314,7 +314,7 @@ export interface CaptureDeps {
 
 export function videoLabel(video: CaptureVideo | null): string {
   if (!video) return 'the microphone only'
-  return `${video.kind} ${video.id} "${video.title}"`
+  return `${video.kind} ${video.id} "${printable(video.title)}"`
 }
 
 export function confirmAfterTimeout(error: unknown, current: () => Located | null): never {

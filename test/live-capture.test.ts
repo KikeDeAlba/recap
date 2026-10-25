@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
-import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, writeRequest } from '../src/capture/control.ts'
+import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, videoLabel, writeRequest } from '../src/capture/control.ts'
 import { discardControl } from '../src/capture/control-dir.ts'
 import { assembleMeeting } from '../src/capture/assemble.ts'
 import { decodeManifest, needsAssembly, pendingCaptureBytes } from '../src/capture/manifest.ts'
@@ -500,4 +500,18 @@ test('a control folder that disappears before the request is written ends in NOT
   assert.throws(() => writeRequest(path.join(dir, 'missing', 'a.request.json'), '{}'), code('NOT_RECORDING'))
   writeFileSync(path.join(dir, 'blocker'), 'x')
   assert.throws(() => writeRequest(path.join(dir, 'blocker', 'a.request.json'), '{}'), (error: unknown) => !(error instanceof RecapError))
+})
+
+test('titles and recorder messages in errors are printed without control characters', async (t) => {
+  assert.equal(videoLabel({ kind: 'window', id: 2, title: 'a\u001b[31mb\nc', app: null, since: 's' }), 'window 2 "a [31mb c"')
+  const dir = tempDir(t)
+  const stop = fakeRecorder(dir, () => ({ ok: false, error: { code: 'WINDOW_GONE', message: 'gone\u001b]0;pwned\u0007\u202Eexe' } }))
+  t.after(stop)
+  await assert.rejects(sendControl(dir, { action: 'clear' }, { timeoutMs: 3_000, pollMs: 10 }), (error: unknown) => {
+    assert.ok(error instanceof RecapError)
+    assert.equal(error.code, 'WINDOW_GONE')
+    assert.doesNotMatch(error.message, /[\u0000-\u001f\u007f-\u009f\u202a-\u202e]/)
+    assert.match(error.message, /^gone /)
+    return true
+  })
 })
