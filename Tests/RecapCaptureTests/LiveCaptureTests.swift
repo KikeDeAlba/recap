@@ -305,6 +305,20 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
 }
 
 extension DeadlineTests {
+    @Test func aCancelledCallerNeverStartsTheOperation() async {
+        let steps = Steps()
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late")) { () async -> Int in
+                await steps.add("started")
+                return 1
+            }
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await steps.items.isEmpty)
+    }
+
     @Test func aTimedOutOperationCountsAsAbandonedUntilItEnds() async throws {
         let abandoned = AbandonedWork(limit: 1)
         #expect(try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late"), abandoned: abandoned) { 1 } == 1)
@@ -417,6 +431,11 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         let recorder = screens.recorder(dir)
         let set = Task { @MainActor in try await recorder.setTarget(display) }
         #expect(await code(of: set) == "CAPTURE_TIMEOUT")
+        do {
+            _ = try await set.value
+        } catch {
+            #expect((error as? RecapError)?.message.contains("Screen & System Audio Recording permission") == true)
+        }
         let started = Date()
         await recorder.stop()
         #expect(Date().timeIntervalSince(started) < 1)
@@ -527,6 +546,50 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         let cleared = try await recorder.clearTarget()
         #expect(Date().timeIntervalSince(started) < 1)
         #expect(cleared.video == nil)
+        await recorder.stop()
+    }
+
+    @Test @MainActor func aHungExclusionUpdateStopsTheScreenAndSaysTheMicrophoneGoesOn() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["update": 3]
+        let lines = Lines()
+        let recorder = screens.recorder(dir, log: lines.add)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        screens.exclude([99])
+        await recorder.refreshExclusionsIfNeeded()
+        #expect(recorder.manifest.current.video == nil)
+        let error = try #require(recorder.manifest.current.error)
+        #expect(error.hasPrefix("CAPTURE_STOPPED: the screen is no longer recorded"))
+        #expect(error.contains("the microphone keeps recording"))
+        #expect(error.contains("CAPTURE_TIMEOUT"))
+        #expect(!error.contains("couldn"))
+        #expect(lines.all == [error])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        await recorder.refreshExclusionsIfNeeded()
+        #expect(lines.all == [error])
+        #expect(!lines.all.contains { $0.contains("keeps its last filter") })
+        #expect(screens.listed == 2)
+        await recorder.stop()
+    }
+
+    @Test @MainActor func aSegmentThatGoesAwayForgetsTheExclusionFailures() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        let lines = Lines()
+        let recorder = screens.recorder(dir, log: lines.add)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        screens.failNext([MeetingRecorder.contentStuck])
+        await recorder.refreshExclusionsIfNeeded()
+        #expect(lines.all.count == 1)
+        _ = try await recorder.clearTarget()
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        screens.exclude([7])
+        try await Task.sleep(nanoseconds: 200_000_000)
+        await recorder.refreshExclusionsIfNeeded()
+        #expect(!lines.all.contains { $0.contains("refreshed again") })
         await recorder.stop()
     }
 

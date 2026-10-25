@@ -207,6 +207,12 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     private var exclusionsFailingSince: Date?
     private var exclusionsLoggedAt: Date?
 
+    private enum ExclusionOutcome {
+        case kept
+        case refreshed
+        case abandoned(String)
+    }
+
     package init(dir: URL, liveTap: LiveTap? = nil, timeouts: CaptureTimeouts = .standard,
                  exclusionRetryDelay: UInt64 = MeetingRecorder.exclusionRetryDelay,
                  content: @escaping () async throws -> ScreenContent = ScreenContent.current,
@@ -228,11 +234,16 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
 
     package var abandonedListings: Int { abandonedContent.count }
 
+    package static func listingExpired(after seconds: TimeInterval) -> RecapError {
+        let expired = CaptureTimeouts.expired("list the screens and windows", after: seconds)
+        return RecapError(expired.code, expired.message + ". If macOS is still asking for the Screen & System Audio Recording permission of Recap, answer it and try again")
+    }
+
     private func content() async throws -> ScreenContent {
         guard !abandonedContent.isSaturated else { throw Self.contentStuck }
         let seconds = timeouts.content
         return try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
-                                      onTimeout: CaptureTimeouts.expired("list the screens and windows", after: seconds),
+                                      onTimeout: Self.listingExpired(after: seconds),
                                       abandoned: abandonedContent, listContent)
     }
 
@@ -377,16 +388,26 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
 
     @MainActor
     package func refreshExclusionsIfNeeded() async {
-        guard !stopped, segment != nil, manifest.current.video?.kind == .display else { return }
+        guard !stopped, segment != nil, manifest.current.video?.kind == .display else {
+            forgetExclusionFailures()
+            return
+        }
         do {
-            try await exclusive { try await self.refreshDisplayExclusions() }
+            let outcome = try await exclusive { try await self.refreshDisplayExclusions() }
+            if case let .abandoned(reason) = outcome {
+                forgetExclusionFailures()
+                log(reason)
+                return
+            }
             if let since = exclusionsFailingSince {
                 log("display exclusions refreshed again after \(Int(Date().timeIntervalSince(since)))s")
             }
-            exclusionsFailingSince = nil
-            exclusionsLoggedAt = nil
+            forgetExclusionFailures()
         } catch {
-            guard !stopped else { return }
+            guard !stopped, segment != nil else {
+                forgetExclusionFailures()
+                return
+            }
             let now = Date()
             let since = exclusionsFailingSince ?? now
             exclusionsFailingSince = since
@@ -396,6 +417,12 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
             }
             scheduleExclusionRetry()
         }
+    }
+
+    @MainActor
+    private func forgetExclusionFailures() {
+        exclusionsFailingSince = nil
+        exclusionsLoggedAt = nil
     }
 
     @MainActor
@@ -411,18 +438,21 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     }
 
     @MainActor
-    private func refreshDisplayExclusions() async throws {
-        guard let segment, let video = manifest.current.video, video.kind == .display else { return }
+    private func refreshDisplayExclusions() async throws -> ExclusionOutcome {
+        guard let segment, let video = manifest.current.video, video.kind == .display else { return .kept }
         let content = try await self.content()
         let excluded = content.excludedPids()
-        guard excluded != appliedExclusions, let filter = content.displayFilter(video.id) else { return }
+        guard excluded != appliedExclusions, let filter = content.displayFilter(video.id) else { return .kept }
         do {
             try await segment.update(filter: filter)
         } catch {
-            if Self.isTimeout(error) { await segmentStopped(segment, error: error) }
-            throw error
+            guard Self.isTimeout(error) else { throw error }
+            let reason = "CAPTURE_STOPPED: the screen is no longer recorded because ScreenCaptureKit did not update the display exclusions in time; the microphone keeps recording (\(Self.describe(error)))"
+            await segmentStopped(segment, error: error, reason: reason)
+            return .abandoned(reason)
         }
         appliedExclusions = excluded
+        return .refreshed
     }
 
     private static func isTimeout(_ error: Error) -> Bool {
@@ -486,6 +516,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     private func endSegment() async {
         guard let current = segment else { return }
         segment = nil
+        forgetExclusionFailures()
         let end = await current.stop()
         liveTap?.flush(.system)
         let atMs = end.map(milliseconds) ?? nowMs
@@ -499,19 +530,21 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     }
 
     @MainActor
-    private func segmentStopped(_ stopped: ScreenSegment?, error: Error) async {
+    private func segmentStopped(_ stopped: ScreenSegment?, error: Error, reason: String? = nil) async {
         guard let stopped, stopped === segment else { return }
         segment = nil
+        forgetExclusionFailures()
         let end = await stopped.stop()
         liveTap?.flush(.system)
         let atMs = end.map(milliseconds) ?? nowMs
         let code = stopped.kind == .window ? "WINDOW_GONE" : "CAPTURE_STOPPED"
+        let message = reason ?? "\(code): \(Self.describe(error))"
         manifest.update {
             if stopped.hasSamples {
-                $0.endSegment(atMs: atMs, error: "\(code): \(error.localizedDescription)")
+                $0.endSegment(atMs: atMs, error: message)
             } else {
                 $0.dropSegment(stopped.file)
-                $0.error = "\(code): \(error.localizedDescription)"
+                $0.error = message
             }
         }
     }
