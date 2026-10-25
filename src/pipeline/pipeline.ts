@@ -16,7 +16,6 @@ import { INKWELL_CAPABILITIES, StageSkipped, inkwellForStage } from '../bita/cli
 import { ProposalGenerator } from '../bita/proposals.ts'
 import { runWrapup } from '../bita/wrapup.ts'
 import { assembledChannels, assembleMeeting } from '../capture/assemble.ts'
-import { discardControl } from '../capture/control-dir.ts'
 import { needsAssembly } from '../capture/manifest.ts'
 import { runSummaryAgent } from './agent.ts'
 import { STAGES, allStagesSatisfied, stageApplies, stageComplete, stageIsOptional, stageSkipped, type Stage } from './stages.ts'
@@ -266,7 +265,6 @@ export class Pipeline {
   }
 
   async summarize(meeting: Meeting): Promise<void> {
-    discardControl(meeting, this.dir)
     const prompt = summaryPromptFor(meeting, this.dir)
     const output = await runSummaryAgent(prompt, this.dir, this.config, { warn: this.log })
     saveSummary(extractSummary(output), meeting, this.dir)

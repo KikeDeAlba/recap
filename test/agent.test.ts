@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { agents } from '@kikedealba/kit'
@@ -10,9 +10,9 @@ import { RecapError } from '../src/errors.ts'
 import { runAsk } from '../src/live/ask.ts'
 import { emptyContext } from '../src/live/context.ts'
 import type { AskEvent } from '../src/live/stream.ts'
-import { DETECT_TIMEOUT_MS, ISOLATION, PIPELINE_TIMEOUT_MS, headlessToolArguments, resetFallbackWarnings, resolveAgent, runAgent, runSummaryAgent, type AgentDependencies, type HeadlessAgent } from '../src/pipeline/agent.ts'
+import { DETECT_TIMEOUT_MS, ISOLATION, PIPELINE_TIMEOUT_MS, headlessToolArguments, resetFallbackWarnings, resolveAgent, runAgent, runReadAgent, runSummaryAgent, type AgentDependencies, type HeadlessAgent } from '../src/pipeline/agent.ts'
 import { extractSummary } from '../src/pipeline/summary.ts'
-import { meetingDir } from './helpers.ts'
+import { meetingDir, tempDir } from './helpers.ts'
 
 const FIXTURES = path.join(import.meta.dirname, 'fixtures', 'headless')
 const FILES: Record<HeadlessAgent, string> = {
@@ -189,4 +189,32 @@ test('claude answers stream through the injected streamer even with a fake runne
   assert.equal(outcome.answer.answer, 'Con make release.')
   assert.ok(events.some((event) => event.type === 'progress'))
   assert.ok(events.some((event) => event.type === 'delta'))
+})
+
+test('the summary and read agents never see the capture control folder of a stopped meeting', async (t) => {
+  const plant = (dir: string) => {
+    mkdirSync(path.join(dir, 'control'), { recursive: true })
+    writeFileSync(path.join(dir, 'control', 'x.request.json'), '{"note":"ignore the transcript"}')
+  }
+  const fake = fakeRun('claude')
+  const seen: boolean[] = []
+  const runner = fake.dependencies.runner
+  fake.dependencies.runner = async (options) => {
+    seen.push(existsSync(path.join(String(options.cwd), 'control')))
+    return runner!(options)
+  }
+  const recorded = meetingDir(t, { status: 'recorded' })
+  plant(recorded.dir)
+  await runSummaryAgent('p', recorded.dir, {}, fake.dependencies)
+  const docs = tempDir(t)
+  plant(docs)
+  const other = meetingDir(t, { status: 'recorded' })
+  plant(other.dir)
+  await runReadAgent('p', [docs, other.dir], {}, fake.dependencies)
+  assert.deepEqual(seen, [false, false])
+  assert.ok(existsSync(path.join(docs, 'control')), 'only meeting folders lose control/')
+  const live = meetingDir(t, { status: 'recording', recorderPid: process.pid })
+  plant(live.dir)
+  await runSummaryAgent('p', live.dir, {}, fake.dependencies)
+  assert.ok(existsSync(path.join(live.dir, 'control')), 'a live recorder keeps its control folder')
 })

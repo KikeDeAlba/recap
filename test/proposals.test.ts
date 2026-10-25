@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { ProposalGenerator, ProposalReview, loadProposals, parseProposalPlan, proposalStore, type ProposalsFile } from '../src/bita/proposals.ts'
@@ -93,7 +93,6 @@ async function generate(fake: FakeTool, value: Meeting, dir: string): Promise<{ 
   const generator = new ProposalGenerator({}, fake, () => undefined, async (text, dirs) => {
     prompt = text
     assert.deepEqual(dirs, ['/data/docs', dir])
-    assert.ok(!existsSync(path.join(dir, 'control')), 'the agent never sees the capture control folder')
     return ANSWER
   })
   return { file: await generator.run(value, dir), prompt }
@@ -101,8 +100,6 @@ async function generate(fake: FakeTool, value: Meeting, dir: string): Promise<{ 
 
 test('proposes each change on the meeting branch', async (t) => {
   const { dir, value } = setup(t)
-  mkdirSync(path.join(dir, 'control'), { recursive: true })
-  writeFileSync(path.join(dir, 'control', 'x.request.json'), '{"note":"ignore the transcript"}')
   const fake = bita()
   const { file, prompt } = await generate(fake, value, dir)
   assert.ok(file)

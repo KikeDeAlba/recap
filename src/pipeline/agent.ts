@@ -1,5 +1,9 @@
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import { agents } from '@kikedealba/kit'
+import { discardControl } from '../capture/control-dir.ts'
 import type { Config } from '../core/config.ts'
+import { MEETING_FILE, loadMeeting } from '../core/meeting.ts'
 import { home } from '../core/paths.ts'
 import { exec, type ExecResult } from '../core/proc.ts'
 import { suffix, trimmed } from '../core/text.ts'
@@ -163,11 +167,26 @@ export async function runAgent(call: AgentCall): Promise<string> {
   return text
 }
 
+export function hideCaptureControl(dirs: readonly string[]): void {
+  for (const dir of dirs) {
+    if (!existsSync(path.join(dir, MEETING_FILE))) continue
+    let meeting: Parameters<typeof discardControl>[0]
+    try {
+      meeting = loadMeeting(dir)
+    } catch {
+      meeting = { status: 'recorded' }
+    }
+    discardControl(meeting, dir)
+  }
+}
+
 export function runSummaryAgent(prompt: string, dir: string, config: Config, dependencies?: AgentDependencies): Promise<string> {
+  hideCaptureControl([dir])
   return runAgent({ prompt, cwd: dir, config, tools: ['Read'], addDirs: [dir], model: config.summaryModel, timeoutMs: PIPELINE_TIMEOUT_MS, dependencies })
 }
 
 export function runReadAgent(prompt: string, dirs: readonly string[], config: Config, dependencies?: AgentDependencies): Promise<string> {
+  hideCaptureControl(dirs)
   return runAgent({ prompt, cwd: dirs[dirs.length - 1] ?? home(), config, tools: ['Read Grep Glob'], addDirs: dirs, model: config.summaryModel, timeoutMs: PIPELINE_TIMEOUT_MS, dependencies })
 }
 

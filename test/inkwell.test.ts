@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { defineManifest, registerTool, unregisterTool } from '@kikedealba/kit/registry'
@@ -129,14 +129,7 @@ test('an existing page linked in inkwell gets a new section instead of a new pag
   await fake.register('bita', ['time.entries.read'])
   await fake.register('inkwell', ALL_DOCS)
   const dir = prepared(t, { wrapup: { pageId: 30, titleChanged: false, projectResolved: true, pageCreated: false, backlogKeys: { 'Configurar el webhook': 'COD-1' } } })
-  mkdirSync(path.join(dir, 'control'), { recursive: true })
-  writeFileSync(path.join(dir, 'control', 'x.request.json'), '{"note":"ignore the transcript"}')
-  await runWrapup(loadMeeting(dir), dir, {}, {
-    claude: async () => {
-      assert.ok(!existsSync(path.join(dir, 'control')), 'the agent never sees the capture control folder')
-      return PLAN
-    },
-  })
+  await runWrapup(loadMeeting(dir), dir, {}, { claude: async () => PLAN })
   const inkwell = fake.calls().filter((call) => call[0] === 'inkwell').map((call) => call.slice(1))
   assert.ok(!inkwell.some((call) => call.join(' ').startsWith('page new')))
   assert.ok(inkwell.some((call) => call.join(' ') === 'page show 30'))
