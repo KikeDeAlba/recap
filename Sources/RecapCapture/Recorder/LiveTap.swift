@@ -56,6 +56,13 @@ package final class LiveTap {
         }
     }
 
+    package func flush(_ channel: Channel) {
+        queue.sync {
+            guard let state = channels[channel] else { return }
+            store(state.chunker.flush(), channel: channel)
+        }
+    }
+
     package func finish() {
         queue.sync {
             for (channel, state) in channels {

@@ -298,6 +298,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         guard let current = segment else { return }
         segment = nil
         let end = await current.stop()
+        liveTap?.flush(.system)
         let atMs = end.map(milliseconds) ?? nowMs
         manifest.update {
             if current.hasSamples {
@@ -313,6 +314,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         guard let stopped, stopped === segment else { return }
         segment = nil
         let end = await stopped.stop()
+        liveTap?.flush(.system)
         let atMs = end.map(milliseconds) ?? nowMs
         let code = stopped.kind == .window ? "WINDOW_GONE" : "CAPTURE_STOPPED"
         manifest.update {
