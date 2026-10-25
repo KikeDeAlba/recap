@@ -143,13 +143,13 @@ test('summary --json omits backlogKey for unresolved keys and sets it for resolv
   assert.ok(!('backlogKey' in (items[1] ?? {})))
 })
 
-test('summary with no summary.md: --json succeeds with empty values, plain text fails with NO_SUMMARY', async (t) => {
+test('summary with no summary.md fails with NO_SUMMARY in JSON and in plain text', async (t) => {
   const { env, meeting } = setup(t)
   const json = await recap(['summary', meeting.id, '--json'], env)
-  assert.equal(json.code, 0)
+  assert.notEqual(json.code, 0)
   const envelope = parseEnvelope(json.stdout)
-  assert.equal(envelope?.ok, true)
-  assert.deepEqual(envelope?.data, { markdown: '', agreements: [], actionItems: [] })
+  assert.equal(envelope?.ok, false)
+  assert.equal(envelope?.error?.code, 'NO_SUMMARY')
   const text = await recap(['summary', meeting.id], env)
   assert.notEqual(text.code, 0)
   assert.match(text.stderr, /NO_SUMMARY/)
@@ -158,7 +158,7 @@ test('summary with no summary.md: --json succeeds with empty values, plain text 
 test('summary with an empty summary.md behaves like a missing one', async (t) => {
   const { env, dir, meeting } = setup(t)
   writeFileSync(path.join(dir, 'summary.md'), '')
-  assert.deepEqual(parseEnvelope((await recap(['summary', meeting.id, '--json'], env)).stdout)?.data, { markdown: '', agreements: [], actionItems: [] })
+  assert.equal(parseEnvelope((await recap(['summary', meeting.id, '--json'], env)).stdout)?.error?.code, 'NO_SUMMARY')
 })
 
 test('summary lists nothing for placeholder sections', async (t) => {

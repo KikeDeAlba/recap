@@ -70,7 +70,7 @@ export async function summaryCommand(argv: string[]): Promise<number> {
     const args = parseArgs(argv, { values: ['bita-entry'], maxPositionals: 1 })
     const { meeting, dir } = locate(new MeetingStore(loadConfig()), args.positionals[0], args.int('bita-entry'))
     const view = summaryView(meeting, dir)
-    if (!args.json && view.markdown.length === 0) throw new RecapError('NO_SUMMARY', `"${meeting.title}" has no summary yet; run \`recap process ${meeting.id}\``)
+    if (view.markdown.length === 0) throw new RecapError('NO_SUMMARY', `"${meeting.title}" has no summary yet; run \`recap process ${meeting.id}\``)
     return { data: view, text: view.markdown.trimEnd() }
   })
 }
