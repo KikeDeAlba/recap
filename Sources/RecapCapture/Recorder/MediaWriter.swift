@@ -8,6 +8,7 @@ package final class MediaWriter {
     }
 
     package var onFailure: ((Error) -> Void)?
+    package var onStart: ((CMTime) -> Void)?
 
     private let writer: AVAssetWriter
     private let inputs: [AVAssetWriterInput]
@@ -33,6 +34,7 @@ package final class MediaWriter {
     }
 
     package var hasSamples: Bool { sessionStart != nil }
+    package var endTime: CMTime? { lastEnd.isValid ? lastEnd : nil }
 
     package func append(_ sampleBuffer: CMSampleBuffer, track index: Int) {
         guard !failed, sampleBuffer.isValid, sampleBuffer.numSamples > 0 else { return }
@@ -41,6 +43,7 @@ package final class MediaWriter {
         if sessionStart == nil {
             writer.startSession(atSourceTime: pts)
             sessionStart = pts
+            onStart?(pts)
         }
         guard let sessionStart, pts >= sessionStart else { return }
         let input = inputs[index]

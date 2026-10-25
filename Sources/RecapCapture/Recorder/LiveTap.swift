@@ -40,8 +40,11 @@ package final class LiveTap {
     }
 
     package func append(_ sampleBuffer: CMSampleBuffer, channel: Channel) {
+        append(sampleBuffer, channel: channel, at: sampleBuffer.presentationTimeStamp)
+    }
+
+    package func append(_ sampleBuffer: CMSampleBuffer, channel: Channel, at pts: CMTime) {
         guard sampleBuffer.isValid, sampleBuffer.numSamples > 0 else { return }
-        let pts = sampleBuffer.presentationTimeStamp
         guard pts.isValid else { return }
         mark(pts)
         originLock.lock()
