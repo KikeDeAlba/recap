@@ -121,6 +121,11 @@ package final class SerialWork {
     }
 
     @MainActor
+    package func runUnlessClosed(_ body: @escaping @MainActor () async -> Void) async {
+        _ = try? await run(body)
+    }
+
+    @MainActor
     package func close() async {
         closed = true
         await last?.value
@@ -346,7 +351,10 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
             self.manifest.update { $0.markSegmentStart(file, atMs: atMs) }
         }
         created.onStop = { [weak self, weak created] error in
-            Task { @MainActor in await self?.segmentStopped(created, error: error) }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.work.runUnlessClosed { await self.segmentStopped(created, error: error) }
+            }
         }
         do {
             try await created.start(filter: filter, configuration: configuration(width: size.width, height: size.height))

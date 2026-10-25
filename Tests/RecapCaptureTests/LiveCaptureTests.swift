@@ -167,6 +167,28 @@ private actor Steps {
         await #expect(throws: RecapError.self) { try await work.run { 3 } }
         #expect(await steps.items == ["set begins", "set ends", "closed"])
     }
+
+    @Test @MainActor func aStopReportWaitsForTheQueuedSetAndIsSkippedOnceClosed() async throws {
+        let work = SerialWork()
+        let steps = Steps()
+        var segment = "screen-1"
+        let set = Task { @MainActor in
+            try await work.run {
+                try await Task.sleep(nanoseconds: 150_000_000)
+                segment = "screen-2"
+                await steps.add("set opened \(segment)")
+            }
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let stopped = "screen-1"
+        await work.runUnlessClosed {
+            await steps.add(stopped == segment ? "closed \(segment)" : "kept \(segment)")
+        }
+        try await set.value
+        await work.close()
+        await work.runUnlessClosed { await steps.add("after close") }
+        #expect(await steps.items == ["set opened screen-2", "kept screen-2"])
+    }
 }
 
 @Suite struct ControlServerTests {
