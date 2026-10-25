@@ -31,7 +31,8 @@ export async function startCommand(argv: string[]): Promise<number> {
       bitaEntryId: args.int('bita-entry'),
       timeout: args.number('timeout') ?? 60,
     })
-    return { data: meetingRecord(located.meeting, located.dir), text: `Recording ${located.meeting.mode} meeting "${located.meeting.title}"\n${located.dir}` }
+    const note = located.meeting.fallback === undefined ? '' : `\nRecap.app does not support meeting mode yet; recording the microphone only as an ${located.meeting.fallback} meeting. Update it with \`recap setup\`.`
+    return { data: meetingRecord(located.meeting, located.dir), text: `Recording ${located.meeting.mode} meeting "${located.meeting.title}"${note}\n${located.dir}` }
   })
 }
 

@@ -45,6 +45,23 @@ export function captureUnavailable(missing: readonly string[] = [], detail?: str
   })
 }
 
+export const MEETING_CAPABILITY = 'capture.meeting'
+
+export function captureBinary(launcher: CaptureLauncher): string | null {
+  if (launcher.kind === 'binary') return launcher.binary
+  return hasCaptureBinary(launcher.app) ? path.join(launcher.app, 'Contents', 'MacOS', 'recap-capture') : null
+}
+
+export async function captureCapabilities(launcher: CaptureLauncher, run: (command: string, args: string[]) => ReturnType<typeof exec> = exec): Promise<string[]> {
+  const binary = captureBinary(launcher)
+  if (binary === null) return []
+  const result = await run(binary, ['capabilities', '--json']).catch(() => null)
+  if (result === null || result.status !== 0) return []
+  const data = parseEnvelope(result.stdout)?.data
+  if (!isRecord(data) || !Array.isArray(data['capabilities'])) return []
+  return data['capabilities'].filter((item): item is string => typeof item === 'string')
+}
+
 export async function liveWorkerCommand(ctx?: PlatformContext): Promise<string[]> {
   return [...(await stableCommand(ctx)), 'live-worker']
 }

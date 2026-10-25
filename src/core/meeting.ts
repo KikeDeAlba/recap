@@ -78,6 +78,7 @@ export interface Meeting {
   stages: Record<string, StageState>
   video?: VideoCompression | undefined
   videoRemovedAt?: string | undefined
+  fallback?: MeetingMode | undefined
   [key: string]: unknown
 }
 
@@ -201,7 +202,7 @@ export class MeetingStore {
     this.root = rootDir(config)
   }
 
-  create(options: { title: string; mode: MeetingMode; display?: number | undefined; bitaEntryId?: number | undefined; bita?: BitaTarget | undefined; now?: Date }): Located {
+  create(options: { title: string; mode: MeetingMode; fallback?: MeetingMode | undefined; display?: number | undefined; bitaEntryId?: number | undefined; bita?: BitaTarget | undefined; now?: Date }): Located {
     mkdirSync(this.root, { recursive: true })
     const now = options.now ?? new Date()
     const base = `${idStamp(now)}-${slug(options.title)}`
@@ -220,6 +221,7 @@ export class MeetingStore {
       mode: options.mode,
       status: 'starting',
       createdAt: isoDate(now),
+      fallback: options.fallback,
       display: options.display,
       bitaEntryId: options.bitaEntryId,
       bitaDatabasePath: options.bita?.databasePath,

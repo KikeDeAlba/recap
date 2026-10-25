@@ -18,6 +18,7 @@ export function meetingRecord(meeting: Meeting, dir: string, detailed = false): 
     id: meeting.id,
     title: meeting.title,
     mode: meeting.mode,
+    fallback: meeting.fallback,
     status: meeting.status,
     createdAt: meeting.createdAt,
     startedAt: meeting.startedAt,

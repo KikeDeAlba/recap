@@ -7,7 +7,8 @@ import { MeetingStore, decodeMeeting, encodeMeeting, loadMeeting, recordingFileN
 import { meetingRecord } from '../src/core/record.ts'
 import { captureChannels } from '../src/capture/sources.ts'
 import { defaultTitle, startRecording } from '../src/capture/recording.ts'
-import type { Recorder } from '../src/capture/recorder.ts'
+import { MacAppRecorder, type Recorder } from '../src/capture/recorder.ts'
+import { captureCapabilities } from '../src/capture/capture.ts'
 import { modeFrom } from '../src/cli/commands/recording.ts'
 import { hasVideo } from '../src/media/media.ts'
 import { channelsOf } from '../src/pipeline/pipeline.ts'
@@ -44,11 +45,12 @@ const SEGMENTS = [
   { startMs: 40_000, endMs: 42_000, channel: 'mic', text: 'Siguiente tema.' },
 ]
 
-function fakeRecorder(): Recorder {
+function fakeRecorder(meetingMode = true): Recorder {
   return {
     kind: 'ffmpeg-linux',
     check: async () => ({ ok: true, missing: [] }),
     permissions: async () => ({ microphone: 'granted', screen: 'not-required' }),
+    supports: async (mode) => mode !== 'meeting' || meetingMode,
     launch: async (dir: string) => {
       updateMeeting(dir, (current) => {
         current.status = 'recording'
@@ -83,6 +85,53 @@ test('startRecording keeps the meeting mode in meeting.json and active.json', as
   assert.equal(located.meeting.title, 'Meeting')
   assert.equal(loadMeeting(located.dir).mode, 'meeting')
   assert.equal(loadActive()?.mode, 'meeting')
+  assert.equal(loadMeeting(located.dir).fallback, undefined)
+  assert.equal(meetingRecord(located.meeting, located.dir)['fallback'], undefined)
+})
+
+test('startRecording falls back to in-person when the recorder lacks capture.meeting', async (t) => {
+  const root = tempDir(t)
+  t.after(clearActive)
+  const located = await startRecording({ title: '', mode: 'meeting', timeout: 2, config: { root }, recorder: fakeRecorder(false) })
+  assert.equal(located.meeting.mode, 'in-person')
+  assert.equal(located.meeting.fallback, 'in-person')
+  assert.equal(located.meeting.title, 'Meeting')
+  assert.equal(loadMeeting(located.dir).fallback, 'in-person')
+  assert.equal(loadActive()?.mode, 'in-person')
+  assert.equal(meetingRecord(located.meeting, located.dir)['fallback'], 'in-person')
+})
+
+test('startRecording keeps an explicit mode even when the recorder lacks capture.meeting', async (t) => {
+  t.after(clearActive)
+  const located = await startRecording({ title: 'Retro', mode: 'remote', timeout: 2, config: { root: tempDir(t) }, recorder: fakeRecorder(false) })
+  assert.equal(located.meeting.mode, 'remote')
+  assert.equal(located.meeting.fallback, undefined)
+})
+
+test('the mac recorder supports meeting mode only when recap-capture announces capture.meeting', async () => {
+  const app = { kind: 'app', app: '/Applications/Recap.app' } as const
+  const modern = new MacAppRecorder(async () => app, async () => ['capture.in-person', 'capture.meeting'])
+  const legacy = new MacAppRecorder(async () => app, async () => ['capture.remote', 'capture.in-person'])
+  const missing = new MacAppRecorder(async () => null, async () => [])
+  assert.equal(await modern.supports('meeting'), true)
+  assert.equal(await legacy.supports('meeting'), false)
+  assert.equal(await legacy.supports('in-person'), true)
+  assert.equal(await missing.supports('meeting'), true)
+})
+
+test('captureCapabilities reads the envelope and treats failures as no capabilities', async (t) => {
+  const binary = { kind: 'binary', binary: '/usr/local/bin/recap-capture' } as const
+  const envelope = JSON.stringify({ schemaVersion: 1, ok: true, command: 'capabilities', generatedAt: '2026-10-24T10:00:00Z', data: { name: 'recap-capture', capabilities: ['capture.meeting', 3] } })
+  const calls: string[][] = []
+  const found = await captureCapabilities(binary, async (command, args) => {
+    calls.push([command, ...args])
+    return { status: 0, stdout: envelope, stderr: '', signal: null }
+  })
+  assert.deepEqual(found, ['capture.meeting'])
+  assert.deepEqual(calls, [['/usr/local/bin/recap-capture', 'capabilities', '--json']])
+  assert.deepEqual(await captureCapabilities(binary, async () => ({ status: 64, stdout: '', stderr: 'unknown command', signal: null })), [])
+  assert.deepEqual(await captureCapabilities(binary, async () => Promise.reject(new Error('ENOENT'))), [])
+  assert.deepEqual(await captureCapabilities({ kind: 'app', app: tempDir(t) }, async () => ({ status: 0, stdout: envelope, stderr: '', signal: null })), [])
 })
 
 test('meeting.json and active.json round-trip the meeting mode', (t) => {
