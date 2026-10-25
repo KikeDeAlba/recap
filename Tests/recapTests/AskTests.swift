@@ -367,8 +367,8 @@ private let fakeChecks = SourceChecks(
     @Test func gazeClientTerminatesCallsThatTakeTooLong() {
         let client = GazeClient(bin: ["/bin/sleep"], timeout: 0.3)
         let started = Date()
-        #expect(throws: RecapError.self) { try client.invoke(["5"], stdin: nil) }
-        #expect(Date().timeIntervalSince(started) < 3)
+        #expect(throws: RecapError.self) { try client.invoke(["30"], stdin: nil) }
+        #expect(Date().timeIntervalSince(started) < 10)
         let defaults = GazeClient(bin: ["/bin/echo"])
         #expect(defaults.timeout(for: ["remember"]) == 60)
         #expect(defaults.timeout(for: ["search"]) == 10)

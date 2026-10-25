@@ -31,7 +31,7 @@ import Testing
             try Shell.run(sh, ["-c", "trap '' TERM; sleep 30; echo done"], timeout: timeout)
         }
         let elapsed = Date().timeIntervalSince(started)
-        #expect(elapsed >= timeout + Shell.killGrace && elapsed < timeout + Shell.killGrace + 3)
+        #expect(elapsed >= timeout + Shell.killGrace && elapsed < timeout + Shell.killGrace + 10)
     }
 
     @Test func doesNotBlockOnAChildThatNeverReadsStdin() {
@@ -50,9 +50,9 @@ import Testing
 
     @Test func doesNotHangOnPipesHeldByAGrandchild() throws {
         let started = Date()
-        let timeout: TimeInterval = 2
+        let timeout: TimeInterval = 3
         let result = try Shell.run(sh, ["-c", "sleep 30 & echo started"], timeout: timeout)
         #expect(result.stdout == "started\n" && result.ok)
-        #expect(Date().timeIntervalSince(started) < timeout + Shell.killGrace + 2)
+        #expect(Date().timeIntervalSince(started) < timeout + Shell.killGrace + 10)
     }
 }

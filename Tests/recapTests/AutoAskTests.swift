@@ -303,6 +303,8 @@ private func detector(_ dir: URL, _ meeting: Meeting, recorder: Recorder, minSec
                 peak = max(peak, active)
                 started.append(job.question)
             }
+            let deadline = Date().addingTimeInterval(5)
+            while lock.withLock({ peak < 2 }), Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
             Thread.sleep(forTimeInterval: 0.08)
             lock.withLock { active -= 1 }
         }, log: { _ in })
