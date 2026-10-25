@@ -168,7 +168,7 @@ recap asks the installed recorder (`recap-capture capabilities --json`) whether 
  "channels": ["mic"]}
 ```
 
-`recap summary <meeting> --json` returns `summary.md` as `markdown`, the items under `## Acuerdos` as `agreements`, and the action items: the `pending` items of the wrap-up (`wrapup.json`) with the inkwell backlog key they got, or, without a wrap-up, the `Pendiente` column under `## Pendientes`. Anything not written yet comes back empty (`""` or `[]`). Without `--json` it prints `summary.md`, or fails with `NO_SUMMARY`.
+`recap summary <meeting> --json` returns `summary.md` as `markdown`, the items under `## Acuerdos` as `agreements`, and the action items: the `pending` items of the wrap-up (`wrapup.json`) with the inkwell backlog key they got, or, without a wrap-up, the `Pendiente` column under `## Pendientes`. Sections not written yet come back empty (`[]`). Without `--json` it prints `summary.md`. With or without `--json`, a meeting with no `summary.md` yet fails with `NO_SUMMARY`, like `transcript` fails with `NO_TRANSCRIPT`.
 
 ```json
 {"markdown": "# Planeación del sprint\n…", "agreements": ["Liberar la versión 0.14 el viernes."],
