@@ -139,6 +139,34 @@ private func response(_ dir: URL, id: String) throws -> [String: Any] {
     }
 }
 
+private actor Steps {
+    var items: [String] = []
+    func add(_ item: String) { items.append(item) }
+}
+
+@Suite struct SerialWorkTests {
+    @Test @MainActor func closeWaitsForTheChangeInFlightAndRefusesTheRest() async throws {
+        let work = SerialWork()
+        let steps = Steps()
+        let first = Task { @MainActor in
+            try await work.run {
+                await steps.add("set begins")
+                try await Task.sleep(nanoseconds: 150_000_000)
+                await steps.add("set ends")
+                return 1
+            }
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let queued = Task { @MainActor in try await work.run { await steps.add("queued"); return 2 } }
+        await work.close()
+        await steps.add("closed")
+        #expect(try await first.value == 1)
+        await #expect(throws: RecapError.self) { try await queued.value }
+        await #expect(throws: RecapError.self) { try await work.run { 3 } }
+        #expect(await steps.items == ["set begins", "set ends", "closed"])
+    }
+}
+
 @Suite struct ControlServerTests {
     @Test func setRequestsReachTheRecorderAndGetTheStatusBack() async throws {
         let dir = try temporaryDirectory()
@@ -359,6 +387,31 @@ private func response(_ dir: URL, id: String) throws -> [String: Any] {
         #expect(SourceCatalog.thumbnailSize(width: 1512, height: 982) == (320, 208))
         #expect(SourceCatalog.thumbnailSize(width: 200, height: 100) == (200, 100))
         #expect(SourceCatalog.thumbnailSize(width: 0, height: 0) == (320, 180))
+        #expect(SourceCatalog.thumbnailSize(width: 400, height: 4_000) == (24, 240))
+        #expect(SourceCatalog.thumbnailSize(width: 20_000, height: 10) == (320, 2))
+    }
+
+    @Test func setWindowRefusesDenRecapAndNonNormalWindows() {
+        let den = WindowCandidate(id: 11, app: "Den", bundleId: "com.kikedealba.den", title: "", pid: 501, width: 50, height: 50)
+        let panel = WindowCandidate(id: 12, app: "zoom.us", bundleId: "us.zoom.xos", title: "", pid: 500, width: 50, height: 50, layer: 3)
+        let own = WindowCandidate(id: 13, app: "Recap", bundleId: "dev.local", title: "x", pid: 42, width: 800, height: 600)
+        let untitled = WindowCandidate(id: 14, app: "zoom.us", bundleId: "us.zoom.xos", title: "", pid: 500, width: 50, height: 50)
+        #expect(!SourceCatalog.isRecordable(den, ownPid: 42))
+        #expect(!SourceCatalog.isRecordable(panel, ownPid: 42))
+        #expect(!SourceCatalog.isRecordable(own, ownPid: 42))
+        #expect(SourceCatalog.isRecordable(untitled, ownPid: 42))
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "com.kikedealba.den", pid: 7, ownPid: 42))
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "us.zoom.xos", pid: 42, ownPid: 42))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "us.zoom.xos", pid: 7, ownPid: 42))
+    }
+
+    @Test func largeThumbnailsAreDropped() throws {
+        let context = try #require(CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        let image = try #require(context.makeImage())
+        #expect(SourceCatalog.jpegDataURL(image) != nil)
+        #expect(SourceCatalog.jpegDataURL(image, maxBytes: 16) == nil)
     }
 
     @Test func thumbnailsAreInlineJPEGDataURLs() throws {

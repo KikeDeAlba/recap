@@ -94,6 +94,9 @@ package struct WindowCandidate: Equatable {
 package enum SourceCatalog {
     package static let excludedBundlePrefixes = ["com.kikedealba.den", "com.kikedealba.recap"]
     package static let thumbnailWidth = 320
+    package static let thumbnailHeight = 240
+    package static let maxThumbnailBytes = 128 * 1024
+    package static let maxThumbnails = 48
     package static let minimumWindowWidth = 120
     package static let minimumWindowHeight = 80
     package static let jpegQuality = 0.7
@@ -102,27 +105,35 @@ package enum SourceCatalog {
         excludedBundlePrefixes.contains { bundleId == $0 || bundleId.hasPrefix($0 + ".") }
     }
 
+    package static func isExcludedApplication(bundleId: String, pid: Int32, ownPid: Int32 = getpid()) -> Bool {
+        pid == ownPid || isExcluded(bundleId: bundleId)
+    }
+
+    package static func isRecordable(_ window: WindowCandidate, ownPid: Int32 = getpid()) -> Bool {
+        window.layer == 0 && !window.bundleId.isEmpty
+            && !isExcludedApplication(bundleId: window.bundleId, pid: window.pid, ownPid: ownPid)
+    }
+
     package static func selectWindows(_ candidates: [WindowCandidate], ownPid: Int32 = getpid()) -> [WindowCandidate] {
         candidates.filter { window in
-            window.layer == 0 && window.onScreen && window.pid != ownPid
+            isRecordable(window, ownPid: ownPid) && window.onScreen
                 && window.width >= minimumWindowWidth && window.height >= minimumWindowHeight
-                && !window.bundleId.isEmpty && !isExcluded(bundleId: window.bundleId)
                 && !window.title.trimmed.isEmpty
         }
     }
 
-    package static func thumbnailSize(width: Int, height: Int, maxWidth: Int = thumbnailWidth) -> (width: Int, height: Int) {
-        guard width > 0, height > 0 else { return (maxWidth, maxWidth * 9 / 16) }
-        let scaledWidth = min(maxWidth, width)
-        let scaledHeight = max(2, Int((Double(height) * Double(scaledWidth) / Double(width)).rounded()))
-        return (scaledWidth, scaledHeight)
+    package static func thumbnailSize(width: Int, height: Int, maxWidth: Int = thumbnailWidth,
+                                      maxHeight: Int = thumbnailHeight) -> (width: Int, height: Int) {
+        guard width > 0, height > 0 else { return (maxWidth, min(maxHeight, maxWidth * 9 / 16)) }
+        let scale = min(1, Double(maxWidth) / Double(width), Double(maxHeight) / Double(height))
+        return (max(2, Int((Double(width) * scale).rounded())), max(2, Int((Double(height) * scale).rounded())))
     }
 
-    package static func jpegDataURL(_ image: CGImage, quality: Double = jpegQuality) -> String? {
+    package static func jpegDataURL(_ image: CGImage, quality: Double = jpegQuality, maxBytes: Int = maxThumbnailBytes) -> String? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { return nil }
+        guard CGImageDestinationFinalize(destination), data.length <= maxBytes else { return nil }
         return "data:image/jpeg;base64," + (data as Data).base64EncodedString()
     }
 
@@ -166,37 +177,76 @@ package enum SourceCatalog {
     }
 
     package static func excludedApplications(_ content: SCShareableContent) -> [SCRunningApplication] {
-        content.applications.filter { isExcluded(bundleId: $0.bundleIdentifier) || $0.processID == getpid() }
+        content.applications.filter { isExcludedApplication(bundleId: $0.bundleIdentifier, pid: $0.processID) }
+    }
+
+    package static func excludedPids(_ content: SCShareableContent) -> Set<Int32> {
+        Set(excludedApplications(content).map(\.processID))
+    }
+
+    package static func recordableWindow(_ id: UInt32, content: SCShareableContent) throws -> SCWindow {
+        guard let window = content.windows.first(where: { $0.windowID == id }) else {
+            throw RecapError("WINDOW_GONE", "Window \(id) is closed or no longer on screen")
+        }
+        guard let candidate = candidate(window), isRecordable(candidate) else {
+            throw RecapError("CAPTURE_UNSUPPORTED", "Window \(id) belongs to Den or Recap or is not a regular app window, so it is not recorded")
+        }
+        return window
     }
 
     package static func displayFilter(_ display: SCDisplay, content: SCShareableContent) -> SCContentFilter {
         SCContentFilter(display: display, excludingApplications: excludedApplications(content), exceptingWindows: [])
     }
 
+    private struct ThumbnailJob {
+        var display: Int?
+        var window: Int?
+        var filter: SCContentFilter
+        var width: Int
+        var height: Int
+    }
+
     @MainActor
     package static func list(thumbnails: Bool) async throws -> CaptureSources {
         let content = try await shareableContent()
         let mainID = CGMainDisplayID()
-        var displays: [DisplaySource] = []
-        for display in content.displays {
-            var source = DisplaySource(id: display.displayID, name: displayName(display.displayID),
-                                       width: display.width, height: display.height, main: display.displayID == mainID)
-            if thumbnails {
-                source.thumbnail = await thumbnail(displayFilter(display, content: content), width: display.width, height: display.height)
+        var displays = content.displays.map { display in
+            DisplaySource(id: display.displayID, name: displayName(display.displayID),
+                          width: display.width, height: display.height, main: display.displayID == mainID)
+        }
+        let candidates = selectWindows(content.windows.compactMap(candidate))
+        var windows = candidates.map(\.source)
+        if thumbnails {
+            let byDisplay = Dictionary(content.displays.map { ($0.displayID, $0) }, uniquingKeysWith: { first, _ in first })
+            let byWindow = Dictionary(content.windows.map { ($0.windowID, $0) }, uniquingKeysWith: { first, _ in first })
+            var jobs: [ThumbnailJob] = []
+            for (index, source) in displays.enumerated() {
+                guard let display = byDisplay[source.id] else { continue }
+                jobs.append(ThumbnailJob(display: index, window: nil, filter: displayFilter(display, content: content),
+                                         width: source.width, height: source.height))
             }
-            displays.append(source)
+            for (index, source) in windows.enumerated() {
+                guard let window = byWindow[source.id] else { continue }
+                jobs.append(ThumbnailJob(display: nil, window: index, filter: SCContentFilter(desktopIndependentWindow: window),
+                                         width: source.width, height: source.height))
+            }
+            let images = await withTaskGroup(of: (Int, String?).self) { group in
+                for (position, job) in jobs.prefix(maxThumbnails).enumerated() {
+                    group.addTask { (position, await thumbnail(job.filter, width: job.width, height: job.height)) }
+                }
+                var found: [Int: String] = [:]
+                for await (position, image) in group {
+                    if let image { found[position] = image }
+                }
+                return found
+            }
+            for (position, image) in images {
+                let job = jobs[position]
+                if let index = job.display { displays[index].thumbnail = image }
+                if let index = job.window { windows[index].thumbnail = image }
+            }
         }
         displays.sort { $0.main && !$1.main }
-        let byId = Dictionary(content.windows.map { ($0.windowID, $0) }, uniquingKeysWith: { first, _ in first })
-        var windows: [WindowSource] = []
-        for candidate in selectWindows(content.windows.compactMap(candidate)) {
-            var source = candidate.source
-            if thumbnails, let window = byId[candidate.id] {
-                source.thumbnail = await thumbnail(SCContentFilter(desktopIndependentWindow: window),
-                                                   width: candidate.width, height: candidate.height)
-            }
-            windows.append(source)
-        }
         return CaptureSources(displays: displays, windows: windows)
     }
 

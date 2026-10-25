@@ -101,6 +101,32 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 
+package final class SerialWork {
+    private var last: Task<Void, Never>?
+    private var closed = false
+
+    package init() {}
+
+    @MainActor
+    package func run<T>(_ body: @escaping @MainActor () async throws -> T) async throws -> T {
+        guard !closed else { throw ControlServer.notRecording }
+        let previous = last
+        let work = Task { @MainActor () async throws -> T in
+            await previous?.value
+            guard !self.closed else { throw ControlServer.notRecording }
+            return try await body()
+        }
+        last = Task { @MainActor in _ = try? await work.value }
+        return try await work.value
+    }
+
+    @MainActor
+    package func close() async {
+        closed = true
+        await last?.value
+    }
+}
+
 package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, AVCaptureAudioDataOutputSampleBufferDelegate {
     package static let videoWidth = 1280
 
@@ -119,6 +145,10 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     private var canvas: (width: Int, height: Int)?
     private var micRunning = false
     private var stopped = false
+    private let work = SerialWork()
+    private var exclusionWatch: Task<Void, Never>?
+    private var appliedExclusions: Set<Int32> = []
+    package static let exclusionInterval: UInt64 = 2_000_000_000
 
     package init(dir: URL, liveTap: LiveTap? = nil) {
         self.dir = dir
@@ -155,11 +185,15 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         guard session.isRunning else { throw RecapError("CAPTURE_SETUP", "The microphone capture session did not start") }
         sessionClock = session.synchronizationClock
         micRunning = true
+        watchExclusions()
     }
 
     @MainActor
     package func stop() async {
         stopped = true
+        exclusionWatch?.cancel()
+        exclusionWatch = nil
+        await work.close()
         await endSegment()
         session.stopRunning()
         await withCheckedContinuation { continuation in micQueue.async { continuation.resume() } }
@@ -198,34 +232,69 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     }
 
     @MainActor
-    package func setTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
+    private func exclusive<T>(_ body: @escaping @MainActor () async throws -> T) async throws -> T {
         guard !stopped else { throw ControlServer.notRecording }
+        return try await work.run(body)
+    }
+
+    @MainActor
+    package func setTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
+        try await exclusive { try await self.applyTarget(target) }
+    }
+
+    @MainActor
+    private func applyTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
         let content = try await SourceCatalog.shareableContent()
         let (filter, video) = try resolve(target, content: content)
-        if segment != nil, manifest.current.video?.ref == target { return status }
         if let segment {
             do {
                 try await segment.update(filter: filter)
-                manifest.update { $0.switchTarget(video, atMs: nowMs) }
+                if target.kind == .display { appliedExclusions = SourceCatalog.excludedPids(content) }
+                if manifest.current.video?.ref != target { manifest.update { $0.switchTarget(video, atMs: nowMs) } }
                 return status
             } catch {
                 await endSegment()
             }
         }
         try await beginSegment(filter: filter, video: video, content: content)
+        if target.kind == .display { appliedExclusions = SourceCatalog.excludedPids(content) }
         return status
     }
 
     @MainActor
     package func clearTarget() async throws -> CaptureStatus {
-        guard !stopped else { throw ControlServer.notRecording }
-        await endSegment()
-        return status
+        try await exclusive {
+            await self.endSegment()
+            return self.status
+        }
     }
 
     @MainActor
     package func sources(thumbnails: Bool) async throws -> CaptureSources {
         try await SourceCatalog.list(thumbnails: thumbnails)
+    }
+
+    @MainActor
+    private func watchExclusions() {
+        exclusionWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: MeetingRecorder.exclusionInterval)
+                guard let self, !Task.isCancelled, !self.stopped else { return }
+                guard self.segment != nil, self.manifest.current.video?.kind == .display else { continue }
+                _ = try? await self.exclusive { try await self.refreshDisplayExclusions() }
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshDisplayExclusions() async throws {
+        guard let segment, let video = manifest.current.video, video.kind == .display else { return }
+        let content = try await SourceCatalog.shareableContent()
+        let excluded = SourceCatalog.excludedPids(content)
+        guard excluded != appliedExclusions,
+              let display = content.displays.first(where: { $0.displayID == video.id }) else { return }
+        try await segment.update(filter: SourceCatalog.displayFilter(display, content: content))
+        appliedExclusions = excluded
     }
 
     @MainActor
@@ -238,9 +307,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
             let video = CaptureVideo(kind: .display, id: target.id, title: SourceCatalog.displayName(target.id), app: nil, since: Date())
             return (SourceCatalog.displayFilter(display, content: content), video)
         case .window:
-            guard let window = content.windows.first(where: { $0.windowID == target.id }) else {
-                throw RecapError("WINDOW_GONE", "Window \(target.id) is closed or no longer on screen")
-            }
+            let window = try SourceCatalog.recordableWindow(target.id, content: content)
             let app = window.owningApplication?.applicationName
             let title = window.title.flatMap { $0.trimmed.isEmpty ? nil : $0 } ?? app ?? "Window \(target.id)"
             let video = CaptureVideo(kind: .window, id: target.id, title: title, app: app, since: Date())
