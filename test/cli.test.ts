@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
@@ -47,6 +47,34 @@ test('start fails with CAPTURE_UNAVAILABLE when there is no recorder', async (t)
   assert.equal(envelope?.error?.code, 'CAPTURE_UNAVAILABLE')
   assert.ok(envelope?.error?.hint)
   assert.ok(!existsSync(path.join(env['RECAP_ROOT'] ?? '', 'x')) || readdirSync(env['RECAP_ROOT'] ?? '').length === 0)
+})
+
+test('start without a mode flag goes on to look for the recorder instead of asking for a mode', async (t) => {
+  const env = sandboxEnv(tempDir(t), { PATH: path.dirname(process.execPath) })
+  const result = await recap(['start', 'Daily', '--json'], env)
+  assert.equal(parseEnvelope(result.stdout)?.error?.code, 'CAPTURE_UNAVAILABLE')
+  const both = await recap(['start', '--remote', '--in-person', '--json'], env)
+  assert.equal(parseEnvelope(both.stdout)?.error?.code, 'USAGE')
+})
+
+test('transcript and summary print the meeting fixture as JSON', async (t) => {
+  const env = sandboxEnv(tempDir(t))
+  cpSync(path.join(PACKAGE_ROOT, 'test', 'fixtures', 'meeting'), env['RECAP_ROOT'] ?? '', { recursive: true })
+  const transcript = parseEnvelope((await recap(['transcript', 'planeacion', '--json'], env)).stdout)
+  assert.equal(transcript?.ok, true)
+  const view = transcript?.data as { segments: unknown[]; paragraphs: { start: number; speaker: string | null; text: string }[]; channels: string[] }
+  assert.deepEqual(view.segments[1], { start: 2.5, end: 6.25, channel: 'mic', text: 'La versión 0.14 sale el viernes.' })
+  assert.deepEqual(view.paragraphs.map((paragraph) => paragraph.start), [0, 720])
+  assert.deepEqual(view.channels, ['mic'])
+  const summary = parseEnvelope((await recap(['summary', '--bita-entry', '42', '--json'], env)).stdout)
+  assert.deepEqual((summary?.data as { agreements: string[] }).agreements, ['Liberar la versión 0.14 el viernes.'])
+  assert.deepEqual((summary?.data as { actionItems: unknown[] }).actionItems, [{ text: 'Preparar las notas de la versión 0.14', backlogKey: 'PEND-12' }])
+  const text = await recap(['summary', 'last'], env)
+  assert.match(text.stdout, /^# Planeación del sprint/)
+  const listed = parseEnvelope((await recap(['list', '--json'], env)).stdout)
+  assert.equal((listed?.data as { mode: string }[])[0]?.mode, 'meeting')
+  const missing = parseEnvelope((await recap(['transcript', 'nope', '--json'], env)).stdout)
+  assert.equal(missing?.error?.code, 'MEETING_NOT_FOUND')
 })
 
 test('setup registers the manifest and installs the agent integration', async (t) => {

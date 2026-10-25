@@ -1,0 +1,5 @@
+[
+  { "startMs" : 0, "endMs" : 2000, "channel" : "mic", "text" : "Buenos días, empezamos la planeación." },
+  { "startMs" : 2500, "endMs" : 6250, "channel" : "mic", "text" : "La versión 0.14 sale el viernes." },
+  { "startMs" : 720000, "endMs" : 724000, "channel" : "mic", "text" : "Ana prepara las notas de la versión." }
+]

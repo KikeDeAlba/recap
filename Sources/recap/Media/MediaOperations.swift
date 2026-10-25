@@ -89,8 +89,8 @@ struct MediaOperations {
     }
 
     private func requireVideo(meeting: Meeting, dir: URL) throws {
-        guard meeting.mode == .remote else {
-            throw RecapError("NOT_REMOTE", "\"\(meeting.title)\" is an in-person meeting and has no video")
+        guard meeting.mode != .inPerson else {
+            throw RecapError("NOT_REMOTE", "\"\(meeting.title)\" was recorded with the microphone only and has no video")
         }
         try Self.requireIdle(meeting)
         guard MeetingMedia.hasVideo(dir: dir, mode: meeting.mode) else {

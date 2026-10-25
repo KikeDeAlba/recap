@@ -104,6 +104,8 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         #expect(MeetingMode.remote.recordingFileName == "recording.mov")
         #expect(MeetingMode.inPerson.recordingFileName == "recording.m4a")
         #expect(MeetingMode(rawValue: "in-person") == .inPerson)
+        #expect(MeetingMode.meeting.recordingFileName == "recording.m4a")
+        #expect(MeetingMode(rawValue: "meeting") == .meeting)
     }
 
     @Test func unreadableMeetingFailsWithACode() throws {
@@ -200,6 +202,10 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         #expect(try TestRoot.parseAsRoot(["record", "/tmp/m"]) is CaptureRecordCommand)
         #expect(try TestRoot.parseAsRoot(["permissions", "--json"]) is CapturePermissionsCommand)
         #expect(try TestRoot.parseAsRoot(["capabilities", "--json"]) is CaptureCapabilitiesCommand)
+        let sources = try #require(try TestRoot.parseAsRoot(["sources", "--thumbnails", "--json"]) as? CaptureSourcesCommand)
+        #expect(sources.thumbnails)
+        #expect(sources.output.json)
+        #expect(try #require(try TestRoot.parseAsRoot(["sources"]) as? CaptureSourcesCommand).thumbnails == false)
     }
 
     @Test func unknownCommandsWithJSONPrintAUsageEnvelope() throws {
@@ -233,7 +239,8 @@ private func jsonObject(_ text: String) throws -> [String: Any] {
         #expect(data["name"] as? String == "recap-capture")
         #expect(data["version"] as? String == CaptureTool.version)
         #expect(data["envelope"] as? Int == 1)
-        #expect(data["capabilities"] as? [String] == ["capture.remote", "capture.in-person", "capture.live-chunks"])
+        #expect(data["capabilities"] as? [String] == ["capture.remote", "capture.in-person", "capture.meeting", "capture.live-chunks",
+                                                     "capture.sources", "capture.switch"])
         #expect(data["emits"] as? [String] == [])
     }
 

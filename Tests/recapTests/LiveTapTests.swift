@@ -58,4 +58,26 @@ import Testing
         #expect(abs(samples - (speech.endMs - speech.startMs) * 16) <= 16)
         #expect(entries.last?.endMs ?? 0 >= 6_900)
     }
+
+    @Test func flushingTheCallChannelWritesItsTailAndLeavesTheMicrophoneBuffered() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "recap-tap-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tap = try LiveTap(meetingDir: dir, maxChunkSeconds: 20)
+        var time = 50.0
+        for _ in 0..<20 {
+            tap.append(try sampleBuffer(seconds: 0.1, amplitude: 0.3, at: time), channel: .mic)
+            tap.append(try sampleBuffer(seconds: 0.1, amplitude: 0.3, at: time), channel: .system)
+            time += 0.1
+        }
+        tap.flush(.system)
+        let flushed = JSONLines.read(ChunkIndexEntry.self, from: LiveFiles.chunkIndex(dir))
+        #expect(flushed.map(\.channel) == [.system])
+        #expect(flushed.first?.file == "system-00001.wav")
+        #expect((1_900...2_100).contains(flushed.first?.endMs ?? 0))
+        tap.flush(.system)
+        #expect(JSONLines.read(ChunkIndexEntry.self, from: LiveFiles.chunkIndex(dir)).count == 1)
+        tap.finish()
+        let entries = JSONLines.read(ChunkIndexEntry.self, from: LiveFiles.chunkIndex(dir))
+        #expect(entries.map(\.channel) == [.system, .mic])
+    }
 }

@@ -5,13 +5,15 @@ import Foundation
 
 package enum CaptureTool {
     package static let name = "recap-capture"
-    package static let version = "0.13.0"
+    package static let version = "0.14.0"
     package static let envelope = 1
-    package static let capabilities = ["capture.remote", "capture.in-person", "capture.live-chunks"]
+    package static let capabilities = ["capture.remote", "capture.in-person", "capture.meeting", "capture.live-chunks",
+                                       "capture.sources", "capture.switch"]
     package static let subcommands: [ParsableCommand.Type] = [
         CaptureRecordCommand.self,
         CapturePermissionsCommand.self,
         CaptureCapabilitiesCommand.self,
+        CaptureSourcesCommand.self,
     ]
 
     package static func run<T: Encodable>(_ command: String, json: Bool, _ body: () throws -> (T, String)) throws {
@@ -53,7 +55,8 @@ package struct CaptureRecordCommand: ParsableCommand {
         abstract: "Record the meeting in <meetingDir> until SIGINT or SIGTERM.",
         discussion: """
         Reads meeting.json (mode, display), writes status, recorderPid, startedAt and endedAt back to it, \
-        and records to recording.mov (remote) or recording.m4a (in-person). When live.enabled is on, it also \
+        and records to recording.mov (remote) or recording.m4a (in-person). A meeting records the microphone to mic.m4a \
+        and the display or window chosen with control/<id>.request.json to screen-<n>.mov, described in capture.json. When live.enabled is on, it also \
         writes live/chunks/*.wav and live/chunks/index.jsonl and spawns the live worker as \
         <command…> <meetingDir>.
         """
@@ -114,6 +117,42 @@ package struct CapturePermissionsCommand: ParsableCommand {
             let permissions = CapturePermissions.current
             return (permissions, permissions.text)
         }
+    }
+}
+
+package struct CaptureSourcesCommand: ParsableCommand {
+    package static let configuration = CommandConfiguration(
+        commandName: "sources",
+        abstract: "List the displays and windows that a meeting can record.",
+        discussion: "--thumbnails adds a JPEG data URL of about 320 px to each one. The windows of Den and Recap are left out."
+    )
+
+    @Flag(help: "Add a thumbnail to each display and window.")
+    package var thumbnails = false
+
+    @OptionGroup package var output: OutputOptions
+
+    package init() {}
+
+    package func run() throws {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let json = output.json
+        let thumbnails = thumbnails
+        Task { @MainActor in
+            let result: Result<CaptureSources, Error>
+            do {
+                result = .success(try await SourceCatalog.list(thumbnails: thumbnails))
+            } catch {
+                result = .failure(error)
+            }
+            let status: Int32 = (try? CaptureTool.run("sources", json: json) {
+                let sources = try result.get()
+                return (sources, sources.text)
+            }) == nil ? 1 : 0
+            Darwin.exit(status)
+        }
+        app.run()
     }
 }
 

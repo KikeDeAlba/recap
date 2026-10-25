@@ -5,13 +5,13 @@ import { isoNow } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { asIntLoose, extractBetween, isRecord, swiftPretty } from '../core/json.ts'
 import { withDirectoryLockAsync } from '../core/lock.ts'
-import type { Meeting } from '../core/meeting.ts'
+import { hasSystemAudio, hasSystemChannel, modeLabel, type Meeting } from '../core/meeting.ts'
 import { fold, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError, errorMessage } from '../errors.ts'
 import { entryPages, loadProjectContext, meetingProject, type PageRef, type ProjectContext } from '../live/context.ts'
 import { runReadAgent } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
-import type { Channel } from '../pipeline/transcript.ts'
+import { callAudioNote, type Channel } from '../pipeline/transcript.ts'
 import { callInkwell, type ToolCalling } from './client.ts'
 import { meetingDay } from './wrapup.ts'
 
@@ -302,7 +302,7 @@ export class ProposalGenerator {
     }
     const transcript = readText(path.join(dir, 'transcript.md'))
     if (transcript === null) throw new RecapError('NO_TRANSCRIPT', `"${meeting.title}" has no transcript yet`)
-    const prompt = this.render(meeting, context.docsRoot, pages, transcript)
+    const prompt = this.render(meeting, context.docsRoot, pages, transcript, hasSystemAudio(meeting, dir))
     const answer = await this.claude(prompt, [context.docsRoot, dir])
     const parsed = parseProposalPlan(answer, new Set(pages.map((page) => page.pageId)))
     file.discarded = parsed.discarded
@@ -345,16 +345,15 @@ export class ProposalGenerator {
     return file
   }
 
-  render(meeting: Meeting, docsRoot: string, pages: readonly PageRef[], transcript: string): string {
+  render(meeting: Meeting, docsRoot: string, pages: readonly PageRef[], transcript: string, labelled: boolean = hasSystemChannel(meeting)): string {
     const list = pages.map((page) => `  - #${page.pageId} «${page.title}» — ${path.join(docsRoot, page.relPath)}`).join('\n')
-    const speakers =
-      meeting.mode === 'remote'
-        ? 'Hablantes: «Sala» es el micrófono local; «Remotos» es el audio de la llamada.'
-        : 'Hablantes: un solo micrófono en la sala, sin separación por persona.'
+    const speakers = labelled
+      ? `Hablantes: «Sala» es el micrófono local; «Remotos» es el audio de la llamada.${callAudioNote(meeting)}`
+      : 'Hablantes: un solo micrófono en la sala, sin separación por persona.'
     let text = loadResource('proposals-prompt.md')
     text = replaceAll(text, '{{title}}', meeting.bitaEntry?.title ?? meeting.title)
     text = replaceAll(text, '{{date}}', meetingDay(meeting))
-    text = replaceAll(text, '{{mode}}', meeting.mode === 'remote' ? 'remota' : 'presencial')
+    text = replaceAll(text, '{{mode}}', modeLabel(meeting))
     text = replaceAll(text, '{{speakers}}', speakers)
     text = replaceAll(text, '{{docsRoot}}', docsRoot)
     text = replaceAll(text, '{{pages}}', list)

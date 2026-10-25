@@ -14,6 +14,7 @@ import Testing
         #expect(record.meetingDir == "/tmp/meeting")
         #expect(try Recap.parseAsRoot(["capture", "permissions", "--request", "--json"]) is CapturePermissionsCommand)
         #expect(try Recap.parseAsRoot(["capture", "capabilities", "--json"]) is CaptureCapabilitiesCommand)
+        #expect(try Recap.parseAsRoot(["capture", "sources", "--thumbnails", "--json"]) is CaptureSourcesCommand)
     }
 
     @Test func theLegacyRecordCommandStillParses() throws {

@@ -158,3 +158,25 @@ enum Duration {
         return h > 0 ? String(format: "%dh%02dm", h, m) : String(format: "%dm%02ds", m, s)
     }
 }
+
+extension MeetingMode {
+    var modality: String? {
+        switch self {
+        case .remote: "remota"
+        case .inPerson: "presencial"
+        case .meeting: nil
+        }
+    }
+
+    var modeLabel: String { modality ?? "reunión" }
+
+    var meetingLabel: String { modality.map { "reunión \($0)" } ?? "reunión" }
+}
+
+extension Meeting {
+    var modality: String? { fallback == nil ? mode.modality : nil }
+
+    var modeLabel: String { modality ?? "reunión" }
+
+    var meetingLabel: String { modality.map { "reunión \($0)" } ?? "reunión" }
+}
