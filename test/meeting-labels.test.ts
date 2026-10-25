@@ -27,3 +27,18 @@ test('meeting texts name a meeting without a modality and the default title stay
   const prompt = renderSummaryPrompt(value, 'texto', [], '{{mode}}')
   assert.equal(prompt, 'reunión')
 })
+
+test('the summary prompt and header keep the wording of the two old modes', () => {
+  assert.equal(renderSummaryPrompt(meeting({ mode: 'remote' }), 'texto', [], '{{mode}}'), 'remota (videollamada)')
+  assert.equal(renderSummaryPrompt(meeting({ mode: 'in-person' }), 'texto', [], '{{mode}}'), 'presencial')
+  assert.match(meetingHeader(meeting({ mode: 'remote' })), / · reunión remota$/)
+  const speakers = (mode: 'remote' | 'in-person' | 'meeting') => renderSummaryPrompt(meeting({ mode }), 'texto', [], '{{speakers}}')
+  assert.match(speakers('remote'), /«Remotos»/)
+  assert.doesNotMatch(speakers('meeting'), /Remotos/)
+  assert.equal(speakers('meeting'), speakers('in-person'))
+})
+
+test('the default titles are English, distinct per mode and treated as generic', () => {
+  assert.deepEqual(['remote', 'in-person', 'meeting'].map((mode) => defaultTitle(mode as 'remote')), ['Remote meeting', 'In-person meeting', 'Meeting'])
+  for (const mode of ['remote', 'in-person', 'meeting'] as const) assert.ok(isGenericTitle(defaultTitle(mode)))
+})
