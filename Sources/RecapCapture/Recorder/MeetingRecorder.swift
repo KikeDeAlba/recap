@@ -153,7 +153,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     private var stopped = false
     private let work = SerialWork()
     private var exclusionWatch: Task<Void, Never>?
-    private var launchObserver: NSObjectProtocol?
+    private var launchWatcher: LaunchWatcher?
     private var appliedExclusions: Set<Int32> = []
     package static let exclusionInterval: UInt64 = 5_000_000_000
     package static let launchRetryDelay: UInt64 = 300_000_000
@@ -201,8 +201,8 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         stopped = true
         exclusionWatch?.cancel()
         exclusionWatch = nil
-        if let launchObserver { NSWorkspace.shared.notificationCenter.removeObserver(launchObserver) }
-        launchObserver = nil
+        launchWatcher?.stop()
+        launchWatcher = nil
         await work.close()
         await endSegment()
         session.stopRunning()
@@ -286,28 +286,17 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
 
     @MainActor
     private func watchExclusions() {
-        launchObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  SourceCatalog.isExcludedApplication(app) else { return }
-            Task { @MainActor in self?.refreshAfterLaunch() }
+        let watcher = LaunchWatcher(retryDelay: MeetingRecorder.launchRetryDelay) { [weak self] in
+            await self?.refreshExclusionsIfNeeded()
         }
+        watcher.start()
+        launchWatcher = watcher
         exclusionWatch = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: MeetingRecorder.exclusionInterval)
                 guard let self, !Task.isCancelled, !self.stopped else { return }
                 await self.refreshExclusionsIfNeeded()
             }
-        }
-    }
-
-    @MainActor
-    private func refreshAfterLaunch() {
-        Task { @MainActor [weak self] in
-            await self?.refreshExclusionsIfNeeded()
-            try? await Task.sleep(nanoseconds: MeetingRecorder.launchRetryDelay)
-            await self?.refreshExclusionsIfNeeded()
         }
     }
 

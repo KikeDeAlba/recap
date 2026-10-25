@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreMedia
@@ -162,6 +163,79 @@ private actor Gauge {
 private actor Steps {
     var items: [String] = []
     func add(_ item: String) { items.append(item) }
+}
+
+private final class FakeLaunchedApp: NSObject, LaunchedApplication {
+    let bundleIdentifier: String?
+    let processIdentifier: pid_t
+    let executableURL: URL?
+
+    init(bundleIdentifier: String?, processIdentifier: pid_t = 7, executable: String? = nil) {
+        self.bundleIdentifier = bundleIdentifier
+        self.processIdentifier = processIdentifier
+        executableURL = executable.map { URL(fileURLWithPath: $0) }
+    }
+}
+
+@Suite struct LaunchWatcherTests {
+    private func launched(_ center: NotificationCenter, _ app: LaunchedApplication?) {
+        center.post(name: NSWorkspace.didLaunchApplicationNotification, object: nil,
+                    userInfo: app.map { [NSWorkspace.applicationUserInfoKey: $0] })
+    }
+
+    @Test func aLaunchOfDenOrRecapRefreshesAtOnceAndAgainAfterTheDelay() async throws {
+        let center = NotificationCenter()
+        let steps = Steps()
+        let watcher = LaunchWatcher(center: center, retryDelay: 300_000_000) { await steps.add("refresh") }
+        watcher.start()
+        launched(center, FakeLaunchedApp(bundleIdentifier: "com.kikedealba.den"))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let atOnce = await steps.items
+        #expect(atOnce == ["refresh"])
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let afterRetry = await steps.items
+        #expect(afterRetry == ["refresh", "refresh"])
+        watcher.stop()
+        launched(center, FakeLaunchedApp(bundleIdentifier: "com.kikedealba.den"))
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let afterStop = await steps.items
+        #expect(afterStop.count == 2)
+    }
+
+    @Test func otherLaunchesAndNoticesWithoutAnAppAreIgnored() async throws {
+        let center = NotificationCenter()
+        let steps = Steps()
+        let watcher = LaunchWatcher(center: center, retryDelay: 50_000_000, ownPid: 42) { await steps.add("refresh") }
+        watcher.start()
+        defer { watcher.stop() }
+        launched(center, FakeLaunchedApp(bundleIdentifier: "us.zoom.xos"))
+        launched(center, FakeLaunchedApp(bundleIdentifier: nil, executable: "/usr/local/bin/helper"))
+        launched(center, nil)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let ignored = await steps.items
+        #expect(ignored.isEmpty)
+    }
+
+    @Test func anAppWithoutBundleOrExecutableYetIsCheckedAgainAfterTheDelay() async throws {
+        #expect(LaunchWatcher.verdict(bundleId: nil, pid: 7, executable: nil, ownPid: 42) == .retry)
+        #expect(LaunchWatcher.verdict(bundleId: "", pid: 7, executable: nil, ownPid: 42) == .retry)
+        #expect(LaunchWatcher.verdict(bundleId: "com.kikedealba.den", pid: 7, executable: nil, ownPid: 42) == .refresh)
+        #expect(LaunchWatcher.verdict(bundleId: nil, pid: 7, executable: "/w/den/src-tauri/target/debug/den", ownPid: 42) == .refresh)
+        #expect(LaunchWatcher.verdict(bundleId: "us.zoom.xos", pid: 7, executable: nil, ownPid: 42) == .ignore)
+        #expect(LaunchWatcher.verdict(bundleId: nil, pid: 7, executable: "/usr/local/bin/helper", ownPid: 42) == .ignore)
+        let center = NotificationCenter()
+        let steps = Steps()
+        let watcher = LaunchWatcher(center: center, retryDelay: 300_000_000, ownPid: 42) { await steps.add("refresh") }
+        watcher.start()
+        defer { watcher.stop() }
+        launched(center, FakeLaunchedApp(bundleIdentifier: nil))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let beforeRetry = await steps.items
+        #expect(beforeRetry.isEmpty)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let retried = await steps.items
+        #expect(retried == ["refresh"])
+    }
 }
 
 @Suite struct DeadlineTests {
