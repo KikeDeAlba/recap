@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { assembleArguments, assembleFilter, assembleMeeting, assembleTimeoutMs, assembledProblem, parseFacts, planAssembly, temporaryName, videoEncoder, type MediaFacts } from '../src/capture/assemble.ts'
+import { ASSEMBLE_ORPHAN_MS, assembleArguments, assembleFilter, assembleMeeting, assembleTimeoutMs, assembledProblem, isAssembleTemporary, omission, parseFacts, planAssembly, sweepTemporaries, temporaryName, videoEncoder, type MediaFacts } from '../src/capture/assemble.ts'
 import { decodeManifest, isCaptureSource, type CaptureManifest } from '../src/capture/manifest.ts'
 import { loadMeeting, reconcile, recordedChannels, saveMeeting } from '../src/core/meeting.ts'
 import { inspectMedia } from '../src/media/probe.ts'
@@ -297,4 +297,49 @@ test('the pipeline assembles before extracting both channels', { skip: !ffmpeg &
   assert.ok(lines.includes('assemble: running'))
   await pipeline.run(undefined, 'assemble')
   assert.ok(lines.includes('assemble: already done'), lines.join('\n'))
+})
+
+test('a segment left out is told apart as empty, outside the microphone or unreadable', () => {
+  assert.equal(omission(0, undefined), 'empty')
+  assert.equal(omission(256, undefined), 'unreadable')
+  assert.equal(omission(256, { ...facts(2), video: false }), 'unreadable')
+  assert.equal(omission(256, facts(0)), 'unreadable')
+  assert.equal(omission(256, facts(2)), 'outside')
+})
+
+test('only old assembly temporaries are swept, never other files', (t) => {
+  const dir = tempDir(t)
+  const now = Date.now()
+  const old = temporaryName()
+  const fresh = temporaryName()
+  assert.ok(isAssembleTemporary(old))
+  assert.ok(!isAssembleTemporary('.recording.assemble-x.mov'))
+  for (const name of [old, fresh, '.recording.assemble-x.mov', 'recording.mov']) writeFileSync(path.join(dir, name), 'x')
+  const past = new Date(now - ASSEMBLE_ORPHAN_MS - 60_000)
+  for (const name of [old, '.recording.assemble-x.mov', 'recording.mov']) utimesSync(path.join(dir, name), past, past)
+  assert.deepEqual(sweepTemporaries(dir, now), [old])
+  assert.deepEqual(readdirSync(dir).sort(), [fresh, '.recording.assemble-x.mov', 'recording.mov'].sort())
+})
+
+test('assemble says why it kept each segment and sweeps what an interrupted run left', { skip: !ffmpeg && 'ffmpeg is not installed' }, async (t) => {
+  const dir = tempDir(t)
+  saveMeeting(meeting({ mode: 'meeting', status: 'recorded' }), dir)
+  synth(['-f', 'lavfi', '-i', 'sine=f=300:r=48000:d=2', '-c:a', 'aac', '-ac', '1', path.join(dir, 'mic.m4a')])
+  synth(['-f', 'lavfi', '-i', 'testsrc=d=1:s=320x240:r=2', '-c:v', 'mjpeg', path.join(dir, 'screen-1.mov')])
+  writeFileSync(path.join(dir, 'screen-2.mov'), '')
+  writeFileSync(path.join(dir, 'screen-3.mov'), Buffer.alloc(256, 3))
+  const orphan = temporaryName()
+  writeFileSync(path.join(dir, orphan), 'partial')
+  const past = new Date(Date.now() - ASSEMBLE_ORPHAN_MS - 60_000)
+  utimesSync(path.join(dir, orphan), past, past)
+  writeFileSync(path.join(dir, 'capture.json'), JSON.stringify({ mic: 'mic.m4a', segments: [{ file: 'screen-3.mov', startMs: 0, endMs: 500 }, { file: 'screen-2.mov', startMs: 600, endMs: 900 }, { file: 'screen-1.mov', startMs: 5_000, endMs: 6_000 }] }))
+  const warnings: string[] = []
+  const assembled = await assembleMeeting(dir, {}, process.platform, (line) => warnings.push(line))
+  assert.deepEqual(assembled.channels, ['mic'])
+  assert.ok(!existsSync(path.join(dir, orphan)))
+  assert.deepEqual(readdirSync(dir).sort(), ['capture.json', 'meeting.json', 'recording.m4a', 'screen-1.mov', 'screen-2.mov', 'screen-3.mov'])
+  assert.ok(warnings.some((line) => line.startsWith(`removed ${orphan}`)), warnings.join('\n'))
+  assert.ok(warnings.includes('kept screen-1.mov: it starts after the microphone ends or is too short, so it is not in the recording and was not deleted'), warnings.join('\n'))
+  assert.ok(warnings.includes('kept screen-2.mov: it is empty, so it is not in the recording and was not deleted'), warnings.join('\n'))
+  assert.ok(warnings.includes('kept screen-3.mov: it could not be read, so it is not in the recording and was not deleted'), warnings.join('\n'))
 })

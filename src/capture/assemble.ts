@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { renameSync, rmSync } from 'node:fs'
+import { lstatSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import type { Config } from '../core/config.ts'
 import { isoNow } from '../core/dates.ts'
@@ -21,6 +21,8 @@ export const ASSEMBLE_TOLERANCE_S = 1.5
 export const ASSEMBLE_TEMPORARY_PREFIX = '.recording.assemble-'
 export const PROBE_TIMEOUT_MS = 30_000
 export const ASSEMBLE_BASE_TIMEOUT_MS = 120_000
+export const ASSEMBLE_ORPHAN_MS = 10 * 60_000
+const TEMPORARY_NAME = /^\.recording\.assemble-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mov$/
 
 export interface MediaFacts {
   duration: number
@@ -177,6 +179,32 @@ export function temporaryName(): string {
   return `${ASSEMBLE_TEMPORARY_PREFIX}${randomUUID()}.mov`
 }
 
+export function isAssembleTemporary(name: string): boolean {
+  return TEMPORARY_NAME.test(name)
+}
+
+export function sweepTemporaries(dir: string, now: number = Date.now()): string[] {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  const removed: string[] = []
+  for (const name of names) {
+    if (!isAssembleTemporary(name)) continue
+    try {
+      const info = lstatSync(path.join(dir, name))
+      if (!info.isFile() || now - info.mtimeMs <= ASSEMBLE_ORPHAN_MS) continue
+      rmSync(path.join(dir, name), { force: true })
+      removed.push(name)
+    } catch {
+      undefined
+    }
+  }
+  return removed
+}
+
 export function assembledProblem(made: MediaFacts | null, plan: AssemblePlan): string | null {
   if (!made) return `ffprobe cannot read the assembled recording`
   if (made.videoStreams !== 1) return `The assembled recording has ${made.videoStreams} video tracks instead of 1`
@@ -193,16 +221,36 @@ function removeSources(dir: string, names: readonly string[]): void {
   }
 }
 
-function keptSegments(dir: string, manifest: CaptureManifest, used: readonly string[], warn: (line: string) => void): void {
-  for (const segment of manifest.segments) {
-    if (used.includes(segment.file) || !exists(path.join(dir, segment.file))) continue
-    warn(`kept ${segment.file}: it could not be read, so it is not in the recording and was not deleted`)
+export type Omission = 'empty' | 'outside' | 'unreadable'
+
+export function omission(size: number, media: MediaFacts | undefined): Omission {
+  if (size === 0) return 'empty'
+  if (!media || !media.video || media.duration <= 0) return 'unreadable'
+  return 'outside'
+}
+
+export function omissionWarning(file: string, reason: Omission): string {
+  switch (reason) {
+    case 'empty':
+      return `kept ${file}: it is empty, so it is not in the recording and was not deleted`
+    case 'outside':
+      return `kept ${file}: it starts after the microphone ends or is too short, so it is not in the recording and was not deleted`
+    case 'unreadable':
+      return `kept ${file}: it could not be read, so it is not in the recording and was not deleted`
   }
 }
 
-function micOnly(dir: string, manifest: CaptureManifest, warn: (line: string) => void): AssembleResult {
+function keptSegments(dir: string, manifest: CaptureManifest, used: readonly string[], facts: ReadonlyMap<string, MediaFacts>, warn: (line: string) => void): void {
+  for (const segment of manifest.segments) {
+    const file = path.join(dir, segment.file)
+    if (used.includes(segment.file) || !exists(file)) continue
+    warn(omissionWarning(segment.file, omission(fileSize(file), facts.get(segment.file))))
+  }
+}
+
+function micOnly(dir: string, manifest: CaptureManifest, facts: ReadonlyMap<string, MediaFacts>, warn: (line: string) => void): AssembleResult {
   renameSync(path.join(dir, manifest.mic), path.join(dir, AUDIO_FILE))
-  keptSegments(dir, manifest, [], warn)
+  keptSegments(dir, manifest, [], facts, warn)
   return { file: path.join(dir, AUDIO_FILE), channels: ['mic'], segments: 0 }
 }
 
@@ -211,13 +259,14 @@ const stderrWarn = (line: string): void => {
 }
 
 export async function assembleCapture(dir: string, config: Config, platform: NodeJS.Platform = process.platform, warn: (line: string) => void = stderrWarn): Promise<AssembleResult | null> {
+  for (const name of sweepTemporaries(dir)) warn(`removed ${name}, left by an assembly that did not finish`)
   if (hasRecording(dir)) return null
   const manifest = readManifest(dir)
   if (!manifest) return null
   const mic = path.join(dir, manifest.mic)
   if (fileSize(mic) === 0) throw new RecapError('ASSEMBLE_FAILED', `The meeting has no microphone recording (${manifest.mic})`)
   const usable = manifest.segments.filter((segment) => fileSize(path.join(dir, segment.file)) > 0)
-  if (usable.length === 0) return micOnly(dir, manifest, warn)
+  if (usable.length === 0) return micOnly(dir, manifest, new Map(), warn)
   const ffprobe = await requireTool('ffprobe', config)
   const micFacts = await probe(ffprobe, mic)
   if (!micFacts || micFacts.duration <= 0) throw new RecapError('ASSEMBLE_FAILED', `Cannot read ${manifest.mic}`)
@@ -227,7 +276,7 @@ export async function assembleCapture(dir: string, config: Config, platform: Nod
     if (found) facts.set(segment.file, found)
   }
   const plan = planAssembly(manifest, micFacts.duration, facts)
-  if (plan.output === AUDIO_FILE) return micOnly(dir, manifest, warn)
+  if (plan.output === AUDIO_FILE) return micOnly(dir, manifest, facts, warn)
   const ffmpeg = await requireTool('ffmpeg', config)
   const temporary = path.join(dir, temporaryName())
   const timeoutMs = assembleTimeoutMs(plan.seconds)
@@ -243,7 +292,7 @@ export async function assembleCapture(dir: string, config: Config, platform: Nod
     throw error
   }
   removeSources(dir, [manifest.mic, ...plan.inputs])
-  keptSegments(dir, manifest, plan.inputs, warn)
+  keptSegments(dir, manifest, plan.inputs, facts, warn)
   return { file: path.join(dir, VIDEO_FILE), channels: ['mic', 'system'], segments: plan.inputs.length }
 }
 
