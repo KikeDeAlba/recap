@@ -28,7 +28,8 @@ if [[ -z "$identity" ]]; then
   echo "warning: no Apple Development identity found; signing ad-hoc, permissions may be requested again after each build" >&2
 fi
 
-codesign --force --sign "$identity" --identifier com.kikedealba.recap-capture "$app/Contents/MacOS/recap-capture"
-codesign --force --sign "$identity" --identifier com.kikedealba.recap "$app"
+entitlements="$root/scripts/recap.entitlements"
+codesign --force --options runtime --entitlements "$entitlements" --sign "$identity" --identifier com.kikedealba.recap-capture "$app/Contents/MacOS/recap-capture"
+codesign --force --options runtime --entitlements "$entitlements" --sign "$identity" --identifier com.kikedealba.recap "$app"
 codesign --verify --strict "$app"
 echo "$app ($version, signed with: $identity)"
