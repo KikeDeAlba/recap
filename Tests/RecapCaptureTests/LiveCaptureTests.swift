@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import ScreenCaptureKit
 import CoreMedia
 import Foundation
 import ImageIO
@@ -322,67 +323,276 @@ extension DeadlineTests {
     }
 }
 
-@Suite struct HungScreenCaptureKitTests {
-    @Test @MainActor func aHungListingInsideAChangeEndsInCaptureTimeoutAndStopFinishes() async throws {
-        let dir = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let recorder = MeetingRecorder(dir: dir, contentTimeout: 0.2) {
-            await uncancellableWait(3)
-            throw RecapError("LATE", "late")
-        }
-        let started = Date()
-        let set = Task { @MainActor in try await recorder.setTarget(CaptureTargetRef(kind: .display, id: 1)) }
-        try await Task.sleep(nanoseconds: 20_000_000)
-        await recorder.stop()
-        #expect(Date().timeIntervalSince(started) < 2)
-        do {
-            _ = try await set.value
-            Issue.record("set did not fail")
-        } catch {
-            #expect((error as? RecapError)?.code == "CAPTURE_TIMEOUT")
-        }
-        await #expect(throws: RecapError.self) { try await recorder.setTarget(CaptureTargetRef(kind: .display, id: 1)) }
+private final class FakeStream: ScreenStream {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    private let hangs: [String: TimeInterval]
+
+    init(hangs: [String: TimeInterval] = [:]) {
+        self.hangs = hangs
     }
 
-    @Test @MainActor func setGivesCaptureTimeoutWhileTheListingHangs() async throws {
+    var calls: [String] { lock.withLock { recorded } }
+
+    private func call(_ name: String) async {
+        lock.withLock { recorded.append(name) }
+        if let wait = hangs[name] { await uncancellableWait(wait) }
+    }
+
+    func startCapture() async throws { await call("start") }
+    func updateContentFilter(_ filter: SCContentFilter) async throws { await call("update") }
+    func stopCapture() async throws { await call("stop") }
+}
+
+private final class FakeScreens {
+    private let lock = NSLock()
+    private var streams: [FakeStream] = []
+    private var listings = 0
+    private var excluded: Set<Int32> = []
+    private var failures: [RecapError] = []
+    var hangs: [String: TimeInterval] = [:]
+    var listingHang: TimeInterval = 0
+
+    var created: [FakeStream] { lock.withLock { streams } }
+    var listed: Int { lock.withLock { listings } }
+
+    func exclude(_ pids: Set<Int32>) { lock.withLock { excluded = pids } }
+    func failNext(_ errors: [RecapError]) { lock.withLock { failures = errors } }
+
+    func content() async throws -> ScreenContent {
+        lock.withLock { listings += 1 }
+        if listingHang > 0 { await uncancellableWait(listingHang) }
+        let (failure, pids) = lock.withLock { (failures.isEmpty ? nil : failures.removeFirst(), excluded) }
+        if let failure { throw failure }
+        return ScreenContent(mainSize: (1512, 982), excludedPids: { pids }, resolve: { target in
+            (SCContentFilter(), CaptureVideo(kind: target.kind, id: target.id, title: "Screen \(target.id)", app: nil, since: since))
+        }, displayFilter: { _ in SCContentFilter() })
+    }
+
+    func stream(_ filter: SCContentFilter, _ configuration: SCStreamConfiguration, _ output: SCStreamOutput & SCStreamDelegate,
+                _ queue: DispatchQueue) throws -> ScreenStream {
+        let stream = FakeStream(hangs: hangs)
+        lock.withLock { streams.append(stream) }
+        return stream
+    }
+
+    @MainActor
+    func recorder(_ dir: URL, timeouts: CaptureTimeouts = CaptureTimeouts(content: 0.2, start: 0.2, update: 0.2, stop: 0.2),
+                  log: @escaping (String) -> Void = { _ in }) -> MeetingRecorder {
+        MeetingRecorder(dir: dir, timeouts: timeouts, exclusionRetryDelay: 50_000_000, content: { try await self.content() },
+                        makeStream: { try self.stream($0, $1, $2, $3) }, log: log)
+    }
+}
+
+private final class Lines {
+    private let lock = NSLock()
+    private var stored: [String] = []
+    var all: [String] { lock.withLock { stored } }
+    func add(_ line: String) { lock.withLock { stored.append(line) } }
+}
+
+private func code(of task: Task<CaptureStatus, Error>) async -> String? {
+    do {
+        _ = try await task.value
+        return nil
+    } catch {
+        return (error as? RecapError)?.code ?? String(describing: error)
+    }
+}
+
+@Suite struct HungScreenCaptureKitTests {
+    private let display = CaptureTargetRef(kind: .display, id: 1)
+    private let window = CaptureTargetRef(kind: .window, id: 4242)
+
+    @Test func theClientWaitsLongerThanTheLongestChange() {
+        #expect(CaptureTimeouts.standard.longestChange < 20)
+        #expect(CaptureTimeouts.standard.content <= 5)
+    }
+
+    @Test @MainActor func aHungListingEndsInCaptureTimeoutAndStopFinishes() async throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let recorder = MeetingRecorder(dir: dir, contentTimeout: 0.1) {
-            await uncancellableWait(3)
-            throw RecapError("LATE", "late")
-        }
-        do {
-            _ = try await recorder.setTarget(CaptureTargetRef(kind: .window, id: 4242))
-            Issue.record("set did not fail")
-        } catch {
-            #expect((error as? RecapError)?.code == "CAPTURE_TIMEOUT")
-        }
+        let screens = FakeScreens()
+        screens.listingHang = 3
+        let recorder = screens.recorder(dir)
+        let set = Task { @MainActor in try await recorder.setTarget(display) }
+        #expect(await code(of: set) == "CAPTURE_TIMEOUT")
         let started = Date()
         await recorder.stop()
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(Date().timeIntervalSince(started) < 1)
+    }
+
+    @Test @MainActor func listingsThatStayHungAnswerBusyWithoutAnotherCall() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.listingHang = 0.8
+        let recorder = screens.recorder(dir, timeouts: CaptureTimeouts(content: 0.05, start: 0.2, update: 0.2, stop: 0.2))
+        for _ in 0..<MeetingRecorder.maxAbandonedContent {
+            #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == "CAPTURE_TIMEOUT")
+        }
+        #expect(recorder.abandonedListings == MeetingRecorder.maxAbandonedContent)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == "BUSY")
+        #expect(screens.listed == MeetingRecorder.maxAbandonedContent)
+        try await waitUntil { recorder.abandonedListings == 0 }
+        screens.listingHang = 0
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        #expect(screens.listed == MeetingRecorder.maxAbandonedContent + 1)
+        await recorder.stop()
+    }
+
+    @Test @MainActor func stopCancelsASetHungInStartCapture() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["start": 3]
+        let recorder = screens.recorder(dir, timeouts: CaptureTimeouts(content: 1, start: 2, update: 2, stop: 0.2))
+        let set = Task { @MainActor in try await recorder.setTarget(window) }
+        try await waitUntil { screens.created.first?.calls == ["start"] }
+        let started = Date()
+        await recorder.stop()
+        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(await code(of: set) == "NOT_RECORDING")
+        #expect(recorder.manifest.current.video == nil)
+        #expect(recorder.manifest.current.segments.isEmpty)
+    }
+
+    @Test @MainActor func aSetHungInStartCaptureGivesUpAndDropsTheSegment() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["start": 0.6]
+        let recorder = screens.recorder(dir)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(window) }) == "CAPTURE_TIMEOUT")
+        #expect(recorder.manifest.current.video == nil)
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: "screen-1.mov").path))
+        try await waitUntil { screens.created.first?.calls == ["start", "stop", "stop"] }
+        #expect(screens.created.first?.calls == ["start", "stop", "stop"])
+        await recorder.stop()
+    }
+
+    @Test @MainActor func stopCancelsASetHungInUpdateAndAbandonsTheSegment() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["update": 3]
+        let recorder = screens.recorder(dir, timeouts: CaptureTimeouts(content: 1, start: 1, update: 2, stop: 0.2))
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        let set = Task { @MainActor in try await recorder.setTarget(window) }
+        try await waitUntil { screens.created.first?.calls == ["start", "update"] }
+        let started = Date()
+        await recorder.stop()
+        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(await code(of: set) == "NOT_RECORDING")
+        #expect(recorder.manifest.current.video == nil)
+        #expect(screens.created.count == 1)
+    }
+
+    @Test @MainActor func aSetHungInUpdateGivesUpWithoutStartingAnotherSegment() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["update": 3]
+        let recorder = screens.recorder(dir)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(window) }) == "CAPTURE_TIMEOUT")
+        #expect(recorder.manifest.current.video == nil)
+        #expect(screens.created.count == 1)
+        #expect(screens.created.first?.calls == ["start", "update", "stop"])
+        await recorder.stop()
+    }
+
+    @Test @MainActor func aHungStopCaptureDoesNotHoldTheStop() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["stop": 3]
+        let recorder = screens.recorder(dir)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        let started = Date()
+        await recorder.stop()
+        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(recorder.manifest.current.video == nil)
+        #expect(recorder.manifest.current.endedAt != nil)
+    }
+
+    @Test @MainActor func aClearHungInStopCaptureGivesUpOnTheSegment() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["stop": 3]
+        let recorder = screens.recorder(dir)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        let started = Date()
+        let cleared = try await recorder.clearTarget()
+        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(cleared.video == nil)
+        await recorder.stop()
+    }
+
+    @Test @MainActor func exclusionsThatCannotBeListedAreRetriedAndLogged() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        let lines = Lines()
+        let recorder = screens.recorder(dir, log: lines.add)
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        screens.exclude([99])
+        screens.failNext([MeetingRecorder.contentStuck, MeetingRecorder.contentStuck])
+        await recorder.refreshExclusionsIfNeeded()
+        #expect(screens.created.first?.calls == ["start"])
+        #expect(lines.all.count == 1)
+        #expect(lines.all.first?.contains("keeps its last filter") == true)
+        #expect(lines.all.first?.contains("BUSY") == true)
+        try await waitUntil { screens.created.first?.calls == ["start", "update"] }
+        #expect(screens.created.first?.calls == ["start", "update"])
+        try await waitUntil { lines.all.count == 2 }
+        #expect(lines.all.last?.contains("refreshed again") == true)
+        #expect(screens.listed == 4)
+        await recorder.stop()
     }
 }
 
 @Suite struct SerialWorkTests {
-    @Test @MainActor func closeWaitsForTheChangeInFlightAndRefusesTheRest() async throws {
+    @Test @MainActor func closeCancelsTheChangeInFlightAndRefusesTheRest() async throws {
         let work = SerialWork()
         let steps = Steps()
         let first = Task { @MainActor in
             try await work.run {
                 await steps.add("set begins")
-                try await Task.sleep(nanoseconds: 150_000_000)
+                try await Task.sleep(nanoseconds: 5_000_000_000)
                 await steps.add("set ends")
                 return 1
             }
         }
         try await Task.sleep(nanoseconds: 20_000_000)
         let queued = Task { @MainActor in try await work.run { await steps.add("queued"); return 2 } }
+        let started = Date()
         await work.close()
         await steps.add("closed")
-        #expect(try await first.value == 1)
+        #expect(Date().timeIntervalSince(started) < 1)
+        do {
+            _ = try await first.value
+            Issue.record("the change in flight was not cancelled")
+        } catch {
+            #expect((error as? RecapError)?.code == "NOT_RECORDING")
+        }
         await #expect(throws: RecapError.self) { try await queued.value }
         await #expect(throws: RecapError.self) { try await work.run { 3 } }
-        #expect(await steps.items == ["set begins", "set ends", "closed"])
+        #expect(await steps.items == ["set begins", "closed"])
+    }
+
+    @Test @MainActor func aChangeThatEndsWithoutCancellationKeepsItsResult() async throws {
+        let work = SerialWork()
+        let first = Task { @MainActor in
+            try await work.run { () async -> Int in
+                await uncancellableWait(0.1)
+                return 1
+            }
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await work.close()
+        #expect(try await first.value == 1)
     }
 
     @Test @MainActor func aStopReportWaitsForTheQueuedSetAndIsSkippedOnceClosed() async throws {

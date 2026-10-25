@@ -26,14 +26,20 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "recap.screen-segment")
     private let writer: MediaWriter
     private let liveTap: LiveTap?
+    private let makeStream: ScreenStreamFactory
+    private let timeouts: CaptureTimeouts
     private let lock = NSLock()
     private var stopping = false
-    private var stream: SCStream?
+    private var sealed = false
+    private var stream: ScreenStream?
 
-    init(dir: URL, file: String, kind: CaptureTargetKind, width: Int, height: Int, liveTap: LiveTap?) throws {
+    init(dir: URL, file: String, kind: CaptureTargetKind, width: Int, height: Int, liveTap: LiveTap?,
+         makeStream: @escaping ScreenStreamFactory, timeouts: CaptureTimeouts) throws {
         self.file = file
         self.kind = kind
         self.liveTap = liveTap
+        self.makeStream = makeStream
+        self.timeouts = timeouts
         writer = try MediaWriter(url: dir.appending(path: file), fileType: .mov, tracks: [
             .video(width: width, height: height),
             .audio(channels: 2, bitRate: 96_000),
@@ -45,34 +51,51 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var hasSamples: Bool { writer.hasSamples }
 
+    private var isStopping: Bool { lock.withLock { stopping } }
+
     func start(filter: SCContentFilter, configuration: SCStreamConfiguration) async throws {
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-        try await stream.startCapture()
+        let stream = try makeStream(filter, configuration, self, queue)
         lock.withLock { self.stream = stream }
+        let seconds = timeouts.start
+        try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
+                               onTimeout: CaptureTimeouts.expired("start the screen capture", after: seconds)) { [weak self] in
+            try await stream.startCapture()
+            if self?.isStopping ?? true { try? await stream.stopCapture() }
+        }
     }
 
     func update(filter: SCContentFilter) async throws {
-        guard let stream = lock.withLock({ self.stream }) else {
+        guard let stream = lock.withLock({ stopping ? nil : self.stream }) else {
             throw RecapError("CAPTURE_FAILED", "The screen capture is not running")
         }
-        try await stream.updateContentFilter(filter)
+        let seconds = timeouts.update
+        try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
+                               onTimeout: CaptureTimeouts.expired("switch the screen capture", after: seconds)) {
+            try await stream.updateContentFilter(filter)
+        }
     }
 
     func stop() async -> CMTime? {
-        let stream = lock.withLock { () -> SCStream? in
+        let stream = lock.withLock { () -> ScreenStream? in
             stopping = true
             defer { self.stream = nil }
             return self.stream
         }
-        if let stream { try? await stream.stopCapture() }
+        if let stream {
+            let seconds = timeouts.stop
+            _ = try? await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
+                                        onTimeout: CaptureTimeouts.expired("stop the screen capture", after: seconds)) {
+                try await stream.stopCapture()
+            }
+        }
+        lock.withLock { sealed = true }
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
         await writer.finish()
         return writer.endTime
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard !lock.withLock({ sealed }) else { return }
         switch type {
         case .screen:
             if Self.isCompleteFrame(sampleBuffer) { writer.append(sampleBuffer, track: 0) }
@@ -89,7 +112,7 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func report(_ error: Error) {
-        guard !lock.withLock({ stopping }) else { return }
+        guard !isStopping else { return }
         onStop?(error)
     }
 
@@ -105,6 +128,7 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
 package final class SerialWork {
     private var last: Task<Void, Never>?
     private var closed = false
+    private var running: [UUID: () -> Void] = [:]
 
     package init() {}
 
@@ -112,12 +136,22 @@ package final class SerialWork {
     package func run<T>(_ body: @escaping @MainActor () async throws -> T) async throws -> T {
         guard !closed else { throw ControlServer.notRecording }
         let previous = last
+        let key = UUID()
         let work = Task { @MainActor () async throws -> T in
             await previous?.value
             guard !self.closed else { throw ControlServer.notRecording }
-            return try await body()
+            do {
+                return try await body()
+            } catch {
+                if self.closed, Task.isCancelled { throw ControlServer.notRecording }
+                throw error
+            }
         }
-        last = Task { @MainActor in _ = try? await work.value }
+        running[key] = { work.cancel() }
+        last = Task { @MainActor in
+            _ = try? await work.value
+            self.running[key] = nil
+        }
         return try await work.value
     }
 
@@ -129,6 +163,7 @@ package final class SerialWork {
     @MainActor
     package func close() async {
         closed = true
+        for cancel in running.values { cancel() }
         await last?.value
     }
 }
@@ -157,32 +192,48 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     private var appliedExclusions: Set<Int32> = []
     package static let exclusionInterval: UInt64 = 5_000_000_000
     package static let launchRetryDelay: UInt64 = 300_000_000
-    package static let contentTimeout: TimeInterval = 10
+    package static let exclusionRetryDelay: UInt64 = 1_000_000_000
+    package static let exclusionLogInterval: TimeInterval = 60
     package static let maxAbandonedContent = 2
     package static let contentStuck = RecapError("BUSY", "Recap.app is still waiting for ScreenCaptureKit to list the screens and windows; try again in a moment")
 
-    private let shareableContent: () async throws -> SCShareableContent
-    private let contentTimeout: TimeInterval
+    private let listContent: () async throws -> ScreenContent
+    private let makeStream: ScreenStreamFactory
+    private let timeouts: CaptureTimeouts
+    private let retryDelay: UInt64
+    private let log: (String) -> Void
     private let abandonedContent = AbandonedWork(limit: MeetingRecorder.maxAbandonedContent)
+    private var exclusionRetry: Task<Void, Never>?
+    private var exclusionsFailingSince: Date?
+    private var exclusionsLoggedAt: Date?
 
-    package init(dir: URL, liveTap: LiveTap? = nil, contentTimeout: TimeInterval = MeetingRecorder.contentTimeout,
-                 shareableContent: @escaping () async throws -> SCShareableContent = SourceCatalog.shareableContent) {
+    package init(dir: URL, liveTap: LiveTap? = nil, timeouts: CaptureTimeouts = .standard,
+                 exclusionRetryDelay: UInt64 = MeetingRecorder.exclusionRetryDelay,
+                 content: @escaping () async throws -> ScreenContent = ScreenContent.current,
+                 makeStream: @escaping ScreenStreamFactory = ScreenStreams.live,
+                 log: @escaping (String) -> Void = MeetingRecorder.standardLog) {
         self.dir = dir
         self.liveTap = liveTap
-        self.contentTimeout = contentTimeout
-        self.shareableContent = shareableContent
+        self.timeouts = timeouts
+        retryDelay = exclusionRetryDelay
+        listContent = content
+        self.makeStream = makeStream
+        self.log = log
         manifest = CaptureManifestStore(dir: dir)
     }
 
-    package static func contentExpired(_ timeout: TimeInterval) -> RecapError {
-        RecapError("CAPTURE_TIMEOUT", "Recap.app took more than \(Int(timeout))s to list the screens and windows; try again")
+    package static func standardLog(_ message: String) {
+        FileHandle.standardError.write(Data("\(ISO8601DateFormatter().string(from: Date())) \(message)\n".utf8))
     }
 
-    private func content() async throws -> SCShareableContent {
+    package var abandonedListings: Int { abandonedContent.count }
+
+    private func content() async throws -> ScreenContent {
         guard !abandonedContent.isSaturated else { throw Self.contentStuck }
-        let timeout = contentTimeout
-        return try await Deadline.run(within: UInt64(timeout * 1_000_000_000), onTimeout: Self.contentExpired(timeout),
-                                      abandoned: abandonedContent, shareableContent)
+        let seconds = timeouts.content
+        return try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
+                                      onTimeout: CaptureTimeouts.expired("list the screens and windows", after: seconds),
+                                      abandoned: abandonedContent, listContent)
     }
 
     @MainActor
@@ -222,6 +273,8 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         stopped = true
         exclusionWatch?.cancel()
         exclusionWatch = nil
+        exclusionRetry?.cancel()
+        exclusionRetry = nil
         launchWatcher?.stop()
         launchWatcher = nil
         await work.close()
@@ -276,19 +329,20 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     @MainActor
     private func applyTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
         let content = try await self.content()
-        let (filter, video) = try resolve(target, content: content)
+        let (filter, video) = try content.resolve(target)
         if let segment {
             do {
                 try await segment.update(filter: filter)
-                if target.kind == .display { appliedExclusions = SourceCatalog.excludedPids(content) }
+                if target.kind == .display { appliedExclusions = content.excludedPids() }
                 if manifest.current.video?.ref != target { manifest.update { $0.switchTarget(video, atMs: nowMs) } }
                 return status
             } catch {
                 await endSegment()
+                if Task.isCancelled || Self.isTimeout(error) { throw error }
             }
         }
         try await beginSegment(filter: filter, video: video, content: content)
-        if target.kind == .display { appliedExclusions = SourceCatalog.excludedPids(content) }
+        if target.kind == .display { appliedExclusions = content.excludedPids() }
         return status
     }
 
@@ -322,38 +376,61 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     }
 
     @MainActor
-    private func refreshExclusionsIfNeeded() async {
+    package func refreshExclusionsIfNeeded() async {
         guard !stopped, segment != nil, manifest.current.video?.kind == .display else { return }
-        _ = try? await exclusive { try await self.refreshDisplayExclusions() }
+        do {
+            try await exclusive { try await self.refreshDisplayExclusions() }
+            if let since = exclusionsFailingSince {
+                log("display exclusions refreshed again after \(Int(Date().timeIntervalSince(since)))s")
+            }
+            exclusionsFailingSince = nil
+            exclusionsLoggedAt = nil
+        } catch {
+            guard !stopped else { return }
+            let now = Date()
+            let since = exclusionsFailingSince ?? now
+            exclusionsFailingSince = since
+            if exclusionsLoggedAt.map({ now.timeIntervalSince($0) >= Self.exclusionLogInterval }) ?? true {
+                exclusionsLoggedAt = now
+                log("display exclusions not refreshed for \(Int(now.timeIntervalSince(since)))s, the capture keeps its last filter: \(Self.describe(error))")
+            }
+            scheduleExclusionRetry()
+        }
+    }
+
+    @MainActor
+    private func scheduleExclusionRetry() {
+        guard exclusionRetry == nil, !stopped else { return }
+        let delay = retryDelay
+        exclusionRetry = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, !Task.isCancelled else { return }
+            self.exclusionRetry = nil
+            await self.refreshExclusionsIfNeeded()
+        }
     }
 
     @MainActor
     private func refreshDisplayExclusions() async throws {
         guard let segment, let video = manifest.current.video, video.kind == .display else { return }
         let content = try await self.content()
-        let excluded = SourceCatalog.excludedPids(content)
-        guard excluded != appliedExclusions,
-              let display = content.displays.first(where: { $0.displayID == video.id }) else { return }
-        try await segment.update(filter: SourceCatalog.displayFilter(display, content: content))
+        let excluded = content.excludedPids()
+        guard excluded != appliedExclusions, let filter = content.displayFilter(video.id) else { return }
+        do {
+            try await segment.update(filter: filter)
+        } catch {
+            if Self.isTimeout(error) { await segmentStopped(segment, error: error) }
+            throw error
+        }
         appliedExclusions = excluded
     }
 
-    @MainActor
-    private func resolve(_ target: CaptureTargetRef, content: SCShareableContent) throws -> (SCContentFilter, CaptureVideo) {
-        switch target.kind {
-        case .display:
-            guard let display = content.displays.first(where: { $0.displayID == target.id }) else {
-                throw RecapError("DISPLAY_GONE", "Display \(target.id) is not connected")
-            }
-            let video = CaptureVideo(kind: .display, id: target.id, title: SourceCatalog.displayName(target.id), app: nil, since: Date())
-            return (SourceCatalog.displayFilter(display, content: content), video)
-        case .window:
-            let window = try SourceCatalog.recordableWindow(target.id, content: content)
-            let app = window.owningApplication?.applicationName
-            let title = window.title.flatMap { $0.trimmed.isEmpty ? nil : $0 } ?? app ?? "Window \(target.id)"
-            let video = CaptureVideo(kind: .window, id: target.id, title: title, app: app, since: Date())
-            return (SCContentFilter(desktopIndependentWindow: window), video)
-        }
+    private static func isTimeout(_ error: Error) -> Bool {
+        (error as? RecapError)?.code == "CAPTURE_TIMEOUT"
+    }
+
+    private static func describe(_ error: Error) -> String {
+        (error as? RecapError).map { "\($0.code): \($0.message)" } ?? error.localizedDescription
     }
 
     private func configuration(width: Int, height: Int) -> SCStreamConfiguration {
@@ -372,14 +449,12 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     }
 
     @MainActor
-    private func beginSegment(filter: SCContentFilter, video: CaptureVideo, content: SCShareableContent) async throws {
-        let size = canvas ?? {
-            let main = content.displays.first { $0.displayID == CGMainDisplayID() } ?? content.displays.first
-            return CaptureClock.canvas(width: main?.width ?? 16, height: main?.height ?? 9)
-        }()
+    private func beginSegment(filter: SCContentFilter, video: CaptureVideo, content: ScreenContent) async throws {
+        let size = canvas ?? CaptureClock.canvas(width: content.mainSize?.width ?? 16, height: content.mainSize?.height ?? 9)
         canvas = size
         let file = manifest.current.nextSegmentFile
-        let created = try ScreenSegment(dir: dir, file: file, kind: video.kind, width: size.width, height: size.height, liveTap: liveTap)
+        let created = try ScreenSegment(dir: dir, file: file, kind: video.kind, width: size.width, height: size.height, liveTap: liveTap,
+                                        makeStream: makeStream, timeouts: timeouts)
         manifest.update { $0.beginSegment(video, atMs: nowMs) }
         created.onFirstSample = { [weak self] pts in
             guard let self else { return }
@@ -442,7 +517,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     }
 
     private static func streamError(_ error: Error) -> Error {
-        if error is RecapError { return error }
+        if error is RecapError || error is CancellationError { return error }
         let nsError = error as NSError
         if nsError.domain == SCStreamErrorDomain, nsError.code == SCStreamError.Code.userDeclined.rawValue {
             return SourceCatalog.permissionDenied
