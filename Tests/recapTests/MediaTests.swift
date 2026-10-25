@@ -36,6 +36,16 @@ private func write(_ bytes: Int, to url: URL) throws {
         #expect(!MeetingMedia.hasVideo(dir: dir, mode: .remote))
     }
 
+    @Test func meetingsUseTheVideoOnlyWhenTheAssemblyProducedIt() throws {
+        let dir = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(MeetingMedia.recordingURL(dir: dir, mode: .meeting).lastPathComponent == "recording.m4a")
+        try write(10, to: dir.appending(path: "recording.mov"))
+        #expect(MeetingMedia.recordingURL(dir: dir, mode: .meeting).lastPathComponent == "recording.mov")
+        #expect(MeetingMedia.hasVideo(dir: dir, mode: .meeting))
+        #expect(MeetingStorage.measure(dir, mode: .meeting).recordingBytes == 10)
+    }
+
     @Test func inPersonMeetingsNeverHaveVideo() throws {
         let dir = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -299,6 +309,72 @@ private func write(_ bytes: Int, to url: URL) throws {
         }
         #expect(try Data(contentsOf: dir.appending(path: "recording.mov")) == before)
         #expect(try MeetingFile.load(dir).video == nil)
+    }
+
+    @Test(.enabled(if: Shell.which("ffmpeg") != nil, "ffmpeg is not installed")) func stripsAndCompressesTheVideoOfAMeeting() throws {
+        let ffmpeg = try #require(Self.ffmpeg)
+        let (operations, _, meeting, dir, root) = try makeMeeting(mode: .meeting)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try synthesize(ffmpeg, into: dir, seconds: 10)
+        let source = dir.appending(path: "recording.mov")
+        let originalBytes = MeetingMedia.size(source)
+
+        let compressed = try operations.compressVideo(meeting: meeting, dir: dir, preset: .max, pruneIntermediates: false)
+        #expect(compressed.video?.preset == "max")
+        #expect(MeetingMedia.size(source) < originalBytes)
+
+        let stripped = try operations.stripVideo(meeting: compressed, dir: dir, pruneIntermediates: false)
+        #expect(stripped.videoRemovedAt != nil)
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+        #expect(MeetingMedia.recordingURL(dir: dir, mode: .meeting).lastPathComponent == "recording.m4a")
+        #expect(!MeetingMedia.hasVideo(dir: dir, mode: .meeting))
+    }
+
+    @Test func aMeetingWithoutVideoFailsWithNoVideoAndStillPrunes() throws {
+        let (operations, _, meeting, dir, root) = try makeMeeting(mode: .meeting)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write(10, to: dir.appending(path: "recording.m4a"))
+        for name in MeetingMedia.intermediateFileNames { try write(10, to: dir.appending(path: name)) }
+        for strip in [true, false] {
+            do {
+                if strip {
+                    _ = try operations.stripVideo(meeting: meeting, dir: dir, pruneIntermediates: false)
+                } else {
+                    _ = try operations.compressVideo(meeting: meeting, dir: dir, preset: .medium, pruneIntermediates: false)
+                }
+                Issue.record("a meeting without video was accepted")
+            } catch let error as RecapError {
+                #expect(error.code == "NO_VIDEO")
+            }
+        }
+        _ = try operations.prune(meeting: meeting, dir: dir)
+        #expect(MeetingStorage.measure(dir, mode: .meeting).intermediateBytes == 0)
+        #expect(MeetingStorage.measure(dir, mode: .meeting).recordingBytes == 10)
+    }
+
+    @Test func prunesAMeetingWithVideoAndKeepsTheRecording() throws {
+        let (operations, _, meeting, dir, root) = try makeMeeting(mode: .meeting)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write(20, to: dir.appending(path: "recording.mov"))
+        for name in MeetingMedia.intermediateFileNames { try write(10, to: dir.appending(path: name)) }
+        _ = try operations.prune(meeting: meeting, dir: dir)
+        let storage = MeetingStorage.measure(dir, mode: .meeting)
+        #expect(storage.intermediateBytes == 0)
+        #expect(storage.recordingBytes == 20)
+        #expect(MeetingMedia.hasVideo(dir: dir, mode: .meeting))
+    }
+
+    @Test func theNotRemoteErrorNamesNoModality() throws {
+        let (operations, _, meeting, dir, root) = try makeMeeting(mode: .inPerson)
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            _ = try operations.compressVideo(meeting: meeting, dir: dir, preset: .light, pruneIntermediates: false)
+            Issue.record("compress-video accepted an in-person meeting")
+        } catch let error as RecapError {
+            #expect(error.code == "NOT_REMOTE")
+            #expect(!error.message.contains("presencial"))
+            #expect(!error.message.contains("in-person"))
+        }
     }
 
     @Test func rejectsInPersonAndActiveMeetings() throws {
