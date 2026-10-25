@@ -31,6 +31,10 @@ package final class LaunchWatcher {
         self.refresh = refresh
     }
 
+    deinit {
+        stop()
+    }
+
     package static func verdict(bundleId: String?, pid: Int32, executable: String?, ownPid: Int32 = getpid()) -> LaunchVerdict {
         let bundle = bundleId ?? ""
         if SourceCatalog.isExcludedApplication(bundleId: bundle, pid: pid, ownPid: ownPid, executable: executable) {
