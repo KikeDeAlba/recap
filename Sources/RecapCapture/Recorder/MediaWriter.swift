@@ -7,6 +7,8 @@ package final class MediaWriter {
         case audio(channels: Int, bitRate: Int)
     }
 
+    package static let fragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
+
     package var onFailure: ((Error) -> Void)?
     package var onStart: ((CMTime) -> Void)?
 
@@ -20,7 +22,7 @@ package final class MediaWriter {
     package init(url: URL, fileType: AVFileType, tracks: [Track]) throws {
         try? FileManager.default.removeItem(at: url)
         writer = try AVAssetWriter(outputURL: url, fileType: fileType)
-        writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
+        writer.movieFragmentInterval = MediaWriter.fragmentInterval
         inputs = tracks.map(MediaWriter.makeInput)
         for input in inputs {
             guard writer.canAdd(input) else {
@@ -77,6 +79,11 @@ package final class MediaWriter {
                                                            sampleTimingEntryCount: 1, sampleTimingArray: &timing,
                                                            sampleBufferOut: &retimed)
         return status == noErr ? retimed : nil
+    }
+
+    package func cancel() {
+        guard writer.status == .writing else { return }
+        writer.cancelWriting()
     }
 
     package func finish() async {

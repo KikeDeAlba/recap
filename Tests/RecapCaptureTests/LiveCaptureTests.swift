@@ -1,4 +1,6 @@
+import AVFoundation
 import CoreGraphics
+import CoreMedia
 import Foundation
 import ImageIO
 import Testing
@@ -440,5 +442,51 @@ private actor Steps {
         withThumbnail.windows[0].thumbnail = "data:image/jpeg;base64,AAAA"
         #expect(try encoded(withThumbnail).contains(#""thumbnail":"data:image/jpeg;base64,AAAA""#))
         #expect(plain.text == "display 1 (main): Built-in Retina Display 1512x982\nwindow 10: zoom.us — Zoom Meeting")
+    }
+}
+
+private func toneBuffer(at position: Int64, frames: Int) throws -> CMSampleBuffer {
+    var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+                                                  mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+                                                  mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+                                                  mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+    var format: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(allocator: nil, asbd: &description, layoutSize: 0, layout: nil, magicCookieSize: 0,
+                                   magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+    let samples = (0..<frames).map { Int16(8_000 * sin(2 * Double.pi * 440 * Double(position + Int64($0)) / 48_000)) }
+    var block: CMBlockBuffer?
+    CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: frames * 2, blockAllocator: nil,
+                                       customBlockSource: nil, offsetToData: 0, dataLength: frames * 2,
+                                       flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
+    let data = try #require(block)
+    samples.withUnsafeBytes { _ = CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: data, offsetIntoDestination: 0, dataLength: frames * 2) }
+    var buffer: CMSampleBuffer?
+    CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: nil, dataBuffer: data, formatDescription: try #require(format),
+                                                         sampleCount: frames,
+                                                         presentationTimeStamp: CMTime(value: position, timescale: 48_000),
+                                                         packetDescriptions: nil, sampleBufferOut: &buffer)
+    return try #require(buffer)
+}
+
+@Suite struct MicrophoneFileTests {
+    @Test func anUnfinishedMicrophoneFileIsReadableUpToItsLastFragment() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(path: CaptureManifest.micFileName)
+        let writer = try MediaWriter(url: url, fileType: .m4a, tracks: [.audio(channels: 1, bitRate: 64_000)])
+        defer { writer.cancel() }
+        let frames = 4_800
+        var position: Int64 = 0
+        while Double(position) / 48_000 < 12 {
+            writer.append(try toneBuffer(at: position, frames: frames), track: 0)
+            position += Int64(frames)
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let copy = dir.appending(path: "killed.m4a")
+        try FileManager.default.copyItem(at: url, to: copy)
+        let duration = try await AVURLAsset(url: copy).load(.duration).seconds
+        #expect(MediaWriter.fragmentInterval.seconds == 5)
+        #expect(duration >= 12 - 2 * MediaWriter.fragmentInterval.seconds)
     }
 }
