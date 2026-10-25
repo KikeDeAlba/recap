@@ -123,6 +123,18 @@ test('capture commands need a meeting being recorded by Recap.app on macOS', (t)
   assert.deepEqual(readCaptureState({ platform: 'darwin', current: () => current }).video, ZOOM)
 })
 
+test('the state tells why the screen stopped recording while the microphone goes on', (t) => {
+  const current = located(t)
+  const reason = 'CAPTURE_STOPPED: the screen is no longer recorded because ScreenCaptureKit did not update the display exclusions in time; the microphone keeps recording'
+  writeManifest(current.dir, { video: null, error: reason })
+  const state = readCaptureState({ platform: 'darwin', current: () => current })
+  assert.deepEqual(state, { meetingId: 'm', mic: true, systemAudio: false, video: null, error: reason })
+  assert.equal(stateText(state), `Microphone: recording\nScreen: none, microphone only\nLast stop: ${reason}`)
+  writeManifest(current.dir, { video: ZOOM, error: reason })
+  assert.equal(readCaptureState({ platform: 'darwin', current: () => current }).error, undefined)
+  assert.equal(captureState({ id: 'm', status: 'recorded' }, null, reason).error, undefined)
+})
+
 test('an older recorder without capture.json cannot switch', async (t) => {
   const current = located(t)
   await assert.rejects(setCapture({ kind: 'display', id: 1 }, { platform: 'darwin', current: () => current }), code('CAPTURE_UNSUPPORTED'))

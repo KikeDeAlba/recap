@@ -60,6 +60,7 @@ export interface CaptureState {
   mic: boolean
   systemAudio: boolean
   video: CaptureVideo | null
+  error?: string
 }
 
 export type ControlRequest = { action: 'set'; target: CaptureTarget } | { action: 'clear' } | { action: 'sources'; thumbnails: boolean }
@@ -102,14 +103,17 @@ export function decodeSources(value: unknown): CaptureSources {
   return { displays, windows }
 }
 
-export function captureState(meeting: Pick<Meeting, 'id' | 'status'>, video: CaptureVideo | null): CaptureState {
+export function captureState(meeting: Pick<Meeting, 'id' | 'status'>, video: CaptureVideo | null, error?: string): CaptureState {
   const mic = meeting.status === 'recording'
   const current = mic ? video : null
-  return { meetingId: meeting.id, mic, systemAudio: current !== null, video: current }
+  const state: CaptureState = { meetingId: meeting.id, mic, systemAudio: current !== null, video: current }
+  if (mic && current === null && error !== undefined && trimmed(error).length > 0) state.error = printable(error)
+  return state
 }
 
 export function stateOf(located: Located): CaptureState {
-  return captureState(located.meeting, readManifest(located.dir)?.video ?? null)
+  const manifest = readManifest(located.dir)
+  return captureState(located.meeting, manifest?.video ?? null, manifest?.error)
 }
 
 export function requireMeetingRecording(platform: NodeJS.Platform = process.platform, current: () => Located | null = activeLocated): Located {

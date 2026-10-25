@@ -71,7 +71,7 @@ export async function captureWorkerCommand(argv: string[]): Promise<number> {
 export function stateText(state: CaptureState): string {
   const mic = `Microphone: ${state.mic ? 'recording' : 'off'}`
   const video = state.video
-  if (!video) return `${mic}\nScreen: none, microphone only`
+  if (!video) return `${mic}\nScreen: none, microphone only${state.error ? `\nLast stop: ${printable(state.error)}` : ''}`
   const title = printable(video.title)
   const what = video.kind === 'display' ? `display ${video.id} "${title}"` : `window ${video.id} "${title}"${video.app ? ` (${printable(video.app)})` : ''}`
   const audio = video.kind === 'display' ? 'system audio' : 'its app audio'
