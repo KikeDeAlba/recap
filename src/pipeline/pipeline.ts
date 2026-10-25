@@ -7,7 +7,7 @@ import { clock, isoNow } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { encodeJson, swiftDefault } from '../core/json.ts'
 import { ProcessLock } from '../core/lock.ts'
-import { isActiveStatus, loadMeeting, recordingPath, updateMeeting, type Meeting } from '../core/meeting.ts'
+import { isActiveStatus, loadMeeting, recordedChannels, recordingPath, updateMeeting, type Meeting } from '../core/meeting.ts'
 import { exec } from '../core/proc.ts'
 import { suffix, trimmed } from '../core/text.ts'
 import { requireTool } from '../core/tools.ts'
@@ -15,6 +15,8 @@ import { RecapError, errorMessage } from '../errors.ts'
 import { INKWELL_CAPABILITIES, StageSkipped, inkwellForStage } from '../bita/client.ts'
 import { ProposalGenerator } from '../bita/proposals.ts'
 import { runWrapup } from '../bita/wrapup.ts'
+import { assembleMeeting } from '../capture/assemble.ts'
+import { needsAssembly } from '../capture/manifest.ts'
 import { runSummaryAgent } from './agent.ts'
 import { STAGES, allStagesSatisfied, stageApplies, stageComplete, stageIsOptional, stageSkipped, type Stage } from './stages.ts'
 import { extractSummary, saveSummary, summaryPromptFor, type FrameInfo } from './summary.ts'
@@ -44,12 +46,7 @@ export function evenlySpaced(count: number, limit: number): number[] {
 }
 
 export function channelsOf(meeting: Meeting): [Channel, number][] {
-  return meeting.mode === 'remote'
-    ? [
-        ['mic', 0],
-        ['system', 1],
-      ]
-    : [['mic', 0]]
+  return recordedChannels(meeting).map((channel, index) => [channel, index])
 }
 
 export function whisperArguments(config: Config, model: string, outputBase: string, wav: string, threads: number, previous?: string | null): string[] {
@@ -92,7 +89,7 @@ export class Pipeline {
   async run(from?: Stage, only?: Stage): Promise<Meeting> {
     let meeting = loadMeeting(this.dir)
     if (isActiveStatus(meeting.status)) throw new RecapError('STILL_RECORDING', `"${meeting.title}" is still being recorded`)
-    if (!existsSync(this.recording(meeting))) throw new RecapError('NO_RECORDING', `"${meeting.title}" has no recording`)
+    if (!existsSync(this.recording(meeting)) && !needsAssembly(this.dir, meeting.mode)) throw new RecapError('NO_RECORDING', `"${meeting.title}" has no recording`)
     const lock = new ProcessLock(this.file('process.lock'))
     try {
       meeting = updateMeeting(this.dir, (current) => {
@@ -114,7 +111,7 @@ export class Pipeline {
             continue
           }
           meeting = this.setStage(stage, 'skipped')
-          this.log(`${stage}: skipped, the recording has no video`)
+          this.log(`${stage}: skipped, ${stage === 'assemble' ? 'nothing to assemble' : 'the recording has no video'}`)
           continue
         }
         const done = meeting.stages[stage]?.status === 'done'
@@ -158,6 +155,9 @@ export class Pipeline {
 
   private async execute(stage: Stage, meeting: Meeting): Promise<void> {
     switch (stage) {
+      case 'assemble':
+        await assembleMeeting(this.dir, this.config)
+        return
       case 'audio':
         return this.extractAudio(meeting)
       case 'transcribe':
