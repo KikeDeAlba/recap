@@ -6,7 +6,7 @@ import { isoNow, minuteStamp, parseDate } from '../core/dates.ts'
 import { hasSystemAudio, type Meeting } from '../core/meeting.ts'
 import { replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
-import { agentEnvironment, agentError, resolveAgent, streamArguments, streamClaude, type AgentDependencies } from '../pipeline/agent.ts'
+import { agentEnvironment, agentError, hideCaptureControl, resolveAgent, streamArguments, streamClaude, type AgentDependencies } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import { callAudioNote, type Channel, type Segment } from '../pipeline/transcript.ts'
 import { performAsk, type PerformOptions } from './asking.ts'
@@ -116,6 +116,7 @@ export async function runAsk(
   const describer = new ProgressDescriber(context.docsRoot, existingRepos(context))
   const reducer = new AskStreamReducer(explicit)
   const choice = await resolveAgent(config, 'live', dependencies)
+  hideCaptureControl([request.dir])
   let status = 0
   let stderr = ''
   if (choice.agent === 'claude') {

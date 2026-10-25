@@ -167,21 +167,24 @@ export async function runAgent(call: AgentCall): Promise<string> {
   return text
 }
 
+export function hideMeetingControl(dir: string): void {
+  let meeting: Parameters<typeof discardControl>[0]
+  try {
+    meeting = loadMeeting(dir)
+  } catch {
+    meeting = { status: 'recorded' }
+  }
+  discardControl(meeting, dir)
+}
+
 export function hideCaptureControl(dirs: readonly string[]): void {
   for (const dir of dirs) {
-    if (!existsSync(path.join(dir, MEETING_FILE))) continue
-    let meeting: Parameters<typeof discardControl>[0]
-    try {
-      meeting = loadMeeting(dir)
-    } catch {
-      meeting = { status: 'recorded' }
-    }
-    discardControl(meeting, dir)
+    if (existsSync(path.join(dir, MEETING_FILE))) hideMeetingControl(dir)
   }
 }
 
 export function runSummaryAgent(prompt: string, dir: string, config: Config, dependencies?: AgentDependencies): Promise<string> {
-  hideCaptureControl([dir])
+  hideMeetingControl(dir)
   return runAgent({ prompt, cwd: dir, config, tools: ['Read'], addDirs: [dir], model: config.summaryModel, timeoutMs: PIPELINE_TIMEOUT_MS, dependencies })
 }
 
