@@ -64,7 +64,7 @@ export class MacAppRecorder implements Recorder {
   async supports(mode: MeetingMode): Promise<boolean> {
     if (mode !== 'meeting') return true
     const launcher = await this.find()
-    if (!launcher) return true
+    if (!launcher) return false
     return (await this.capabilities(launcher)).includes(MEETING_CAPABILITY)
   }
 

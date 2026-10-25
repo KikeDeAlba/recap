@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
+import { chmodSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { clearActive, loadActive, saveActive } from '../src/core/active.ts'
@@ -8,13 +8,14 @@ import { meetingRecord } from '../src/core/record.ts'
 import { captureChannels } from '../src/capture/sources.ts'
 import { defaultTitle, startRecording } from '../src/capture/recording.ts'
 import { MacAppRecorder, type Recorder } from '../src/capture/recorder.ts'
-import { captureCapabilities } from '../src/capture/capture.ts'
+import { CAPABILITIES_TIMEOUT_MS, captureCapabilities } from '../src/capture/capture.ts'
 import { modeFrom } from '../src/cli/commands/recording.ts'
 import { hasVideo } from '../src/media/media.ts'
 import { channelsOf } from '../src/pipeline/pipeline.ts'
 import { stageApplies, stageSkipped } from '../src/pipeline/stages.ts'
 import { listItems, markdownSection, parseTranscriptMarkdown, summaryView, tableColumn, transcriptView } from '../src/pipeline/views.ts'
 import { RecapError } from '../src/errors.ts'
+import { exec, isAlive, waitUntil } from '../src/core/proc.ts'
 import { meeting, tempDir, writeBytes } from './helpers.ts'
 
 const SUMMARY = `# Planeación
@@ -116,22 +117,41 @@ test('the mac recorder supports meeting mode only when recap-capture announces c
   assert.equal(await modern.supports('meeting'), true)
   assert.equal(await legacy.supports('meeting'), false)
   assert.equal(await legacy.supports('in-person'), true)
-  assert.equal(await missing.supports('meeting'), true)
+  assert.equal(await missing.supports('meeting'), false)
+  assert.equal(await missing.supports('in-person'), true)
 })
 
 test('captureCapabilities reads the envelope and treats failures as no capabilities', async (t) => {
   const binary = { kind: 'binary', binary: '/usr/local/bin/recap-capture' } as const
   const envelope = JSON.stringify({ schemaVersion: 1, ok: true, command: 'capabilities', generatedAt: '2026-10-24T10:00:00Z', data: { name: 'recap-capture', capabilities: ['capture.meeting', 3] } })
   const calls: string[][] = []
-  const found = await captureCapabilities(binary, async (command, args) => {
+  const timeouts: (number | undefined)[] = []
+  const found = await captureCapabilities(binary, async (command, args, options) => {
     calls.push([command, ...args])
+    timeouts.push(options.timeoutMs)
     return { status: 0, stdout: envelope, stderr: '', signal: null }
   })
   assert.deepEqual(found, ['capture.meeting'])
   assert.deepEqual(calls, [['/usr/local/bin/recap-capture', 'capabilities', '--json']])
+  assert.deepEqual(timeouts, [CAPABILITIES_TIMEOUT_MS])
+  assert.equal(CAPABILITIES_TIMEOUT_MS, 5_000)
   assert.deepEqual(await captureCapabilities(binary, async () => ({ status: 64, stdout: '', stderr: 'unknown command', signal: null })), [])
   assert.deepEqual(await captureCapabilities(binary, async () => Promise.reject(new Error('ENOENT'))), [])
   assert.deepEqual(await captureCapabilities({ kind: 'app', app: tempDir(t) }, async () => ({ status: 0, stdout: envelope, stderr: '', signal: null })), [])
+})
+
+test('captureCapabilities kills only the helper it launched when it hangs and reports no capabilities', { skip: process.platform === 'win32' }, async (t) => {
+  const binary = path.join(tempDir(t), 'recap-capture')
+  writeFileSync(binary, '#!/bin/sh\nexec sleep 30\n')
+  chmodSync(binary, 0o755)
+  let spawned: number | undefined
+  const began = Date.now()
+  const found = await captureCapabilities({ kind: 'binary', binary }, (command, args, options) => exec(command, args, { ...options, onSpawn: (pid) => (spawned = pid) }), 300)
+  assert.deepEqual(found, [])
+  assert.ok(Date.now() - began < 5_000)
+  assert.ok(spawned !== undefined)
+  const pid = spawned
+  assert.ok(await waitUntil(2, 0.05, () => !isAlive(pid)))
 })
 
 test('meeting.json and active.json round-trip the meeting mode', (t) => {

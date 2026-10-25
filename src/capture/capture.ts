@@ -5,7 +5,7 @@ import { which, type PlatformContext } from '@kikedealba/kit/platform'
 import { exists, readText } from '../core/fsutil.ts'
 import { isRecord } from '../core/json.ts'
 import { home } from '../core/paths.ts'
-import { exec, spawnDetached } from '../core/proc.ts'
+import { exec, spawnDetached, type ExecOptions } from '../core/proc.ts'
 import { selfCommand, stableCommand } from '../core/self.ts'
 import { trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
@@ -52,10 +52,16 @@ export function captureBinary(launcher: CaptureLauncher): string | null {
   return hasCaptureBinary(launcher.app) ? path.join(launcher.app, 'Contents', 'MacOS', 'recap-capture') : null
 }
 
-export async function captureCapabilities(launcher: CaptureLauncher, run: (command: string, args: string[]) => ReturnType<typeof exec> = exec): Promise<string[]> {
+export const CAPABILITIES_TIMEOUT_MS = 5_000
+
+export async function captureCapabilities(
+  launcher: CaptureLauncher,
+  run: (command: string, args: string[], options: ExecOptions) => ReturnType<typeof exec> = exec,
+  timeoutMs: number = CAPABILITIES_TIMEOUT_MS,
+): Promise<string[]> {
   const binary = captureBinary(launcher)
   if (binary === null) return []
-  const result = await run(binary, ['capabilities', '--json']).catch(() => null)
+  const result = await run(binary, ['capabilities', '--json'], { timeoutMs }).catch(() => null)
   if (result === null || result.status !== 0) return []
   const data = parseEnvelope(result.stdout)?.data
   if (!isRecord(data) || !Array.isArray(data['capabilities'])) return []

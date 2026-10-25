@@ -6,12 +6,13 @@ import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
 import { sandboxEnv, tempDir } from './helpers.ts'
+import { isAlive } from '../src/core/proc.ts'
 
 const BIN = path.join(PACKAGE_ROOT, 'src', 'bin', 'recap.ts')
 const FAKE = path.join(import.meta.dirname, 'fakes', 'fake-recap-capture.cjs')
 const onMac = process.platform === 'darwin'
 
-type Capabilities = 'announce' | 'legacy' | 'fail' | 'garbage'
+type Capabilities = 'announce' | 'legacy' | 'fail' | 'garbage' | 'hang'
 
 interface Run {
   code: number
@@ -93,7 +94,7 @@ test('start with a title and the plain output names the meeting mode', { skip: !
   const env = helperEnv(t, 'announce')
   const started = await recap(['start', 'Sprint', 'planning', '--timeout', '15'], env)
   assert.equal(started.code, 0, started.stderr)
-  assert.match(started.stdout, /^Recording .* meeting "Sprint planning"\n/)
+  assert.match(started.stdout, /^Recording meeting "Sprint planning"\n/)
   assert.doesNotMatch(started.stdout, /does not support meeting mode/)
   await recap(['stop', '--no-process', '--timeout', '15'], env)
 })
@@ -129,8 +130,27 @@ test('the fallback tells the user to update Recap.app in plain output', { skip: 
   const env = helperEnv(t, 'legacy')
   const started = await recap(['start', 'Daily', '--timeout', '15'], env)
   assert.equal(started.code, 0, started.stderr)
-  assert.match(started.stdout, /Recording in-person meeting "Daily"/)
-  assert.match(started.stdout, /does not support meeting mode yet; recording the microphone only as an in-person meeting\. Update it with `recap setup`\./)
+  assert.match(started.stdout, /^Recording meeting "Daily"\nRecap\.app does not support meeting mode yet; recording the microphone only\. Update it with `recap setup`\.\n/)
+  assert.doesNotMatch(started.stdout, /in-person|presencial|meeting meeting/)
+  const status = await recap(['status'], env)
+  assert.match(status.stdout, /^Recording meeting "Daily" for /)
+  await recap(['stop', '--no-process', '--timeout', '15'], env)
+})
+
+test('a helper that hangs on capabilities is killed after the timeout and start falls back to in-person', { skip: !onMac }, async (t) => {
+  const env = helperEnv(t, 'hang')
+  const pidFile = path.join(path.dirname(String(env['RECAP_CAPTURE'])), 'capabilities.pid')
+  t.after(() => {
+    if (!existsSync(pidFile)) return
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    if (isAlive(pid)) process.kill(pid, 'SIGKILL')
+  })
+  const began = Date.now()
+  const started = data(await recap(['start', '--timeout', '15', '--json'], env))
+  assert.ok(Date.now() - began < 14_000)
+  assert.equal(started['mode'], 'in-person')
+  assert.equal(started['fallback'], 'in-person')
+  assert.ok(!isAlive(Number(readFileSync(pidFile, 'utf8'))))
   await recap(['stop', '--no-process', '--timeout', '15'], env)
 })
 

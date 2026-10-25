@@ -14,7 +14,10 @@ function update(file, change) {
   fs.writeFileSync(file, JSON.stringify(meeting))
 }
 
-if (command === 'capabilities') {
+if (command === 'capabilities' && behavior === 'hang') {
+  fs.writeFileSync(path.join(path.dirname(process.argv[1]), 'capabilities.pid'), String(process.pid))
+  setInterval(() => undefined, 1000)
+} else if (command === 'capabilities') {
   if (behavior === 'fail') {
     process.stderr.write('unknown command\n')
     process.exit(64)
@@ -26,9 +29,7 @@ if (command === 'capabilities') {
   const capabilities = behavior === 'legacy' ? ['capture.remote', 'capture.in-person'] : ['capture.remote', 'capture.in-person', 'capture.meeting']
   process.stdout.write(`${JSON.stringify({ schemaVersion: 1, ok: true, command: 'capabilities', generatedAt: stamp(), data: { name: 'recap-capture', capabilities } })}\n`)
   process.exit(0)
-}
-
-if (command === 'record') {
+} else if (command === 'record') {
   const file = path.join(dir, 'meeting.json')
   let mode = 'unknown'
   update(file, (meeting) => {
