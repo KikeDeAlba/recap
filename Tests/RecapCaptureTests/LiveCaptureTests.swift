@@ -308,6 +308,33 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
     }
 }
 
+@Suite struct SegmentStopTests {
+    @Test @MainActor func aStreamStopWaitsForTheChangeInFlightAndIsSkippedOnceClosed() async throws {
+        let work = SerialWork()
+        let steps = Steps()
+        let report = MeetingRecorder.stopHandler(work) { error in
+            await steps.add("stopped \((error as? RecapError)?.code ?? "?")")
+        }
+        let set = Task { @MainActor in
+            try await work.run {
+                try await Task.sleep(nanoseconds: 150_000_000)
+                await steps.add("set done")
+            }
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        report(RecapError("WINDOW_GONE", "gone"))
+        try await set.value
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let handled = await steps.items
+        #expect(handled == ["set done", "stopped WINDOW_GONE"])
+        await work.close()
+        report(RecapError("CAPTURE_STOPPED", "late"))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let afterClose = await steps.items
+        #expect(afterClose == handled)
+    }
+}
+
 @Suite struct ControlServerTests {
     @Test func setRequestsReachTheRecorderAndGetTheStatusBack() async throws {
         let dir = try temporaryDirectory()
@@ -544,19 +571,19 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
         #expect(try errorCode(dir, id: "s1") == "NOT_RECORDING")
     }
 
-    @Test func sourcesBeyondTheLimitAreAnsweredBusy() async throws {
+    @Test(arguments: [1, 3, ControlServer.maxLookups])
+    func sourcesBeyondTheLimitAreAnsweredBusy(limit: Int) async throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let handler = FakeCaptureHandler()
         handler.sourcesDelay = 300_000_000
-        let server = ControlServer(meetingDir: dir, handler: handler)
-        #expect((1...2).contains(ControlServer.maxLookups))
-        let ids = (1...(ControlServer.maxLookups + 2)).map { String(format: "%04d-s", $0) }
+        let server = ControlServer(meetingDir: dir, handler: handler, maxLookups: limit)
+        let ids = (1...(limit + 2)).map { String(format: "%04d-s", $0) }
         for id in ids { try writeRequest(dir, #"{"id":""# + id + #"","action":"sources"}"#, id: id) }
         await server.pollCommands()
         for id in ids.suffix(2) { #expect(try errorCode(dir, id: id) == "BUSY") }
         await server.waitForLookups()
-        for id in ids.prefix(ControlServer.maxLookups) { #expect(try response(dir, id: id)["ok"] as? Bool == true) }
+        for id in ids.prefix(limit) { #expect(try response(dir, id: id)["ok"] as? Bool == true) }
         try writeRequest(dir, #"{"id":"0009-s","action":"sources"}"#, id: "0009-s")
         await server.poll()
         #expect(try response(dir, id: "0009-s")["ok"] as? Bool == true)
@@ -765,7 +792,6 @@ private func toneBuffer(at position: Int64, frames: Int) throws -> CMSampleBuffe
         let minimum = 12 - MediaWriter.fragmentInterval.seconds - 1
         let duration = try await AVURLAsset(url: copy).load(.duration).seconds
         #expect(MediaWriter.fragmentInterval.seconds == 5)
-        #expect(minimum == 6)
         #expect(duration >= minimum)
         let ffprobe = try #require(Shell.which("ffprobe"))
         let probed = try Shell.run(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", copy.path],

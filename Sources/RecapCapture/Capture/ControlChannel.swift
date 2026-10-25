@@ -165,6 +165,7 @@ package final class ControlServer {
     private weak var handler: CaptureControlHandler?
     private let interval: TimeInterval
     private let lookupTimeout: TimeInterval
+    private let lookupLimit: Int
     private let now: () -> Date
     private let queue = DispatchQueue(label: "recap.capture-control")
     private let lock = NSLock()
@@ -174,11 +175,13 @@ package final class ControlServer {
     private var lookups: [UUID: Task<Void, Never>] = [:]
 
     package init(meetingDir: URL, handler: CaptureControlHandler, interval: TimeInterval = 0.1,
-                 lookupTimeout: TimeInterval = ControlServer.lookupTimeout, now: @escaping () -> Date = Date.init) {
+                 lookupTimeout: TimeInterval = ControlServer.lookupTimeout, maxLookups: Int = ControlServer.maxLookups,
+                 now: @escaping () -> Date = Date.init) {
         directory = Self.directory(meetingDir)
         self.handler = handler
         self.interval = interval
         self.lookupTimeout = lookupTimeout
+        lookupLimit = max(1, maxLookups)
         self.now = now
     }
 
@@ -292,7 +295,7 @@ package final class ControlServer {
         let handler = self.handler
         let timeout = lookupTimeout
         let accepted = lock.withLock { () -> Bool in
-            guard lookups.count < Self.maxLookups else { return false }
+            guard lookups.count < lookupLimit else { return false }
             lookups[key] = Task { [weak self] in
                 guard let self else { return }
                 if let handler {

@@ -365,11 +365,8 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
             let atMs = self.milliseconds(pts)
             self.manifest.update { $0.markSegmentStart(file, atMs: atMs) }
         }
-        created.onStop = { [weak self, weak created] error in
-            Task { @MainActor in
-                guard let self else { return }
-                await self.work.runUnlessClosed { await self.segmentStopped(created, error: error) }
-            }
+        created.onStop = Self.stopHandler(work) { [weak self, weak created] error in
+            await self?.segmentStopped(created, error: error)
         }
         do {
             try await created.start(filter: filter, configuration: configuration(width: size.width, height: size.height))
@@ -381,6 +378,12 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         }
         segment = created
         if stopped { await endSegment() }
+    }
+
+    package static func stopHandler(_ work: SerialWork, _ handle: @escaping @MainActor (Error) async -> Void) -> (Error) -> Void {
+        { error in
+            Task { @MainActor in await work.runUnlessClosed { await handle(error) } }
+        }
     }
 
     @MainActor
