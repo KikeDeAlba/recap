@@ -507,8 +507,16 @@ private func toneBuffer(at position: Int64, frames: Int) throws -> CMSampleBuffe
         try await Task.sleep(nanoseconds: 500_000_000)
         let copy = dir.appending(path: "killed.m4a")
         try FileManager.default.copyItem(at: url, to: copy)
+        let minimum = 12 - MediaWriter.fragmentInterval.seconds - 1
         let duration = try await AVURLAsset(url: copy).load(.duration).seconds
         #expect(MediaWriter.fragmentInterval.seconds == 5)
-        #expect(duration >= 12 - 2 * MediaWriter.fragmentInterval.seconds)
+        #expect(minimum == 6)
+        #expect(duration >= minimum)
+        let ffprobe = try #require(Shell.which("ffprobe"))
+        let probed = try Shell.run(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", copy.path],
+                                   timeout: 30)
+        #expect(probed.ok, "\(probed.stderr)")
+        let probedDuration = try #require(Double(probed.stdout.trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(probedDuration >= minimum)
     }
 }
