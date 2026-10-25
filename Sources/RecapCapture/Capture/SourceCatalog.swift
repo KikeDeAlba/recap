@@ -99,6 +99,7 @@ package enum SourceCatalog {
     package static let maxThumbnailBytes = 128 * 1024
     package static let maxThumbnails = 48
     package static let thumbnailConcurrency = 6
+    package static let thumbnailTimeout: UInt64 = 5_000_000_000
     package static let minimumWindowWidth = 120
     package static let minimumWindowHeight = 80
     package static let jpegQuality = 0.7
@@ -247,7 +248,7 @@ package enum SourceCatalog {
                                          width: source.width, height: source.height))
             }
             let chosen = Array(jobs.prefix(maxThumbnails))
-            let images = await concurrently(chosen.count, limit: thumbnailConcurrency) { position in
+            let images = await concurrently(chosen.count, limit: thumbnailConcurrency, timeout: thumbnailTimeout) { position in
                 await thumbnail(chosen[position].filter, width: chosen[position].width, height: chosen[position].height)
             }
             for (position, image) in images {
@@ -260,8 +261,13 @@ package enum SourceCatalog {
         return CaptureSources(displays: displays, windows: windows)
     }
 
-    package static func concurrently<T>(_ count: Int, limit: Int, _ body: @escaping (Int) async -> T?) async -> [Int: T] {
-        await withTaskGroup(of: (Int, T?).self) { group in
+    package static func concurrently<T>(_ count: Int, limit: Int, timeout: UInt64? = nil,
+                                        _ work: @escaping (Int) async -> T?) async -> [Int: T] {
+        let body: (Int) async -> T? = { position in
+            guard let timeout else { return await work(position) }
+            return (try? await Deadline.run(within: timeout, onTimeout: CancellationError()) { await work(position) }) ?? nil
+        }
+        return await withTaskGroup(of: (Int, T?).self) { group in
             var next = 0
             let width = max(1, limit)
             while next < min(width, count) {

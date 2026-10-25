@@ -27,6 +27,7 @@ private final class FakeCaptureHandler: CaptureControlHandler {
     var failure: RecapError?
     var video: CaptureVideo?
     var sourcesDelay: UInt64 = 0
+    var sourcesHang: TimeInterval = 0
 
     func setTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
         calls.append("set \(target.kind.rawValue) \(target.id)")
@@ -44,10 +45,17 @@ private final class FakeCaptureHandler: CaptureControlHandler {
 
     func sources(thumbnails: Bool) async throws -> CaptureSources {
         if sourcesDelay > 0 { try await Task.sleep(nanoseconds: sourcesDelay) }
+        if sourcesHang > 0 { await uncancellableWait(sourcesHang) }
         calls.append("sources \(thumbnails)")
         if let failure { throw failure }
         return CaptureSources(displays: [DisplaySource(id: 1, name: "Built-in Retina Display", width: 1512, height: 982, main: true)],
                               windows: [])
+    }
+}
+
+private func uncancellableWait(_ seconds: TimeInterval) async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { continuation.resume() }
     }
 }
 
@@ -154,6 +162,31 @@ private actor Gauge {
 private actor Steps {
     var items: [String] = []
     func add(_ item: String) { items.append(item) }
+}
+
+@Suite struct DeadlineTests {
+    @Test func aFastOperationKeepsItsResult() async throws {
+        #expect(try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late")) { 7 } == 7)
+        await #expect(throws: RecapError.self) {
+            try await Deadline.run(within: 1_000_000_000, onTimeout: CancellationError()) { () async throws -> Int in
+                throw RecapError("BROKEN", "broken")
+            }
+        }
+    }
+
+    @Test func aHungOperationEndsWithTheTimeoutError() async {
+        let started = Date()
+        do {
+            _ = try await Deadline.run(within: 100_000_000, onTimeout: RecapError("LATE", "late")) { () async -> Int in
+                await uncancellableWait(5)
+                return 1
+            }
+            Issue.record("the deadline did not fire")
+        } catch {
+            #expect((error as? RecapError)?.code == "LATE")
+        }
+        #expect(Date().timeIntervalSince(started) < 3)
+    }
 }
 
 @Suite struct SerialWorkTests {
@@ -436,6 +469,25 @@ private actor Steps {
         #expect(try response(dir, id: "0009-s")["ok"] as? Bool == true)
     }
 
+    @Test func aHungLookupTimesOutAndFreesItsSlot() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        handler.sourcesHang = 5
+        let server = ControlServer(meetingDir: dir, handler: handler, lookupTimeout: 0.2)
+        #expect(ControlServer.lookupTimeout < 30)
+        let ids = (1...ControlServer.maxLookups).map { String(format: "%04d-h", $0) }
+        for id in ids { try writeRequest(dir, #"{"id":""# + id + #"","action":"sources"}"#, id: id) }
+        let started = Date()
+        await server.poll()
+        #expect(Date().timeIntervalSince(started) < 3)
+        for id in ids { #expect(try errorCode(dir, id: id) == "CAPTURE_TIMEOUT") }
+        handler.sourcesHang = 0
+        try writeRequest(dir, #"{"id":"0009-h","action":"sources"}"#, id: "0009-h")
+        await server.poll()
+        #expect(try response(dir, id: "0009-h")["ok"] as? Bool == true)
+    }
+
     @Test func idsAreShortAndSafeForFileNames() {
         #expect(ControlServer.isValidId("7c9e6679-7425-40de-944b-e07fc1f90ae7"))
         #expect(!ControlServer.isValidId(""))
@@ -514,6 +566,17 @@ private actor Steps {
         #expect(found[4] == 40)
         #expect(found[3] == nil)
         #expect(await SourceCatalog.concurrently(0, limit: 4) { $0 }.isEmpty)
+    }
+
+    @Test func aThumbnailThatHangsIsDroppedAndFreesItsSlot() async {
+        #expect(SourceCatalog.thumbnailTimeout < 25_000_000_000)
+        let started = Date()
+        let found = await SourceCatalog.concurrently(4, limit: 2, timeout: 100_000_000) { position -> Int? in
+            if position < 2 { await uncancellableWait(5) }
+            return position
+        }
+        #expect(Date().timeIntervalSince(started) < 3)
+        #expect(found == [2: 2, 3: 3])
     }
 
     @Test func largeThumbnailsAreDropped() throws {

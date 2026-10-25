@@ -162,11 +162,13 @@ package final class ControlServer {
     package static let responseLifetime: TimeInterval = 60
     package static let notRecording = RecapError("NOT_RECORDING", "The recording is stopping")
     package static let maxLookups = 2
+    package static let lookupTimeout: TimeInterval = 25
     package static let busy = RecapError("BUSY", "Recap.app is already listing the sources for other requests; try again in a moment")
 
     private let directory: URL
     private weak var handler: CaptureControlHandler?
     private let interval: TimeInterval
+    private let lookupTimeout: TimeInterval
     private let now: () -> Date
     private let queue = DispatchQueue(label: "recap.capture-control")
     private let lock = NSLock()
@@ -176,10 +178,11 @@ package final class ControlServer {
     private var lookups: [UUID: Task<Void, Never>] = [:]
 
     package init(meetingDir: URL, handler: CaptureControlHandler, interval: TimeInterval = 0.1,
-                 now: @escaping () -> Date = Date.init) {
+                 lookupTimeout: TimeInterval = ControlServer.lookupTimeout, now: @escaping () -> Date = Date.init) {
         directory = Self.directory(meetingDir)
         self.handler = handler
         self.interval = interval
+        self.lookupTimeout = lookupTimeout
         self.now = now
     }
 
@@ -291,13 +294,18 @@ package final class ControlServer {
     private func lookup(_ request: ControlRequest) {
         let key = UUID()
         let handler = self.handler
+        let timeout = lookupTimeout
         let accepted = lock.withLock { () -> Bool in
             guard lookups.count < Self.maxLookups else { return false }
             lookups[key] = Task { [weak self] in
                 guard let self else { return }
                 if let handler {
                     do {
-                        self.write(.success(request.id, .sources(try await handler.sources(thumbnails: request.thumbnails ?? false))))
+                        let sources = try await Deadline.run(within: UInt64(timeout * 1_000_000_000),
+                                                             onTimeout: Self.lookupExpired(timeout)) {
+                            try await handler.sources(thumbnails: request.thumbnails ?? false)
+                        }
+                        self.write(.success(request.id, .sources(sources)))
                     } catch {
                         self.write(.failure(request.id, error))
                     }
@@ -309,6 +317,10 @@ package final class ControlServer {
             return true
         }
         if !accepted { write(.failure(request.id, Self.busy)) }
+    }
+
+    package static func lookupExpired(_ timeout: TimeInterval) -> RecapError {
+        RecapError("CAPTURE_TIMEOUT", "Recap.app took more than \(Int(timeout))s to list the sources; try again without thumbnails")
     }
 
     private func handle(_ request: ControlRequest) async {
