@@ -32,7 +32,7 @@ export function enableAudio(info: Pick<MediaInfo, 'audioTracks'>): string[] {
 }
 
 function requireVideo(meeting: Meeting, dir: string): void {
-  if (meeting.mode !== 'remote') throw new RecapError('NOT_REMOTE', `"${meeting.title}" is an in-person meeting and has no video`)
+  if (meeting.mode === 'in-person') throw new RecapError('NOT_REMOTE', `"${meeting.title}" is an in-person meeting and has no video`)
   requireIdle(meeting)
   if (!hasVideo(dir, meeting.mode)) throw new RecapError('NO_VIDEO', `"${meeting.title}" has no ${VIDEO_FILE}`)
 }

@@ -14,6 +14,7 @@ import { INKWELL_HINT } from '../../bita/client.ts'
 import { Pipeline } from '../../pipeline/pipeline.ts'
 import { STAGES, allStagesSatisfied, isStage, type Stage } from '../../pipeline/stages.ts'
 import { saveSummary, summaryPromptFor } from '../../pipeline/summary.ts'
+import { summaryView, transcriptView } from '../../pipeline/views.ts'
 import { parseArgs } from '../args.ts'
 import { output, stderrLine } from '../output.ts'
 
@@ -52,6 +53,25 @@ export async function showCommand(argv: string[]): Promise<number> {
     let text = `${meeting.title}\n${meeting.id}  ${meeting.mode}  ${meeting.status}  ${formatDuration(durationSeconds(meeting))}\n${dir}`
     if (meeting.error) text += `\nError: ${meeting.error}`
     return { data: record, text }
+  })
+}
+
+export async function transcriptCommand(argv: string[]): Promise<number> {
+  return output('transcript', argv.includes('--json'), () => {
+    const args = parseArgs(argv, { values: ['bita-entry'], maxPositionals: 1 })
+    const { meeting, dir } = locate(new MeetingStore(loadConfig()), args.positionals[0], args.int('bita-entry'))
+    const view = transcriptView(meeting, dir)
+    return { data: view, text: readText(path.join(dir, 'transcript.md')) ?? view.paragraphs.map((paragraph) => paragraph.text).join('\n\n') }
+  })
+}
+
+export async function summaryCommand(argv: string[]): Promise<number> {
+  return output('summary', argv.includes('--json'), () => {
+    const args = parseArgs(argv, { values: ['bita-entry'], maxPositionals: 1 })
+    const { meeting, dir } = locate(new MeetingStore(loadConfig()), args.positionals[0], args.int('bita-entry'))
+    const view = summaryView(meeting, dir)
+    if (!args.json && view.markdown.length === 0) throw new RecapError('NO_SUMMARY', `"${meeting.title}" has no summary yet; run \`recap process ${meeting.id}\``)
+    return { data: view, text: view.markdown.trimEnd() }
   })
 }
 

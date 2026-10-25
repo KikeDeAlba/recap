@@ -4,6 +4,7 @@ import type { BitaEntrySnapshot, BitaTarget, MeetingMode } from '../core/meeting
 export const MEETING_KINDS: Record<string, MeetingMode> = {
   'remote-meeting': 'remote',
   'in-person-meeting': 'in-person',
+  meeting: 'meeting',
 }
 
 export const HOOK_EVENTS = ['start', 'stop', 'cancel', 'amend']

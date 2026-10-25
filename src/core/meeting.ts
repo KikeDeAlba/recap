@@ -10,10 +10,14 @@ import { isRecord, swiftPretty } from './json.ts'
 import { isAlive } from './proc.ts'
 import { slug } from './text.ts'
 
-export type MeetingMode = 'remote' | 'in-person'
+export type MeetingMode = 'remote' | 'in-person' | 'meeting'
 export type MeetingStatus = 'starting' | 'recording' | 'recorded' | 'failed' | 'processing' | 'processed'
 
-export const MEETING_MODES: MeetingMode[] = ['remote', 'in-person']
+export const MEETING_MODES: MeetingMode[] = ['remote', 'in-person', 'meeting']
+
+export function isMeetingMode(value: unknown): value is MeetingMode {
+  return typeof value === 'string' && (MEETING_MODES as string[]).includes(value)
+}
 
 export function recordingFileName(mode: MeetingMode): string {
   return mode === 'remote' ? 'recording.mov' : 'recording.m4a'
@@ -96,7 +100,7 @@ function validMeeting(value: unknown): value is Meeting {
   return (
     typeof value['id'] === 'string' &&
     typeof value['title'] === 'string' &&
-    (value['mode'] === 'remote' || value['mode'] === 'in-person') &&
+    isMeetingMode(value['mode']) &&
     typeof value['status'] === 'string' &&
     ['starting', 'recording', 'recorded', 'failed', 'processing', 'processed'].includes(value['status']) &&
     typeof value['createdAt'] === 'string' &&
@@ -144,9 +148,9 @@ export function updateMeeting(dir: string, change: (meeting: Meeting) => void): 
 
 export function recordingPath(dir: string, mode: MeetingMode): string {
   const primary = path.join(dir, recordingFileName(mode))
-  if (mode !== 'remote' || exists(primary)) return primary
-  const audio = path.join(dir, 'recording.m4a')
-  return exists(audio) ? audio : primary
+  if (mode === 'in-person' || exists(primary)) return primary
+  const fallback = path.join(dir, recordingFileName(mode === 'remote' ? 'in-person' : 'remote'))
+  return exists(fallback) ? fallback : primary
 }
 
 export function isActiveStatus(status: MeetingStatus): boolean {

@@ -5,7 +5,7 @@ import { MeetingStore, durationSeconds, type MeetingMode } from '../../core/meet
 import { meetingRecord } from '../../core/record.ts'
 import { processInBackground } from '../../core/self.ts'
 import { formatDuration } from '../../core/text.ts'
-import { RecapError, usageError } from '../../errors.ts'
+import { usageError } from '../../errors.ts'
 import { discardRecording, startRecording, stopRecording } from '../../capture/recording.ts'
 import { importRecording } from '../../capture/import.ts'
 import { Pipeline } from '../../pipeline/pipeline.ts'
@@ -13,18 +13,17 @@ import { bitaLinked } from '../../setup/integration.ts'
 import { parseArgs } from '../args.ts'
 import { output, stderrLine } from '../output.ts'
 
-function modeFrom(remote: boolean, inPerson: boolean, required: boolean): MeetingMode | undefined {
+export function modeFrom(remote: boolean, inPerson: boolean): MeetingMode | undefined {
   if (remote && inPerson) throw usageError('Choose only one of --remote or --in-person')
   if (remote) return 'remote'
   if (inPerson) return 'in-person'
-  if (required) throw new RecapError('MODE_REQUIRED', 'Choose --remote or --in-person')
   return undefined
 }
 
 export async function startCommand(argv: string[]): Promise<number> {
   return output('start', argv.includes('--json'), async () => {
     const args = parseArgs(argv, { booleans: ['remote', 'in-person'], values: ['display', 'bita-entry', 'timeout'] })
-    const mode = modeFrom(args.has('remote'), args.has('in-person'), true) as MeetingMode
+    const mode = modeFrom(args.has('remote'), args.has('in-person')) ?? 'meeting'
     const located = await startRecording({
       title: args.positionals.join(' '),
       mode,
@@ -85,7 +84,7 @@ export async function importCommand(argv: string[]): Promise<number> {
     const file = args.positionals[0]
     if (!file) throw usageError('Usage: recap import <audio or video file> [--title <title>] [--remote|--in-person] [--no-process|--background]')
     const config = loadConfig()
-    const located = await importRecording(config, file, { title: args.value('title'), mode: modeFrom(args.has('remote'), args.has('in-person'), false) })
+    const located = await importRecording(config, file, { title: args.value('title'), mode: modeFrom(args.has('remote'), args.has('in-person')) })
     if (args.has('no-process')) return { data: meetingRecord(located.meeting, located.dir), text: `Imported "${located.meeting.title}"\n${located.dir}` }
     if (args.has('background')) {
       processInBackground(located.meeting.id, located.dir)

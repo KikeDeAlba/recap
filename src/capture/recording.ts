@@ -12,7 +12,8 @@ import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
-  return mode === 'remote' ? 'Remote meeting' : 'In-person meeting'
+  if (mode === 'remote') return 'Remote meeting'
+  return mode === 'in-person' ? 'In-person meeting' : 'Meeting'
 }
 
 export async function startRecording(options: {

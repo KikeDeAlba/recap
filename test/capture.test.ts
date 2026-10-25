@@ -52,10 +52,16 @@ test('the manifest subscribes to bita meeting events only when it can record', a
   assert.deepEqual((await manifest(false, false, ctx)).subscribes, [])
   assert.ok(!capabilities(false).includes('meeting.record'))
   assert.ok(capabilities(true).includes('meeting.record'))
+  assert.ok(capabilities(true).includes('meeting.mode.meeting'))
+  assert.ok(!capabilities(false).includes('meeting.mode.meeting'))
+  for (const captured of [true, false]) {
+    assert.ok(capabilities(captured).includes('meeting.transcript.json'))
+    assert.ok(capabilities(captured).includes('meeting.summary.json'))
+  }
   const subscription = await bitaSubscription(ctx)
   assert.equal(subscription.tool, 'bita')
   assert.deepEqual(subscription.events, ['start', 'stop', 'cancel', 'amend'])
-  assert.deepEqual(subscription.filter, { kind: ['in-person-meeting', 'remote-meeting'] })
+  assert.deepEqual(subscription.filter, { kind: ['in-person-meeting', 'meeting', 'remote-meeting'] })
   assert.equal(subscription.command.at(-1), 'bita-hook')
 })
 
