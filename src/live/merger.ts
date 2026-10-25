@@ -4,20 +4,37 @@ import { clock } from '../core/dates.ts'
 import { ECHO_WINDOW_MS, decodeSegment, isEcho, orderSegments, paragraphs, speakerLabel, type Channel, type Segment } from '../pipeline/transcript.ts'
 import { liveFiles, readLines } from './files.ts'
 import path from 'node:path'
+import { destinationSpans, readManifest, type DestinationSpan } from '../capture/manifest.ts'
+import type { Meeting } from '../core/meeting.ts'
 
 export const SYSTEM_MEMORY_MS = 60_000
 export const REPEAT_WINDOW_MS = 30_000
 
+export type SystemSpans = () => readonly DestinationSpan[]
+
+const ALWAYS: readonly DestinationSpan[] = [{ startMs: 0 }]
+const NEVER: readonly DestinationSpan[] = []
+
+export function systemSpansOf(meeting: Pick<Meeting, 'mode'>, dir: string): SystemSpans {
+  if (meeting.mode === 'remote') return () => ALWAYS
+  if (meeting.mode === 'meeting') return () => destinationSpans(readManifest(dir))
+  return () => NEVER
+}
+
+export function duringSpans(segment: Segment, spans: readonly DestinationSpan[]): boolean {
+  return spans.some((span) => segment.endMs + ECHO_WINDOW_MS >= span.startMs && (span.endMs === undefined || segment.startMs <= span.endMs + ECHO_WINDOW_MS))
+}
+
 export class LiveMerger {
-  readonly hasSystem: boolean
+  readonly spans: SystemSpans
   readonly holdSeconds: number
   systemCoveredMs = 0
   private recentSystem: Segment[] = []
   private pendingMic: { segment: Segment; addedAt: number }[] = []
   private lastText: Partial<Record<Channel, Segment>> = {}
 
-  constructor(hasSystem: boolean, holdSeconds: number) {
-    this.hasSystem = hasSystem
+  constructor(system: boolean | SystemSpans, holdSeconds: number) {
+    this.spans = typeof system === 'function' ? system : system ? () => ALWAYS : () => NEVER
     this.holdSeconds = holdSeconds
   }
 
@@ -34,9 +51,11 @@ export class LiveMerger {
       this.recentSystem = this.recentSystem.filter((segment) => segment.endMs >= horizon)
       return orderSegments([...fresh, ...this.release(now, false)])
     }
-    if (!this.hasSystem) return orderSegments(fresh)
-    this.pendingMic.push(...fresh.map((segment) => ({ segment, addedAt: now })))
-    return orderSegments(this.release(now, false))
+    const spans = this.spans()
+    const held = fresh.filter((segment) => duringSpans(segment, spans))
+    const free = fresh.filter((segment) => !held.includes(segment) && !this.recentSystem.some((system) => isEcho(segment, system)))
+    this.pendingMic.push(...held.map((segment) => ({ segment, addedAt: now })))
+    return orderSegments([...free, ...this.release(now, false)])
   }
 
   advance(channel: Channel, toMs: number, now: number): Segment[] {

@@ -3,12 +3,12 @@ import { agents } from '@kikedealba/kit'
 import type { Config } from '../core/config.ts'
 import { settingsOf } from '../core/config.ts'
 import { isoNow, minuteStamp, parseDate } from '../core/dates.ts'
-import type { Meeting } from '../core/meeting.ts'
+import { hasSystemAudio, type Meeting } from '../core/meeting.ts'
 import { replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { agentEnvironment, agentError, resolveAgent, streamArguments, streamClaude, type AgentDependencies } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
-import type { Channel, Segment } from '../pipeline/transcript.ts'
+import { callAudioNote, type Channel, type Segment } from '../pipeline/transcript.ts'
 import { performAsk, type PerformOptions } from './asking.ts'
 import { BRAIN_QUERY_SECONDS, brainAvailable, brainNotesShown, brainQuery, rememberAnswer, renderBrain, searchBrain, type BrainNote, type MeetingStamp } from './brain.ts'
 import { existingRepos, type ProjectContext } from './context.ts'
@@ -50,7 +50,7 @@ export function askAddDirs(context: ProjectContext): string[] {
 
 export function renderAskPrompt(template: string, request: AskRequest, context: ProjectContext, segments: readonly Segment[], notes: readonly BrainNote[] = [], self: readonly string[] = runningCommand()): string {
   const window = transcriptWindow(segments, request.windowSeconds)
-  const labelled = request.meeting.mode === 'remote'
+  const labelled = hasSystemAudio(request.meeting, request.dir)
   const title = request.meeting.bitaEntry?.title ?? request.meeting.title
   const question = request.question ? trimmed(request.question) : ''
   const questionBlock =
@@ -74,7 +74,7 @@ export function renderAskPrompt(template: string, request: AskRequest, context: 
           )
           .join('\n')
   const speakers = labelled
-    ? '«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada.'
+    ? `«Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada.${callAudioNote(request.meeting)}`
     : 'Un solo micrófono en la sala, sin separación por persona.'
   const gitUsage = repos.some((repo) => repoGitAllowed(self, repo.path)) ? GIT_USAGE : NO_GIT_HISTORY
   let text = template

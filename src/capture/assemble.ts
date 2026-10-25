@@ -2,7 +2,7 @@ import { renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import type { Config } from '../core/config.ts'
 import { isoNow } from '../core/dates.ts'
-import { fileSize } from '../core/fsutil.ts'
+import { exists, fileSize } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
 import { updateMeeting, type Meeting } from '../core/meeting.ts'
 import { exec } from '../core/proc.ts'
@@ -205,11 +205,16 @@ export async function assembleCapture(dir: string, config: Config, platform: Nod
   return { file: path.join(dir, VIDEO_FILE), channels: ['mic', 'system'], segments: plan.inputs.length }
 }
 
+export function assembledChannels(dir: string): Channel[] {
+  return exists(path.join(dir, VIDEO_FILE)) ? ['mic', 'system'] : ['mic']
+}
+
 export async function assembleMeeting(dir: string, config: Config, platform: NodeJS.Platform = process.platform): Promise<Meeting> {
   try {
     const result = await assembleCapture(dir, config, platform)
     return updateMeeting(dir, (meeting) => {
       if (result) meeting.channels = result.channels
+      else if (!Array.isArray(meeting.channels)) meeting.channels = assembledChannels(dir)
       meeting.stages['assemble'] = { status: 'done', updatedAt: isoNow() }
     })
   } catch (error) {

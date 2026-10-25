@@ -95,3 +95,18 @@ export function pendingCaptureBytes(dir: string, mode: string): number {
 export function needsAssembly(dir: string, mode: string): boolean {
   return pendingCaptureBytes(dir, mode) > 0
 }
+
+export interface DestinationSpan {
+  startMs: number
+  endMs?: number | undefined
+}
+
+export function destinationSpans(manifest: CaptureManifest | null): DestinationSpan[] {
+  if (!manifest) return []
+  return [...manifest.segments].sort((left, right) => left.startMs - right.startMs).map((segment) => ({ startMs: segment.startMs, endMs: segment.endMs }))
+}
+
+export function hadDestination(dir: string): boolean {
+  const manifest = readManifest(dir)
+  return manifest !== null && (manifest.video !== null || manifest.segments.length > 0)
+}

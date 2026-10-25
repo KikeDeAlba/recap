@@ -9,6 +9,10 @@ export function speakerLabel(channel: Channel): string {
   return channel === 'mic' ? 'Sala' : 'Remotos'
 }
 
+export function callAudioNote(meeting: Pick<Meeting, 'mode'>): string {
+  return meeting.mode === 'remote' ? '' : ' Solo hay «Remotos» en los tramos en que se grabó una pantalla o ventana; fuera de ellos todo viene del micrófono.'
+}
+
 export interface Segment {
   startMs: number
   endMs: number

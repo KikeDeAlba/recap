@@ -15,7 +15,7 @@ import { RecapError, errorMessage } from '../errors.ts'
 import { INKWELL_CAPABILITIES, StageSkipped, inkwellForStage } from '../bita/client.ts'
 import { ProposalGenerator } from '../bita/proposals.ts'
 import { runWrapup } from '../bita/wrapup.ts'
-import { assembleMeeting } from '../capture/assemble.ts'
+import { assembledChannels, assembleMeeting } from '../capture/assemble.ts'
 import { needsAssembly } from '../capture/manifest.ts'
 import { runSummaryAgent } from './agent.ts'
 import { STAGES, allStagesSatisfied, stageApplies, stageComplete, stageIsOptional, stageSkipped, type Stage } from './stages.ts'
@@ -94,6 +94,7 @@ export class Pipeline {
     try {
       meeting = updateMeeting(this.dir, (current) => {
         current.status = 'processing'
+        if (current.mode === 'meeting' && !Array.isArray(current.channels) && !needsAssembly(this.dir, current.mode)) current.channels = assembledChannels(this.dir)
       })
       let forced = false
       for (const stage of STAGES) {

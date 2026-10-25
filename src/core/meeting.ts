@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { RecapError, errorMessage } from '../errors.ts'
 import { applyRecovery, recoverCapture, withRecoveryLock } from '../capture/recover.ts'
-import { pendingCaptureBytes } from '../capture/manifest.ts'
+import { hadDestination, pendingCaptureBytes } from '../capture/manifest.ts'
 import type { Channel } from '../pipeline/transcript.ts'
 import type { Config } from './config.ts'
 import { rootDir } from './config.ts'
@@ -183,6 +183,11 @@ export function recordedChannels(meeting: Pick<Meeting, 'mode' | 'channels'>): C
 
 export function hasSystemChannel(meeting: Pick<Meeting, 'mode' | 'channels'>): boolean {
   return recordedChannels(meeting).includes('system')
+}
+
+export function hasSystemAudio(meeting: Pick<Meeting, 'mode' | 'channels'>, dir: string): boolean {
+  if (hasSystemChannel(meeting)) return true
+  return meeting.mode === 'meeting' && !Array.isArray(meeting.channels) && hadDestination(dir)
 }
 
 export function isActiveStatus(status: MeetingStatus): boolean {

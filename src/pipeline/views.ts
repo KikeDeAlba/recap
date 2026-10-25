@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { readText } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
-import { hasSystemChannel, recordedChannels, type Meeting } from '../core/meeting.ts'
+import { hasSystemAudio, recordedChannels, type Meeting } from '../core/meeting.ts'
 import { fold, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { decodeSegment, paragraphs, speakerLabel, type Channel, type Segment } from './transcript.ts'
@@ -75,7 +75,7 @@ export function transcriptView(meeting: Meeting, dir: string): TranscriptView {
     if (markdown === null) throw new RecapError('NO_TRANSCRIPT', `"${meeting.title}" has no transcript yet; run \`recap process ${meeting.id}\``)
     segments = parseTranscriptMarkdown(markdown)
   }
-  const labelled = hasSystemChannel(meeting)
+  const labelled = hasSystemAudio(meeting, dir)
   const present = new Set<Channel>([...recordedChannels(meeting), ...segments.map((segment) => segment.channel)])
   return {
     segments: segments.map((segment) => ({ start: seconds(segment.startMs), end: seconds(segment.endMs), channel: segment.channel, text: segment.text })),
