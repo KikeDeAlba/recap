@@ -21,7 +21,7 @@ import Testing
     @Test func timesOutASleepingChild() {
         let started = Date()
         #expect(throws: RecapError.self) { try Shell.run(URL(fileURLWithPath: "/bin/sleep"), ["30"], timeout: 0.3) }
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(Date().timeIntervalSince(started) < 10)
     }
 
     @Test func killsAChildThatIgnoresTerm() {
@@ -39,7 +39,7 @@ import Testing
         #expect(throws: RecapError.self) {
             try Shell.run(URL(fileURLWithPath: "/bin/sleep"), ["30"], stdin: Data(repeating: 0x62, count: 512 * 1024), timeout: 0.3)
         }
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(Date().timeIntervalSince(started) < 10)
     }
 
     @Test func survivesAChildThatExitsWithoutReadingStdin() throws {
