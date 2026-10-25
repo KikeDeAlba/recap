@@ -309,7 +309,8 @@ extension DeadlineTests {
         let steps = Steps()
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late")) { () async -> Int in
+            return try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late"),
+                                          startsWhenCancelled: false) { () async -> Int in
                 await steps.add("started")
                 return 1
             }
@@ -317,6 +318,18 @@ extension DeadlineTests {
         await #expect(throws: CancellationError.self) { try await task.value }
         try? await Task.sleep(nanoseconds: 50_000_000)
         #expect(await steps.items.isEmpty)
+        let cleanup = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late")) { () async -> Int in
+                await steps.add("cleanup")
+                return 1
+            }
+        }
+        _ = try? await cleanup.value
+        for _ in 0..<100 where await steps.items.isEmpty {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(await steps.items == ["cleanup"])
     }
 
     @Test func aTimedOutOperationCountsAsAbandonedUntilItEnds() async throws {
@@ -505,6 +518,20 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         #expect(await code(of: set) == "NOT_RECORDING")
         #expect(recorder.manifest.current.video == nil)
         #expect(screens.created.count == 1)
+    }
+
+    @Test @MainActor func aStopThatCancelsASetHungInUpdateStillStopsTheStream() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screens = FakeScreens()
+        screens.hangs = ["update": 3]
+        let recorder = screens.recorder(dir, timeouts: CaptureTimeouts(content: 1, start: 1, update: 2, stop: 0.5))
+        #expect(await code(of: Task { @MainActor in try await recorder.setTarget(display) }) == nil)
+        let set = Task { @MainActor in try await recorder.setTarget(window) }
+        try await waitUntil { screens.created.first?.calls == ["start", "update"] }
+        await recorder.stop()
+        #expect(await code(of: set) == "NOT_RECORDING")
+        #expect(screens.created.first?.calls == ["start", "update", "stop"])
     }
 
     @Test @MainActor func aSetHungInUpdateGivesUpWithoutStartingAnotherSegment() async throws {

@@ -58,7 +58,8 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
         lock.withLock { self.stream = stream }
         let seconds = timeouts.start
         try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
-                               onTimeout: CaptureTimeouts.expired("start the screen capture", after: seconds)) { [weak self] in
+                               onTimeout: CaptureTimeouts.expired("start the screen capture", after: seconds),
+                               startsWhenCancelled: false) { [weak self] in
             try await stream.startCapture()
             if self?.isStopping ?? true { try? await stream.stopCapture() }
         }
@@ -70,7 +71,8 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         let seconds = timeouts.update
         try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
-                               onTimeout: CaptureTimeouts.expired("switch the screen capture", after: seconds)) {
+                               onTimeout: CaptureTimeouts.expired("switch the screen capture", after: seconds),
+                               startsWhenCancelled: false) {
             try await stream.updateContentFilter(filter)
         }
     }
@@ -83,10 +85,12 @@ final class ScreenSegment: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         if let stream {
             let seconds = timeouts.stop
-            _ = try? await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
-                                        onTimeout: CaptureTimeouts.expired("stop the screen capture", after: seconds)) {
-                try await stream.stopCapture()
-            }
+            await Task {
+                _ = try? await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
+                                            onTimeout: CaptureTimeouts.expired("stop the screen capture", after: seconds)) {
+                    try await stream.stopCapture()
+                }
+            }.value
         }
         lock.withLock { sealed = true }
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
@@ -244,7 +248,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         let seconds = timeouts.content
         return try await Deadline.run(within: CaptureTimeouts.nanoseconds(seconds),
                                       onTimeout: Self.listingExpired(after: seconds),
-                                      abandoned: abandonedContent, listContent)
+                                      abandoned: abandonedContent, startsWhenCancelled: false, listContent)
     }
 
     @MainActor

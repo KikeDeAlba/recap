@@ -96,9 +96,9 @@ package enum Deadline {
     }
 
     package static func run<T>(within nanoseconds: UInt64, onTimeout timeout: @autoclosure @escaping () -> Error,
-                               abandoned: AbandonedWork? = nil,
+                               abandoned: AbandonedWork? = nil, startsWhenCancelled: Bool = true,
                                _ operation: @escaping () async throws -> T) async throws -> T {
-        guard !Task.isCancelled else { throw CancellationError() }
+        guard startsWhenCancelled || !Task.isCancelled else { throw CancellationError() }
         let outcome = Outcome<T>(abandoned: abandoned)
         let work = Task {
             let result: Result<T, Error>
