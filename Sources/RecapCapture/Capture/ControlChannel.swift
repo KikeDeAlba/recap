@@ -82,6 +82,11 @@ package enum ControlFiles {
         clear(directory)
     }
 
+    package static func isPrivateDirectory(_ directory: URL) -> Bool {
+        var info = stat()
+        return lstat(directory.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR && info.st_uid == getuid()
+    }
+
     package static func clear(_ directory: URL, keep: (String, Date) -> Bool = { _, _ in false }) {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         for name in names {
@@ -203,10 +208,10 @@ package final class ControlServer {
             timer?.cancel()
             timer = nil
         }
+        guard sweep() else { return }
         for url in pendingRequests() {
             reject(url, with: Self.notRecording)
         }
-        sweep()
     }
 
     private func tick() {
@@ -241,7 +246,7 @@ package final class ControlServer {
     }
 
     package func pollCommands() async {
-        sweep()
+        guard sweep() else { return }
         var commands: [ControlRequest] = []
         for url in pendingRequests() {
             if lock.withLock({ stopped }) { return }
@@ -330,11 +335,17 @@ package final class ControlServer {
         write(.failure(id, error))
     }
 
-    package func sweep() {
+    @discardableResult
+    package func sweep() -> Bool {
+        guard ControlFiles.isPrivateDirectory(directory) else {
+            try? ControlFiles.prepare(directory)
+            return false
+        }
         let horizon = now().addingTimeInterval(-Self.responseLifetime)
         ControlFiles.clear(directory) { name, modified in
             (name.hasSuffix(Self.requestSuffix) && !name.hasPrefix(".")) || modified >= horizon
         }
+        return true
     }
 
     private func write(_ reply: ControlReply) {

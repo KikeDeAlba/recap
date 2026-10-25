@@ -378,6 +378,36 @@ private actor Steps {
         #expect(try FileManager.default.contentsOfDirectory(atPath: control.path) == ["kept.response.json"])
     }
 
+    @Test func aControlFolderSwappedForALinkIsRecreatedWithoutTouchingTheTarget() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        let control = ControlServer.directory(dir)
+        let elsewhere = dir.appending(path: "elsewhere")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        let old = elsewhere.appending(path: "old.response.json")
+        try Data("{}".utf8).write(to: old)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-ControlServer.responseLifetime - 30)],
+                                              ofItemAtPath: old.path)
+        let request = elsewhere.appending(path: "s1.request.json")
+        try Data("{\"issuedAt\":\(issued()),\"id\":\"s1\",\"action\":\"clear\"}".utf8).write(to: request)
+        try FileManager.default.createSymbolicLink(at: control, withDestinationURL: elsewhere)
+        await server.poll()
+        #expect(handler.calls.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: old.path))
+        #expect(FileManager.default.fileExists(atPath: request.path))
+        #expect(ControlFiles.isPrivateDirectory(control))
+        #expect(mode(control.path) == 0o700)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path).isEmpty)
+        try FileManager.default.removeItem(at: control)
+        try FileManager.default.createSymbolicLink(at: control, withDestinationURL: elsewhere)
+        server.stop()
+        #expect(FileManager.default.fileExists(atPath: request.path))
+        #expect(!FileManager.default.fileExists(atPath: elsewhere.appending(path: "s1.response.json").path))
+        #expect(ControlFiles.isPrivateDirectory(control))
+    }
+
     @Test func idsAreShortAndSafeForFileNames() {
         #expect(ControlServer.isValidId("7c9e6679-7425-40de-944b-e07fc1f90ae7"))
         #expect(!ControlServer.isValidId(""))
