@@ -97,6 +97,7 @@ package enum SourceCatalog {
     package static let thumbnailHeight = 240
     package static let maxThumbnailBytes = 128 * 1024
     package static let maxThumbnails = 48
+    package static let thumbnailConcurrency = 6
     package static let minimumWindowWidth = 120
     package static let minimumWindowHeight = 80
     package static let jpegQuality = 0.7
@@ -230,15 +231,9 @@ package enum SourceCatalog {
                 jobs.append(ThumbnailJob(display: nil, window: index, filter: SCContentFilter(desktopIndependentWindow: window),
                                          width: source.width, height: source.height))
             }
-            let images = await withTaskGroup(of: (Int, String?).self) { group in
-                for (position, job) in jobs.prefix(maxThumbnails).enumerated() {
-                    group.addTask { (position, await thumbnail(job.filter, width: job.width, height: job.height)) }
-                }
-                var found: [Int: String] = [:]
-                for await (position, image) in group {
-                    if let image { found[position] = image }
-                }
-                return found
+            let chosen = Array(jobs.prefix(maxThumbnails))
+            let images = await concurrently(chosen.count, limit: thumbnailConcurrency) { position in
+                await thumbnail(chosen[position].filter, width: chosen[position].width, height: chosen[position].height)
             }
             for (position, image) in images {
                 let job = jobs[position]
@@ -248,6 +243,28 @@ package enum SourceCatalog {
         }
         displays.sort { $0.main && !$1.main }
         return CaptureSources(displays: displays, windows: windows)
+    }
+
+    package static func concurrently<T>(_ count: Int, limit: Int, _ body: @escaping (Int) async -> T?) async -> [Int: T] {
+        await withTaskGroup(of: (Int, T?).self) { group in
+            var next = 0
+            let width = max(1, limit)
+            while next < min(width, count) {
+                let position = next
+                group.addTask { (position, await body(position)) }
+                next += 1
+            }
+            var found: [Int: T] = [:]
+            while let (position, value) = await group.next() {
+                if let value { found[position] = value }
+                if next < count {
+                    let following = next
+                    group.addTask { (following, await body(following)) }
+                    next += 1
+                }
+            }
+            return found
+        }
     }
 
     private static func thumbnail(_ filter: SCContentFilter, width: Int, height: Int) async -> String? {

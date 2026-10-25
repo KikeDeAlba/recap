@@ -161,6 +161,8 @@ package final class ControlServer {
     package static let requestLifetime: TimeInterval = 30
     package static let responseLifetime: TimeInterval = 60
     package static let notRecording = RecapError("NOT_RECORDING", "The recording is stopping")
+    package static let maxLookups = 2
+    package static let busy = RecapError("BUSY", "Recap.app is already listing the sources for other requests; try again in a moment")
 
     private let directory: URL
     private weak var handler: CaptureControlHandler?
@@ -289,7 +291,8 @@ package final class ControlServer {
     private func lookup(_ request: ControlRequest) {
         let key = UUID()
         let handler = self.handler
-        lock.withLock {
+        let accepted = lock.withLock { () -> Bool in
+            guard lookups.count < Self.maxLookups else { return false }
             lookups[key] = Task { [weak self] in
                 guard let self else { return }
                 if let handler {
@@ -303,7 +306,9 @@ package final class ControlServer {
                 }
                 _ = self.lock.withLock { self.lookups.removeValue(forKey: key) }
             }
+            return true
         }
+        if !accepted { write(.failure(request.id, Self.busy)) }
     }
 
     private func handle(_ request: ControlRequest) async {

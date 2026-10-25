@@ -141,6 +141,16 @@ private func response(_ dir: URL, id: String) throws -> [String: Any] {
     }
 }
 
+private actor Gauge {
+    private var running = 0
+    private(set) var peak = 0
+    func enter() {
+        running += 1
+        peak = max(peak, running)
+    }
+    func leave() { running -= 1 }
+}
+
 private actor Steps {
     var items: [String] = []
     func add(_ item: String) { items.append(item) }
@@ -408,6 +418,24 @@ private actor Steps {
         #expect(ControlFiles.isPrivateDirectory(control))
     }
 
+    @Test func sourcesBeyondTheLimitAreAnsweredBusy() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        handler.sourcesDelay = 300_000_000
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        #expect((1...2).contains(ControlServer.maxLookups))
+        let ids = (1...(ControlServer.maxLookups + 2)).map { String(format: "%04d-s", $0) }
+        for id in ids { try writeRequest(dir, #"{"id":""# + id + #"","action":"sources"}"#, id: id) }
+        await server.pollCommands()
+        for id in ids.suffix(2) { #expect(try errorCode(dir, id: id) == "BUSY") }
+        await server.waitForLookups()
+        for id in ids.prefix(ControlServer.maxLookups) { #expect(try response(dir, id: id)["ok"] as? Bool == true) }
+        try writeRequest(dir, #"{"id":"0009-s","action":"sources"}"#, id: "0009-s")
+        await server.poll()
+        #expect(try response(dir, id: "0009-s")["ok"] as? Bool == true)
+    }
+
     @Test func idsAreShortAndSafeForFileNames() {
         #expect(ControlServer.isValidId("7c9e6679-7425-40de-944b-e07fc1f90ae7"))
         #expect(!ControlServer.isValidId(""))
@@ -457,6 +485,22 @@ private actor Steps {
         #expect(SourceCatalog.isExcludedApplication(bundleId: "com.kikedealba.den", pid: 7, ownPid: 42))
         #expect(SourceCatalog.isExcludedApplication(bundleId: "us.zoom.xos", pid: 42, ownPid: 42))
         #expect(!SourceCatalog.isExcludedApplication(bundleId: "us.zoom.xos", pid: 7, ownPid: 42))
+    }
+
+    @Test func thumbnailsAreTakenAFewAtATime() async {
+        let gauge = Gauge()
+        #expect((4...8).contains(SourceCatalog.thumbnailConcurrency))
+        let found = await SourceCatalog.concurrently(20, limit: SourceCatalog.thumbnailConcurrency) { position -> Int? in
+            await gauge.enter()
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            await gauge.leave()
+            return position % 3 == 0 ? nil : position * 10
+        }
+        #expect(await gauge.peak == SourceCatalog.thumbnailConcurrency)
+        #expect(found.count == 13)
+        #expect(found[4] == 40)
+        #expect(found[3] == nil)
+        #expect(await SourceCatalog.concurrently(0, limit: 4) { $0 }.isEmpty)
     }
 
     @Test func largeThumbnailsAreDropped() throws {
