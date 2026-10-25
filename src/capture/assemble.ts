@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import type { Config } from '../core/config.ts'
@@ -12,11 +13,13 @@ import { RecapError, errorMessage } from '../errors.ts'
 import { AUDIO_FILE, VIDEO_FILE } from '../media/media.ts'
 import type { Channel } from '../pipeline/transcript.ts'
 import { CAPTURE_RATE } from './sources.ts'
-import { hasRecording, readManifest, type CaptureManifest } from './manifest.ts'
+import { hasRecording, isCaptureSource, readManifest, type CaptureManifest } from './manifest.ts'
 
 export const ASSEMBLE_FPS = 2
 export const ASSEMBLE_TOLERANCE_S = 1.5
-export const ASSEMBLE_TEMPORARY = '.recording.assemble.mov'
+export const ASSEMBLE_TEMPORARY_PREFIX = '.recording.assemble-'
+export const PROBE_TIMEOUT_MS = 30_000
+export const ASSEMBLE_BASE_TIMEOUT_MS = 120_000
 
 export interface MediaFacts {
   duration: number
@@ -24,9 +27,12 @@ export interface MediaFacts {
   video: boolean
   width: number
   height: number
+  videoStreams: number
+  audioStreams: number
+  audioStart: number
 }
 
-export type AssemblePiece = { kind: 'gap'; seconds: number } | { kind: 'segment'; input: number; seconds: number; audio: boolean }
+export type AssemblePiece = { kind: 'gap'; seconds: number } | { kind: 'segment'; input: number; seconds: number; audio: boolean; delay: number }
 
 export interface AssemblePlan {
   output: typeof AUDIO_FILE | typeof VIDEO_FILE
@@ -49,14 +55,20 @@ export function parseFacts(text: string): MediaFacts | null {
   if (!isRecord(value)) return null
   const streams = Array.isArray(value['streams']) ? value['streams'].filter(isRecord) : []
   const format = isRecord(value['format']) ? value['format'] : {}
-  const video = streams.find((stream) => stream['codec_type'] === 'video')
+  const videos = streams.filter((stream) => stream['codec_type'] === 'video')
+  const audios = streams.filter((stream) => stream['codec_type'] === 'audio')
+  const video = videos[0]
   const duration = Number(format['duration'] ?? Number.NaN)
+  const audioStart = Number(audios[0]?.['start_time'] ?? Number.NaN)
   return {
     duration: Number.isFinite(duration) ? duration : 0,
-    audio: streams.some((stream) => stream['codec_type'] === 'audio'),
+    audio: audios.length > 0,
     video: video !== undefined,
     width: typeof video?.['width'] === 'number' ? video['width'] : 0,
     height: typeof video?.['height'] === 'number' ? video['height'] : 0,
+    videoStreams: videos.length,
+    audioStreams: audios.length,
+    audioStart: Number.isFinite(audioStart) ? Math.max(0, audioStart) : 0,
   }
 }
 
@@ -81,15 +93,15 @@ export function planAssembly(manifest: CaptureManifest, micSeconds: number, fact
     if (!media || !media.video || media.duration <= 0) continue
     const start = round(Math.max(segment.startMs / 1000, cursor))
     if (start >= total) break
-    const planned = segment.endMs === undefined ? Number.POSITIVE_INFINITY : segment.endMs / 1000 - start
-    const seconds = round(Math.min(media.duration, planned, total - start))
+    const span = segment.endMs === undefined ? media.duration : segment.endMs / 1000 - start
+    const seconds = round(Math.min(span, total - start))
     if (seconds < 0.05) continue
     if (start - cursor >= 0.001) pieces.push({ kind: 'gap', seconds: round(start - cursor) })
     if (inputs.length === 0) {
       width = even(media.width || 1280)
       height = even(media.height || 720)
     }
-    pieces.push({ kind: 'segment', input: inputs.length, seconds, audio: media.audio })
+    pieces.push({ kind: 'segment', input: inputs.length, seconds, audio: media.audio, delay: round(media.audio ? media.audioStart : 0) })
     inputs.push(segment.file)
     cursor = round(start + seconds)
   }
@@ -126,7 +138,8 @@ export function assembleFilter(plan: AssemblePlan): string {
       )
       parts.push(
         piece.audio
-          ? `[${input}:a:0]aresample=${CAPTURE_RATE},${AUDIO_FORMAT},apad,atrim=duration=${piece.seconds},asetpts=PTS-STARTPTS[${audio}]`
+          ? `[${input}:a:0]aresample=${CAPTURE_RATE},${AUDIO_FORMAT},asetpts=PTS-STARTPTS,adelay=delays=${Math.round(piece.delay * 1000)}:all=1,` +
+              `apad,atrim=duration=${piece.seconds},asetpts=PTS-STARTPTS[${audio}]`
           : silence(piece.seconds, audio),
       )
     }
@@ -149,29 +162,61 @@ export function assembleArguments(plan: AssemblePlan, dir: string, output: strin
 }
 
 async function probe(ffprobe: string, file: string): Promise<MediaFacts | null> {
-  const result = await exec(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file]).catch(() => null)
+  const args = ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file]
+  const result = await exec(ffprobe, args, { timeoutMs: PROBE_TIMEOUT_MS }).catch(() => null)
   if (result === null || result.status !== 0) return null
   return parseFacts(result.stdout)
 }
 
-function removeSources(dir: string, manifest: CaptureManifest, keep: string): void {
-  for (const name of [manifest.mic, ...manifest.segments.map((segment) => segment.file)]) {
-    if (name !== keep) rmSync(path.join(dir, name), { force: true })
+export function assembleTimeoutMs(seconds: number): number {
+  return ASSEMBLE_BASE_TIMEOUT_MS + Math.ceil(seconds * 1000)
+}
+
+export function temporaryName(): string {
+  return `${ASSEMBLE_TEMPORARY_PREFIX}${randomUUID()}.mov`
+}
+
+export function assembledProblem(made: MediaFacts | null, plan: AssemblePlan): string | null {
+  if (!made) return `ffprobe cannot read the assembled recording`
+  if (made.videoStreams !== 1) return `The assembled recording has ${made.videoStreams} video tracks instead of 1`
+  if (made.audioStreams !== 2) return `The assembled recording has ${made.audioStreams} audio tracks instead of 2`
+  if (Math.abs(made.duration - plan.seconds) > ASSEMBLE_TOLERANCE_S) {
+    return `The assembled recording lasts ${made.duration.toFixed(1)}s instead of ${plan.seconds.toFixed(1)}s`
+  }
+  return null
+}
+
+function removeSources(dir: string, names: readonly string[]): void {
+  for (const name of names) {
+    if (isCaptureSource(name)) rmSync(path.join(dir, name), { force: true })
   }
 }
 
-export async function assembleCapture(dir: string, config: Config, platform: NodeJS.Platform = process.platform): Promise<AssembleResult | null> {
+function keptSegments(dir: string, manifest: CaptureManifest, used: readonly string[], warn: (line: string) => void): void {
+  for (const segment of manifest.segments) {
+    if (used.includes(segment.file) || !exists(path.join(dir, segment.file))) continue
+    warn(`kept ${segment.file}: it could not be read, so it is not in the recording and was not deleted`)
+  }
+}
+
+function micOnly(dir: string, manifest: CaptureManifest, warn: (line: string) => void): AssembleResult {
+  renameSync(path.join(dir, manifest.mic), path.join(dir, AUDIO_FILE))
+  keptSegments(dir, manifest, [], warn)
+  return { file: path.join(dir, AUDIO_FILE), channels: ['mic'], segments: 0 }
+}
+
+const stderrWarn = (line: string): void => {
+  process.stderr.write(`recap: ${line}\n`)
+}
+
+export async function assembleCapture(dir: string, config: Config, platform: NodeJS.Platform = process.platform, warn: (line: string) => void = stderrWarn): Promise<AssembleResult | null> {
   if (hasRecording(dir)) return null
   const manifest = readManifest(dir)
   if (!manifest) return null
   const mic = path.join(dir, manifest.mic)
   if (fileSize(mic) === 0) throw new RecapError('ASSEMBLE_FAILED', `The meeting has no microphone recording (${manifest.mic})`)
   const usable = manifest.segments.filter((segment) => fileSize(path.join(dir, segment.file)) > 0)
-  if (usable.length === 0) {
-    renameSync(mic, path.join(dir, AUDIO_FILE))
-    removeSources(dir, manifest, manifest.mic)
-    return { file: path.join(dir, AUDIO_FILE), channels: ['mic'], segments: 0 }
-  }
+  if (usable.length === 0) return micOnly(dir, manifest, warn)
   const ffprobe = await requireTool('ffprobe', config)
   const micFacts = await probe(ffprobe, mic)
   if (!micFacts || micFacts.duration <= 0) throw new RecapError('ASSEMBLE_FAILED', `Cannot read ${manifest.mic}`)
@@ -181,27 +226,23 @@ export async function assembleCapture(dir: string, config: Config, platform: Nod
     if (found) facts.set(segment.file, found)
   }
   const plan = planAssembly(manifest, micFacts.duration, facts)
-  if (plan.output === AUDIO_FILE) {
-    renameSync(mic, path.join(dir, AUDIO_FILE))
-    removeSources(dir, manifest, manifest.mic)
-    return { file: path.join(dir, AUDIO_FILE), channels: ['mic'], segments: 0 }
-  }
+  if (plan.output === AUDIO_FILE) return micOnly(dir, manifest, warn)
   const ffmpeg = await requireTool('ffmpeg', config)
-  const temporary = path.join(dir, ASSEMBLE_TEMPORARY)
-  rmSync(temporary, { force: true })
+  const temporary = path.join(dir, temporaryName())
+  const timeoutMs = assembleTimeoutMs(plan.seconds)
   try {
-    const result = await exec(ffmpeg, assembleArguments(plan, dir, temporary, platform))
+    const result = await exec(ffmpeg, assembleArguments(plan, dir, temporary, platform), { timeoutMs })
+    if (result.signal === 'SIGKILL') throw new RecapError('ASSEMBLE_FAILED', `ffmpeg did not finish within ${Math.round(timeoutMs / 1000)}s`)
     if (result.status !== 0) throw new RecapError('ASSEMBLE_FAILED', suffix(trimmed(result.stderr), 500))
-    const made = await probe(ffprobe, temporary)
-    if (!made || !made.video || Math.abs(made.duration - plan.seconds) > ASSEMBLE_TOLERANCE_S) {
-      throw new RecapError('ASSEMBLE_FAILED', `The assembled recording lasts ${made?.duration.toFixed(1) ?? '?'}s instead of ${plan.seconds.toFixed(1)}s`)
-    }
+    const problem = assembledProblem(await probe(ffprobe, temporary), plan)
+    if (problem !== null) throw new RecapError('ASSEMBLE_FAILED', problem)
     renameSync(temporary, path.join(dir, VIDEO_FILE))
   } catch (error) {
     rmSync(temporary, { force: true })
     throw error
   }
-  removeSources(dir, manifest, '')
+  removeSources(dir, [manifest.mic, ...plan.inputs])
+  keptSegments(dir, manifest, plan.inputs, warn)
   return { file: path.join(dir, VIDEO_FILE), channels: ['mic', 'system'], segments: plan.inputs.length }
 }
 
@@ -209,9 +250,9 @@ export function assembledChannels(dir: string): Channel[] {
   return exists(path.join(dir, VIDEO_FILE)) ? ['mic', 'system'] : ['mic']
 }
 
-export async function assembleMeeting(dir: string, config: Config, platform: NodeJS.Platform = process.platform): Promise<Meeting> {
+export async function assembleMeeting(dir: string, config: Config, platform: NodeJS.Platform = process.platform, warn: (line: string) => void = stderrWarn): Promise<Meeting> {
   try {
-    const result = await assembleCapture(dir, config, platform)
+    const result = await assembleCapture(dir, config, platform, warn)
     return updateMeeting(dir, (meeting) => {
       if (result) meeting.channels = result.channels
       else if (!Array.isArray(meeting.channels)) meeting.channels = assembledChannels(dir)

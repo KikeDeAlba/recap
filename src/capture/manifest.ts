@@ -5,6 +5,7 @@ import { isRecord, parseJsonSafe } from '../core/json.ts'
 export const CAPTURE_MANIFEST = 'capture.json'
 export const MIC_FILE = 'mic.m4a'
 export const RECORDING_FILES = ['recording.m4a', 'recording.mov'] as const
+export const SEGMENT_FILE = /^screen-[1-9][0-9]{0,5}\.mov$/
 
 export type TargetKind = 'display' | 'window'
 
@@ -40,9 +41,12 @@ export function isTargetKind(value: unknown): value is TargetKind {
   return value === 'display' || value === 'window'
 }
 
-function safeFile(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length === 0 || value !== path.basename(value) || value.startsWith('.')) return null
-  return value
+export function isSegmentFile(value: unknown): value is string {
+  return typeof value === 'string' && SEGMENT_FILE.test(value)
+}
+
+export function isCaptureSource(value: unknown): value is string {
+  return value === MIC_FILE || isSegmentFile(value)
 }
 
 function count(value: unknown): number | undefined {
@@ -59,12 +63,12 @@ export function decodeVideo(value: unknown): CaptureVideo | null {
 export function decodeManifest(text: string): CaptureManifest | null {
   const value = parseJsonSafe(text)
   if (!isRecord(value)) return null
-  const mic = safeFile(value['mic']) ?? MIC_FILE
+  const mic = MIC_FILE
   const segments = (Array.isArray(value['segments']) ? value['segments'] : []).flatMap((item): CaptureSegment[] => {
     if (!isRecord(item)) return []
-    const file = safeFile(item['file'])
+    const file = item['file']
     const startMs = count(item['startMs'])
-    if (file === null || startMs === undefined) return []
+    if (!isSegmentFile(file) || startMs === undefined) return []
     return [{ file, startMs, endMs: count(item['endMs']) }]
   })
   return {

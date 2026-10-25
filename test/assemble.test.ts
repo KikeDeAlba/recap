@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { assembleArguments, assembleFilter, assembleMeeting, parseFacts, planAssembly, videoEncoder, type MediaFacts } from '../src/capture/assemble.ts'
-import { decodeManifest, type CaptureManifest } from '../src/capture/manifest.ts'
+import { assembleArguments, assembleFilter, assembleMeeting, assembleTimeoutMs, assembledProblem, parseFacts, planAssembly, temporaryName, videoEncoder, type MediaFacts } from '../src/capture/assemble.ts'
+import { decodeManifest, isCaptureSource, type CaptureManifest } from '../src/capture/manifest.ts'
 import { loadMeeting, reconcile, recordedChannels, saveMeeting } from '../src/core/meeting.ts'
 import { inspectMedia } from '../src/media/probe.ts'
 import { Pipeline, channelsOf } from '../src/pipeline/pipeline.ts'
@@ -18,8 +18,8 @@ function manifest(segments: CaptureManifest['segments']): CaptureManifest {
   return { mic: 'mic.m4a', video: null, segments }
 }
 
-function facts(duration: number, audio = true, width = 1280, height = 830): MediaFacts {
-  return { duration, audio, video: true, width, height }
+function facts(duration: number, audio = true, width = 1280, height = 830, audioStart = 0): MediaFacts {
+  return { duration, audio, video: true, width, height, videoStreams: 1, audioStreams: audio ? 1 : 0, audioStart }
 }
 
 test('the plan fills the time without a target with black video and silence', () => {
@@ -38,9 +38,9 @@ test('the plan fills the time without a target with black video and silence', ()
   assert.deepEqual(plan.inputs, ['screen-1.mov', 'screen-2.mov'])
   assert.deepEqual(plan.pieces, [
     { kind: 'gap', seconds: 2 },
-    { kind: 'segment', input: 0, seconds: 3, audio: true },
+    { kind: 'segment', input: 0, seconds: 3, audio: true, delay: 0 },
     { kind: 'gap', seconds: 2 },
-    { kind: 'segment', input: 1, seconds: 2.5, audio: false },
+    { kind: 'segment', input: 1, seconds: 2.5, audio: false, delay: 0 },
     { kind: 'gap', seconds: 0.5 },
   ])
   assert.equal(plan.seconds, 10)
@@ -63,12 +63,68 @@ test('the plan never overlaps, never runs past the microphone and skips unreadab
     ]),
   )
   assert.deepEqual(plan.pieces, [
-    { kind: 'segment', input: 0, seconds: 4, audio: true },
-    { kind: 'segment', input: 1, seconds: 2, audio: true },
+    { kind: 'segment', input: 0, seconds: 4, audio: true, delay: 0 },
+    { kind: 'segment', input: 1, seconds: 2, audio: true, delay: 0 },
     { kind: 'gap', seconds: 3.5 },
-    { kind: 'segment', input: 2, seconds: 0.5, audio: true },
+    { kind: 'segment', input: 2, seconds: 0.5, audio: true, delay: 0 },
   ])
   assert.equal(plan.pieces.reduce((total, piece) => total + piece.seconds, 0), 10)
+})
+
+test('a closed segment keeps its planned span and the audio starts where the file puts it', () => {
+  const plan = planAssembly(
+    manifest([
+      { file: 'screen-1.mov', startMs: 1_000, endMs: 5_000 },
+      { file: 'screen-2.mov', startMs: 6_000 },
+    ]),
+    10,
+    new Map([
+      ['screen-1.mov', facts(2.4, true, 1280, 830, 0.75)],
+      ['screen-2.mov', facts(1.5)],
+    ]),
+  )
+  assert.deepEqual(plan.pieces, [
+    { kind: 'gap', seconds: 1 },
+    { kind: 'segment', input: 0, seconds: 4, audio: true, delay: 0.75 },
+    { kind: 'gap', seconds: 1 },
+    { kind: 'segment', input: 1, seconds: 1.5, audio: true, delay: 0 },
+    { kind: 'gap', seconds: 2.5 },
+  ])
+  assert.match(assembleFilter(plan), /\[1:a:0\]aresample=48000,[^;]*asetpts=PTS-STARTPTS,adelay=delays=750:all=1,apad,atrim=duration=4,/)
+  assert.match(assembleFilter(plan), /tpad=stop_mode=clone:stop_duration=4,trim=duration=4/)
+})
+
+test('only mic.m4a and screen-N.mov can come from capture.json', () => {
+  const decoded = decodeManifest(JSON.stringify({
+    mic: 'meeting.json',
+    segments: [
+      { file: 'meeting.json', startMs: 0 },
+      { file: 'recording.mov', startMs: 0 },
+      { file: 'recording.m4a', startMs: 0 },
+      { file: 'capture.json', startMs: 0 },
+      { file: 'screen-0.mov', startMs: 0 },
+      { file: 'screen-1.mov.bak', startMs: 0 },
+      { file: 'screen-12.mov', startMs: 0 },
+    ],
+  }))
+  assert.equal(decoded?.mic, 'mic.m4a')
+  assert.deepEqual(decoded?.segments.map((segment) => segment.file), ['screen-12.mov'])
+  assert.ok(isCaptureSource('mic.m4a'))
+  assert.ok(isCaptureSource('screen-3.mov'))
+  for (const name of ['meeting.json', 'recording.mov', 'recording.m4a', 'transcript.md', '../screen-1.mov', 'screen-a.mov']) assert.ok(!isCaptureSource(name), name)
+})
+
+test('the assembled file must have one video track, two audio tracks and the planned length', () => {
+  const plan = planAssembly(manifest([{ file: 'screen-1.mov', startMs: 0, endMs: 2_000 }]), 5, new Map([['screen-1.mov', facts(2)]]))
+  const made = (audioStreams: number, duration = 5, videoStreams = 1): MediaFacts => ({ ...facts(duration), videoStreams, audioStreams })
+  assert.equal(assembledProblem(made(2), plan), null)
+  assert.match(String(assembledProblem(made(1), plan)), /1 audio tracks instead of 2/)
+  assert.match(String(assembledProblem(made(2, 5, 0), plan)), /0 video tracks instead of 1/)
+  assert.match(String(assembledProblem(made(2, 2), plan)), /lasts 2\.0s instead of 5\.0s/)
+  assert.match(String(assembledProblem(null, plan)), /cannot read/)
+  assert.notEqual(temporaryName(), temporaryName())
+  assert.match(temporaryName(), /^\.recording\.assemble-[0-9a-f-]{36}\.mov$/)
+  assert.equal(assembleTimeoutMs(3_600), 120_000 + 3_600_000)
 })
 
 test('a meeting that never had a target keeps the microphone in recording.m4a', () => {
@@ -96,8 +152,8 @@ test('ffmpeg keeps the microphone first and puts the target audio in a second tr
 })
 
 test('ffprobe facts tell duration, tracks and size', () => {
-  assert.deepEqual(parseFacts(JSON.stringify({ format: { duration: '3.5' }, streams: [{ codec_type: 'video', width: 1280, height: 830 }, { codec_type: 'audio' }] })), { duration: 3.5, audio: true, video: true, width: 1280, height: 830 })
-  assert.deepEqual(parseFacts(JSON.stringify({ format: {}, streams: [{ codec_type: 'audio' }] })), { duration: 0, audio: true, video: false, width: 0, height: 0 })
+  assert.deepEqual(parseFacts(JSON.stringify({ format: { duration: '3.5' }, streams: [{ codec_type: 'video', width: 1280, height: 830, start_time: '0.000000' }, { codec_type: 'audio', start_time: '0.420000' }] })), { duration: 3.5, audio: true, video: true, width: 1280, height: 830, videoStreams: 1, audioStreams: 1, audioStart: 0.42 })
+  assert.deepEqual(parseFacts(JSON.stringify({ format: {}, streams: [{ codec_type: 'audio', start_time: '-0.02' }, { codec_type: 'audio' }] })), { duration: 0, audio: true, video: false, width: 0, height: 0, videoStreams: 0, audioStreams: 2, audioStart: 0 })
   assert.equal(parseFacts('nope'), null)
 })
 
@@ -183,6 +239,46 @@ test('assemble builds recording.mov from mic.m4a and the screen segments with ff
   assert.ok(meanVolume(file, '0:a:1', 4.4, 1.2) < -80, 'silence between segments')
   assert.ok(meanVolume(file, '0:a:1', 6.2, 1.5) < -80, 'a segment without audio stays silent')
   assert.ok(meanVolume(file, '0:a:0', 8.5, 1) > -40, 'the microphone plays to the end')
+})
+
+function lumaAt(file: string, at: number): number {
+  const result = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-an', '-vf', 'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-'], { encoding: 'utf8' })
+  const frames = [...result.stdout.matchAll(/pts_time:([\d.]+)\s+lavfi\.signalstats\.YAVG=([\d.e+-]+)/g)].map((match) => ({ time: Number(match[1]), luma: Number(match[2]) }))
+  const frame = frames.filter((item) => item.time <= at).at(-1)
+  return frame ? frame.luma : Number.NaN
+}
+
+test('assemble aligns late target audio, holds the last frame and keeps what it could not read', { skip: !ffmpeg && 'ffmpeg is not installed' }, async (t) => {
+  const dir = tempDir(t)
+  saveMeeting(meeting({ mode: 'meeting', status: 'recorded' }), dir)
+  synth(['-f', 'lavfi', '-i', 'sine=f=300:r=48000:d=8', '-c:a', 'aac', '-ac', '1', path.join(dir, 'mic.m4a')])
+  synth(['-f', 'lavfi', '-i', 'testsrc=d=3:s=640x480:r=2', '-itsoffset', '1.5', '-f', 'lavfi', '-i', 'sine=f=900:r=48000:d=1.5', '-map', '0', '-map', '1', '-c:v', 'mjpeg', '-c:a', 'aac', '-ac', '2', path.join(dir, 'screen-1.mov')])
+  writeFileSync(path.join(dir, 'screen-2.mov'), Buffer.alloc(256, 3))
+  writeFileSync(path.join(dir, 'capture.json'), JSON.stringify({ mic: 'mic.m4a', segments: [{ file: 'screen-1.mov', startMs: 1_000, endMs: 5_000 }, { file: 'screen-2.mov', startMs: 6_000, endMs: 7_000 }, { file: 'meeting.json', startMs: 7_000 }] }))
+  const warnings: string[] = []
+  const assembled = await assembleMeeting(dir, {}, process.platform, (line) => warnings.push(line))
+  assert.deepEqual(assembled.channels, ['mic', 'system'])
+  assert.deepEqual(readdirSync(dir).sort(), ['capture.json', 'meeting.json', 'recording.mov', 'screen-2.mov'])
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0] ?? '', /screen-2\.mov/)
+  const file = path.join(dir, 'recording.mov')
+  assert.ok(meanVolume(file, '0:a:1', 1.1, 1.2) < -80, 'no target audio before its own start time')
+  assert.ok(meanVolume(file, '0:a:1', 2.7, 1) > -40, 'the target audio plays once it starts')
+  assert.ok(lumaAt(file, 4.6) > 40, 'the last frame stays until the segment ends')
+  assert.ok(lumaAt(file, 5.6) < 25, 'black after the segment')
+})
+
+test('a meeting whose segments cannot be read keeps them next to recording.m4a', { skip: !ffmpeg && 'ffmpeg is not installed' }, async (t) => {
+  const dir = tempDir(t)
+  saveMeeting(meeting({ mode: 'meeting', status: 'recorded' }), dir)
+  synth(['-f', 'lavfi', '-i', 'sine=f=300:r=48000:d=2', '-c:a', 'aac', '-ac', '1', path.join(dir, 'mic.m4a')])
+  writeFileSync(path.join(dir, 'screen-1.mov'), Buffer.alloc(256, 3))
+  writeFileSync(path.join(dir, 'capture.json'), JSON.stringify({ mic: 'mic.m4a', segments: [{ file: 'screen-1.mov', startMs: 0, endMs: 1_000 }] }))
+  const warnings: string[] = []
+  const assembled = await assembleMeeting(dir, {}, process.platform, (line) => warnings.push(line))
+  assert.deepEqual(assembled.channels, ['mic'])
+  assert.deepEqual(readdirSync(dir).sort(), ['capture.json', 'meeting.json', 'recording.m4a', 'screen-1.mov'])
+  assert.match(warnings.join('\n'), /kept screen-1\.mov/)
 })
 
 test('the pipeline assembles before extracting both channels', { skip: !ffmpeg && 'ffmpeg is not installed' }, async (t) => {

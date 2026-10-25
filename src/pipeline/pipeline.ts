@@ -157,7 +157,7 @@ export class Pipeline {
   private async execute(stage: Stage, meeting: Meeting): Promise<void> {
     switch (stage) {
       case 'assemble':
-        await assembleMeeting(this.dir, this.config)
+        await assembleMeeting(this.dir, this.config, process.platform, (line) => this.log(`assemble: ${line}`))
         return
       case 'audio':
         return this.extractAudio(meeting)

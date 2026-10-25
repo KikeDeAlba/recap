@@ -122,7 +122,7 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
 export async function assembleAfterStop(meeting: Meeting, dir: string, config: Config, warn: (line: string) => void): Promise<Meeting> {
   if (meeting.status !== 'recorded' || !needsAssembly(dir, meeting.mode)) return meeting
   try {
-    return await assembleMeeting(dir, config)
+    return await assembleMeeting(dir, config, process.platform, warn)
   } catch (error) {
     warn(`could not assemble the recording yet, \`recap process\` retries it: ${errorMessage(error)}`)
     return loadMeeting(dir)
