@@ -475,6 +475,23 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
         #expect(try FileManager.default.contentsOfDirectory(atPath: control.path) == ["p1.response.json"])
     }
 
+    @Test func prepareReplacesAFileOrALinkWithAPrivateFolder() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let control = ControlServer.directory(dir)
+        try Data("x".utf8).write(to: control)
+        try ControlFiles.prepare(control)
+        #expect(ControlFiles.isPrivateDirectory(control))
+        #expect(mode(control.path) == 0o700)
+        try FileManager.default.removeItem(at: control)
+        let target = dir.appending(path: "target")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: control, withDestinationURL: target)
+        try ControlFiles.prepare(control)
+        #expect(ControlFiles.isPrivateDirectory(control))
+        #expect(FileManager.default.fileExists(atPath: target.path))
+    }
+
     @Test func startClearsLeftoversAndPollSweepsOldAnswers() async throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -516,13 +533,15 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
         #expect(FileManager.default.fileExists(atPath: request.path))
         #expect(ControlFiles.isPrivateDirectory(control))
         #expect(mode(control.path) == 0o700)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path).isEmpty)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path) == ["s1.response.json"])
+        #expect(try errorCode(dir, id: "s1") == "NOT_RECORDING")
         try FileManager.default.removeItem(at: control)
         try FileManager.default.createSymbolicLink(at: control, withDestinationURL: elsewhere)
         server.stop()
         #expect(FileManager.default.fileExists(atPath: request.path))
         #expect(!FileManager.default.fileExists(atPath: elsewhere.appending(path: "s1.response.json").path))
         #expect(ControlFiles.isPrivateDirectory(control))
+        #expect(try errorCode(dir, id: "s1") == "NOT_RECORDING")
     }
 
     @Test func sourcesBeyondTheLimitAreAnsweredBusy() async throws {

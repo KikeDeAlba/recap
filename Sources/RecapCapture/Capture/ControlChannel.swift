@@ -67,16 +67,11 @@ package enum ControlFiles {
     package static let maxRequestBytes = 4096
 
     package static func prepare(_ directory: URL) throws {
-        var info = stat()
-        if lstat(directory.path, &info) == 0,
-           (info.st_mode & S_IFMT) != S_IFDIR || info.st_uid != getuid() {
-            try FileManager.default.removeItem(at: directory)
-        }
+        if !isPrivateDirectory(directory) { discard(directory) }
         if mkdir(directory.path, 0o700) != 0, errno != EEXIST {
             throw RecapError("CONTROL_SETUP", "Cannot create \(directory.path): \(String(cString: strerror(errno)))")
         }
-        guard lstat(directory.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == getuid(),
-              chmod(directory.path, 0o700) == 0 else {
+        guard isPrivateDirectory(directory), chmod(directory.path, 0o700) == 0 else {
             throw RecapError("CONTROL_SETUP", "\(directory.path) is not a private directory of this user")
         }
         clear(directory)
@@ -161,6 +156,7 @@ package final class ControlServer {
     package static let requestLifetime: TimeInterval = 30
     package static let responseLifetime: TimeInterval = 60
     package static let notRecording = RecapError("NOT_RECORDING", "The recording is stopping")
+    package static let controlReplaced = RecapError("NOT_RECORDING", "The control folder of the recording was replaced; send the request again")
     package static let maxLookups = 2
     package static let lookupTimeout: TimeInterval = 25
     package static let busy = RecapError("BUSY", "Recap.app is already listing the sources for other requests; try again in a moment")
@@ -355,7 +351,9 @@ package final class ControlServer {
     @discardableResult
     package func sweep() -> Bool {
         guard ControlFiles.isPrivateDirectory(directory) else {
-            try? ControlFiles.prepare(directory)
+            let waiting = pendingRequests().map(requestId).filter(Self.isValidId)
+            guard (try? ControlFiles.prepare(directory)) != nil else { return false }
+            for id in waiting { write(.failure(id, Self.controlReplaced)) }
             return false
         }
         let horizon = now().addingTimeInterval(-Self.responseLifetime)
