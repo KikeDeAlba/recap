@@ -878,7 +878,7 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         #expect(FileManager.default.fileExists(atPath: request.path))
         #expect(!FileManager.default.fileExists(atPath: elsewhere.appending(path: "s1.response.json").path))
         #expect(ControlFiles.isPrivateDirectory(control))
-        #expect(try errorCode(dir, id: "s1") == "CONTROL_REPLACED")
+        #expect(try errorCode(dir, id: "s1") == "NOT_RECORDING")
     }
 
     @Test(arguments: [1, 3, ControlServer.maxLookups])
@@ -953,6 +953,36 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
     @Test func aReplacedControlFolderHasItsOwnCode() {
         #expect(ControlServer.controlReplaced.code == "CONTROL_REPLACED")
         #expect(ControlServer.notRecording.code == "NOT_RECORDING")
+    }
+
+    @Test func aFolderReplacedAfterTheRecordingStoppedAnswersNotRecording() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        let control = ControlServer.directory(dir)
+        let elsewhere = dir.appending(path: "elsewhere")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try Data("{\"issuedAt\":\(issued()),\"id\":\"r1\",\"action\":\"clear\"}".utf8).write(to: elsewhere.appending(path: "r1.request.json"))
+        try FileManager.default.createSymbolicLink(at: control, withDestinationURL: elsewhere)
+        await server.poll()
+        #expect(try errorCode(dir, id: "r1") == "CONTROL_REPLACED")
+        try FileManager.default.removeItem(at: control)
+        try Data("{\"issuedAt\":\(issued()),\"id\":\"r2\",\"action\":\"clear\"}".utf8).write(to: elsewhere.appending(path: "r2.request.json"))
+        try FileManager.default.createSymbolicLink(at: control, withDestinationURL: elsewhere)
+        server.stop()
+        #expect(try errorCode(dir, id: "r2") == "NOT_RECORDING")
+        #expect(handler.calls.isEmpty)
+    }
+
+    @Test func aRequestWithdrawnBeforeItIsClaimedIsNotRun() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appending(path: "w.request.json")
+        try Data("{}".utf8).write(to: file)
+        #expect(ControlFiles.claim(file))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(!ControlFiles.claim(file))
     }
 
     @Test func idsAreShortAndSafeForFileNames() {
@@ -1059,10 +1089,10 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
     }
 
     @Test func hungThumbnailsKeepTheirSlotUntilTheyReallyEnd() async throws {
-        let abandoned = AbandonedWork(limit: 2)
+        let slots = CaptureSlots(limit: 2)
         let steps = Steps()
         let started = Date()
-        let found = await SourceCatalog.concurrently(6, limit: 2, timeout: 100_000_000, abandoned: abandoned) { position -> Int? in
+        let found = await SourceCatalog.concurrently(6, limit: 2, timeout: 100_000_000, slots: slots, slotWait: 50_000_000) { position -> Int? in
             await steps.add("start \(position)")
             await uncancellableWait(0.6)
             return position
@@ -1070,11 +1100,31 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         #expect(Date().timeIntervalSince(started) < 0.5)
         #expect(found.isEmpty)
         #expect(await steps.items.sorted() == ["start 0", "start 1"])
-        #expect(abandoned.count == 2)
-        try await waitUntil { abandoned.count == 0 }
-        let again = await SourceCatalog.concurrently(3, limit: 2, timeout: 1_000_000_000, abandoned: abandoned) { $0 }
+        #expect(slots.inUse == 2)
+        try await waitUntil { slots.inUse == 0 }
+        let again = await SourceCatalog.concurrently(3, limit: 2, timeout: 1_000_000_000, slots: slots) { $0 }
         #expect(again == [0: 0, 1: 1, 2: 2])
-        #expect(SourceCatalog.abandonedThumbnails.limit == SourceCatalog.thumbnailConcurrency)
+        #expect(SourceCatalog.thumbnailSlots.limit == SourceCatalog.thumbnailConcurrency)
+    }
+
+    @Test func theThumbnailLimitIsSharedBetweenLookups() async {
+        let slots = CaptureSlots(limit: 3)
+        let gauge = Gauge()
+        let take: @Sendable () async -> [Int: Int] = {
+            await SourceCatalog.concurrently(6, limit: 3, timeout: 2_000_000_000, slots: slots, slotWait: 2_000_000_000) { position -> Int? in
+                await gauge.enter()
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                await gauge.leave()
+                return position
+            }
+        }
+        async let first = take()
+        async let second = take()
+        let (a, b) = await (first, second)
+        #expect(a.count == 6)
+        #expect(b.count == 6)
+        #expect(await gauge.peak == 3)
+        #expect(slots.inUse == 0)
     }
 
     @Test func largeThumbnailsAreDropped() throws {

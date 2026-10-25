@@ -22,6 +22,39 @@ package final class AbandonedWork {
     }
 }
 
+package final class CaptureSlots {
+    package let limit: Int
+    private let lock = NSLock()
+    private var used = 0
+
+    package init(limit: Int) {
+        self.limit = max(1, limit)
+    }
+
+    package var inUse: Int { lock.withLock { used } }
+
+    package func tryAcquire() -> Bool {
+        lock.withLock {
+            guard used < limit else { return false }
+            used += 1
+            return true
+        }
+    }
+
+    package func acquire(waiting nanoseconds: UInt64, pause: UInt64 = 20_000_000) async -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ nanoseconds
+        while true {
+            if tryAcquire() { return true }
+            guard !Task.isCancelled, DispatchTime.now().uptimeNanoseconds < deadline else { return false }
+            try? await Task.sleep(nanoseconds: pause)
+        }
+    }
+
+    package func release() {
+        lock.withLock { used = max(0, used - 1) }
+    }
+}
+
 package enum Deadline {
     private final class Outcome<T> {
         private let lock = NSLock()

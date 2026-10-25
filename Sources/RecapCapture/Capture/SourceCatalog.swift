@@ -101,7 +101,7 @@ package enum SourceCatalog {
     package static let maxThumbnails = 48
     package static let thumbnailConcurrency = 6
     package static let thumbnailTimeout: UInt64 = 5_000_000_000
-    package static let abandonedThumbnails = AbandonedWork(limit: thumbnailConcurrency)
+    package static let thumbnailSlots = CaptureSlots(limit: thumbnailConcurrency)
     package static let minimumWindowWidth = 120
     package static let minimumWindowHeight = 80
     package static let jpegQuality = 0.7
@@ -261,7 +261,7 @@ package enum SourceCatalog {
             }
             let chosen = Array(jobs.prefix(maxThumbnails))
             let images = await concurrently(chosen.count, limit: thumbnailConcurrency, timeout: thumbnailTimeout,
-                                            abandoned: abandonedThumbnails) { position in
+                                            slots: thumbnailSlots) { position in
                 await thumbnail(chosen[position].filter, width: chosen[position].width, height: chosen[position].height)
             }
             for (position, image) in images {
@@ -274,29 +274,37 @@ package enum SourceCatalog {
         return CaptureSources(displays: displays, windows: windows)
     }
 
-    package static func concurrently<T>(_ count: Int, limit: Int, timeout: UInt64? = nil, abandoned: AbandonedWork? = nil,
+    package static func concurrently<T>(_ count: Int, limit: Int, timeout: UInt64? = nil, slots: CaptureSlots? = nil,
+                                        slotWait: UInt64 = thumbnailTimeout,
                                         _ work: @escaping (Int) async -> T?) async -> [Int: T] {
-        let body: (Int) async -> T? = { position in
-            guard let timeout else { return await work(position) }
-            return (try? await Deadline.run(within: timeout, onTimeout: CancellationError(), abandoned: abandoned) {
-                await work(position)
-            }) ?? nil
+        let attempt: (Int) async -> (value: T?, starved: Bool) = { position in
+            if let slots, !(await slots.acquire(waiting: slotWait)) { return (nil, true) }
+            let guarded: () async -> T? = {
+                defer { slots?.release() }
+                return await work(position)
+            }
+            guard let timeout else { return (await guarded(), false) }
+            let value = (try? await Deadline.run(within: timeout, onTimeout: CancellationError()) { await guarded() }) ?? nil
+            return (value, false)
         }
-        return await withTaskGroup(of: (Int, T?).self) { group in
+        return await withTaskGroup(of: (Int, T?, Bool).self) { group in
             var next = 0
-            var active = 0
+            var starved = false
             let width = max(1, limit)
+            while next < min(width, count) {
+                let position = next
+                group.addTask { let result = await attempt(position); return (position, result.value, result.starved) }
+                next += 1
+            }
             var found: [Int: T] = [:]
-            while true {
-                while next < count, active + (abandoned?.count ?? 0) < width {
-                    let position = next
-                    group.addTask { (position, await body(position)) }
-                    next += 1
-                    active += 1
-                }
-                guard let (position, value) = await group.next() else { break }
-                active -= 1
+            while let (position, value, short) = await group.next() {
                 if let value { found[position] = value }
+                if short { starved = true }
+                if !starved, next < count {
+                    let following = next
+                    group.addTask { let result = await attempt(following); return (following, result.value, result.starved) }
+                    next += 1
+                }
             }
             return found
         }

@@ -104,6 +104,13 @@ package enum ControlFiles {
         }
     }
 
+    package static func claim(_ url: URL) -> Bool {
+        if unlink(url.path) == 0 { return true }
+        if errno == ENOENT { return false }
+        discard(url)
+        return true
+    }
+
     package static func readRequest(_ url: URL) -> Data? {
         let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { return nil }
@@ -283,7 +290,7 @@ package final class ControlServer {
     private func take(_ url: URL) -> ControlRequest? {
         let fileId = requestId(url)
         let data = ControlFiles.readRequest(url)
-        ControlFiles.discard(url)
+        guard ControlFiles.claim(url) else { return nil }
         guard Self.isValidId(fileId) else { return nil }
         guard let data, let request = try? JSONDecoder().decode(ControlRequest.self, from: data), request.id == fileId else {
             write(.failure(fileId, RecapError("CONTROL_INVALID", "The capture request \(url.lastPathComponent) is not valid")))
@@ -367,7 +374,8 @@ package final class ControlServer {
         guard ControlFiles.isPrivateDirectory(directory) else {
             let waiting = pendingRequests().map(requestId).filter(Self.isValidId)
             guard (try? ControlFiles.prepare(directory)) != nil else { return false }
-            for id in waiting { write(.failure(id, Self.controlReplaced)) }
+            let reason = lock.withLock { stopped } ? Self.notRecording : Self.controlReplaced
+            for id in waiting { write(.failure(id, reason)) }
             return false
         }
         let horizon = now().addingTimeInterval(-Self.responseLifetime)
