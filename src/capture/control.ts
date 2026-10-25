@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
@@ -17,7 +17,7 @@ import { decodeVideo, readManifest, type CaptureTarget, type CaptureVideo } from
 export { CONTROL_DIR, controlDir } from './control-dir.ts'
 export const REQUEST_SUFFIX = '.request.json'
 export const RESPONSE_SUFFIX = '.response.json'
-export const CONTROL_TIMEOUT_MS = 15_000
+export const CONTROL_TIMEOUT_MS = 20_000
 export const CONTROL_POLL_MS = 50
 export const SOURCES_TIMEOUT_MS = 30_000
 export const RESPONSE_LIFETIME_MS = 60_000
@@ -148,6 +148,24 @@ export interface ControlOptions {
   alive?: () => boolean
   id?: string
   now?: () => number
+}
+
+export class ControlTimeout extends RecapError {
+  readonly taken: boolean
+
+  constructor(message: string, taken: boolean) {
+    super('CAPTURE_TIMEOUT', message, { hint: 'Check recorder.log in the meeting folder.' })
+    this.taken = taken
+  }
+}
+
+function withdrawRequest(file: string): boolean {
+  try {
+    unlinkSync(file)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function requestBody(id: string, request: ControlRequest, issuedAt: number = Date.now()): Record<string, unknown> {
@@ -283,10 +301,9 @@ export async function sendControl(dir: string, request: ControlRequest, options:
         throw new RecapError('NOT_RECORDING', 'The recorder stopped before answering')
       }
       if (Date.now() >= deadline) {
+        const withdrawn = withdrawRequest(requestFile)
         withdraw()
-        throw new RecapError('CAPTURE_TIMEOUT', `The recorder did not answer within ${Math.round((options.timeoutMs ?? CONTROL_TIMEOUT_MS) / 1000)}s`, {
-          hint: 'Check recorder.log in the meeting folder.',
-        })
+        throw new ControlTimeout(`The recorder did not answer within ${Math.round((options.timeoutMs ?? CONTROL_TIMEOUT_MS) / 1000)}s`, !withdrawn)
       }
       await sleep(options.pollMs ?? CONTROL_POLL_MS)
     }
@@ -335,8 +352,14 @@ export function confirmAfterTimeout(error: unknown, current: () => Located | nul
   const located = current()
   const state = located ? captureState(located.meeting, readManifest(located.dir)?.video ?? null) : null
   const now = state === null || !state.mic ? 'the meeting is no longer recording' : `the meeting records ${videoLabel(state.video)}`
-  throw new RecapError('CAPTURE_TIMEOUT', `${error.message}; ${now}`, {
-    hint: 'The recorder may still apply the change; check it with `recap capture state` and recorder.log in the meeting folder.',
+  if (error instanceof ControlTimeout && error.taken) {
+    throw new RecapError('CAPTURE_TIMEOUT', `${error.message}; ${now}`, {
+      hint: 'The recorder may still apply the change; check it with `recap capture state` and recorder.log in the meeting folder.',
+    })
+  }
+  const reason = error instanceof ControlTimeout ? 'the recorder never took the request, so the change will not be applied' : 'Recap.app gave up, so the change was not applied'
+  throw new RecapError('CAPTURE_TIMEOUT', `${error.message}; ${reason}; ${now}`, {
+    hint: 'Try again; recorder.log in the meeting folder says why ScreenCaptureKit did not answer.',
   })
 }
 

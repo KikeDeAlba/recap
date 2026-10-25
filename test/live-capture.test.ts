@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
-import { CONTROL_ATTEMPTS, CONTROL_REPLACED, MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, videoLabel, writeRequest } from '../src/capture/control.ts'
+import { CONTROL_ATTEMPTS, CONTROL_REPLACED, CONTROL_TIMEOUT_MS, MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, videoLabel, writeRequest } from '../src/capture/control.ts'
 import { discardControl } from '../src/capture/control-dir.ts'
 import { assembleMeeting } from '../src/capture/assemble.ts'
 import { decodeManifest, needsAssembly, pendingCaptureBytes } from '../src/capture/manifest.ts'
@@ -293,6 +293,37 @@ test('a timed out set reports what the meeting really records', async (t) => {
   writeManifest(current.dir, {})
   await assert.rejects(clearCapture(deps), (error: unknown) => error instanceof RecapError && /records the microphone only/.test(error.message))
   assert.deepEqual(readdirSync(path.join(current.dir, 'control')), [])
+})
+
+test('a timeout says whether the change can still be applied', async (t) => {
+  const never = (error: unknown) => error instanceof RecapError && error.code === 'CAPTURE_TIMEOUT' && /never took the request, so the change will not be applied/.test(error.message) && !/may still apply/.test(error.hint ?? '')
+  const idle = located(t)
+  writeManifest(idle.dir, {})
+  await assert.rejects(setCapture({ kind: 'display', id: 1 }, { platform: 'darwin', current: () => idle, timeoutMs: 150 }), never)
+
+  const gaveUp = located(t)
+  writeManifest(gaveUp.dir, {})
+  const stopGaveUp = fakeRecorder(gaveUp.dir, () => ({ ok: false, error: { code: 'CAPTURE_TIMEOUT', message: 'ScreenCaptureKit took more than 4s to start the screen capture; Recap.app gave up on it' } }))
+  t.after(stopGaveUp)
+  await assert.rejects(setCapture({ kind: 'display', id: 1 }, { platform: 'darwin', current: () => gaveUp }), (error: unknown) => {
+    return error instanceof RecapError && /the change was not applied; the meeting records the microphone only/.test(error.message) && !/may still apply/.test(error.hint ?? '')
+  })
+
+  const taken = located(t)
+  writeManifest(taken.dir, {})
+  const control = path.join(taken.dir, 'control')
+  const silent = setInterval(() => {
+    if (!existsSync(control)) return
+    for (const name of readdirSync(control).filter((item) => item.endsWith('.request.json') && !item.startsWith('.'))) rmSync(path.join(control, name))
+  }, 10)
+  t.after(() => clearInterval(silent))
+  await assert.rejects(setCapture({ kind: 'display', id: 1 }, { platform: 'darwin', current: () => taken, timeoutMs: 200 }), (error: unknown) => {
+    return error instanceof RecapError && error.code === 'CAPTURE_TIMEOUT' && /may still apply/.test(error.hint ?? '') && !/will not be applied/.test(error.message)
+  })
+})
+
+test('the client waits longer than the longest change of the recorder', () => {
+  assert.equal(CONTROL_TIMEOUT_MS, 20_000)
 })
 
 test('thumbnails must be bounded inline JPEG data URLs', () => {
