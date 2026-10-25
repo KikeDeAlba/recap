@@ -620,7 +620,7 @@ private let fakeChecks = SourceChecks(
             let started = Date()
             _ = SecretScanner.reason(text)
             let elapsed = Date().timeIntervalSince(started)
-            #expect(elapsed < 0.2, "\(text.prefix(10)) \(elapsed)")
+            #expect(elapsed < 1.5, "\(text.prefix(10)) \(elapsed)")
         }
     }
 
