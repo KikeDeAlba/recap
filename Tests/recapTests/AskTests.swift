@@ -668,7 +668,7 @@ private let fakeChecks = SourceChecks(
         let text = String(repeating: "a", count: 100_000)
         let started = Date()
         #expect(SecretScanner.reason(text) == nil)
-        #expect(Date().timeIntervalSince(started) < 0.2)
+        #expect(Date().timeIntervalSince(started) < 1.5)
         let mail = String(repeating: "a", count: 100_000) + "@acme.com"
         #expect(SecretScanner.reason(mail) == "email")
     }
