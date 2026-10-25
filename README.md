@@ -38,8 +38,7 @@ configuración.
   [kit](https://github.com/KikeDeAlba/kit) (`~/.config/kikedealba/tools.d`) con
   sus capacidades y, si bita está instalado, la suscripción a sus eventos
   `start`, `stop`, `cancel` y `amend` de las entradas `meeting`,
-  `remote-meeting` e `in-person-meeting` (vuelve a correr `recap setup` tras
-  actualizar para que la suscripción incluya `meeting`). Reemplaza al viejo `bita hooks add` y quita ese hook si
+  `remote-meeting` e `in-person-meeting`. Reemplaza al viejo `bita hooks add` y quita ese hook si
   lo encuentra, para que no se dispare dos veces;
 - en Claude Code agrega o actualiza el marketplace `KikeDeAlba/recap` e instala
   o actualiza el plugin `recap@recap` (`claude plugin marketplace add|update` y
@@ -49,6 +48,22 @@ configuración.
 - en opencode, Codex y Gemini CLI instala la skill y las skills de usuario en el
   formato de cada uno (`--agents codex,gemini`, `--agents all` o
   `--agents none`).
+
+### Al actualizar
+
+Tras actualizar recap (npm, bita o desde el código), vuelve a correr:
+
+```sh
+recap setup
+```
+
+La suscripción a bita se guarda en el registro de kit al correr `recap setup` y
+no se reescribe sola: hasta que lo corras, las entradas `--kind meeting` de bita
+no arrancan la grabación. `recap capabilities --json` muestra en `subscribes`
+lo que quedó registrado. `recap setup` también baja el `Recap.app` actual; con
+uno anterior, que no anuncia `capture.meeting`, `recap start` sin
+`--remote`/`--in-person` graba solo el micrófono como reunión presencial y lo
+marca con `"fallback": "in-person"` en `meeting.json` y en el `--json`.
 
 En Windows y Linux `recap start` falla con `CAPTURE_UNAVAILABLE`: graba con la
 app que quieras y procesa el archivo con
@@ -141,7 +156,9 @@ recap summary --bita-entry 812 --json # the minutes with their agreements and ac
 recap discard <meeting>
 ```
 
-Without `--remote` or `--in-person`, `recap start` records in `meeting` mode: the microphone only, like an in-person meeting, with `"mode": "meeting"` in `meeting.json`. `list`, `show`, `process`, `compress-video`, `strip-video`, `prune`, the storage report and the bita integration treat it like the other modes. A `meeting` without `recording.mov` skips the `frames` stage.
+Without `--remote` or `--in-person`, `recap start` records in `meeting` mode: the microphone only, like an in-person meeting, with `"mode": "meeting"` in `meeting.json`. `list`, `show`, `process`, `compress-video`, `strip-video`, `prune`, the storage report and the bita integration treat it like the other modes. A `meeting` without `recording.mov` skips the `frames` stage. Minutes, headers and prompts call it «reunión», with no modality (no «presencial» or «remota»), like inkwell and tally do; its default title is `Meeting`, which the wrap-up treats as generic.
+
+recap asks the installed recorder (`recap-capture capabilities --json`) whether it announces `capture.meeting`. An older Recap.app that does not (or has no `recap-capture` at all) still records: `recap start` falls back to an in-person meeting (microphone only, the same result), stores `"mode": "in-person"` and `"fallback": "in-person"` in `meeting.json`, returns `fallback` in the `--json` output and says so in the text output. The same happens to a bita entry with `--kind meeting`. Run `recap setup` to get the current Recap.app.
 
 `recap transcript <meeting> --json` reads `transcript.json` (or, for older meetings, `transcript.md`) and returns times in seconds from the start of the recording; `speaker` is `Sala` or `Remotos` in remote meetings and `null` otherwise. It fails with `NO_TRANSCRIPT` until the `transcribe` stage has run. Without `--json` it prints `transcript.md`.
 
@@ -204,7 +221,7 @@ Trae tres cosas:
 
   | Skill | Qué hace |
   |---|---|
-  | `/recap:recap-start [remota\|presencial] [título]` | Empieza a grabar; saca el modo de los argumentos o de la conversación y pregunta si no puede |
+  | `/recap:recap-start [remota\|presencial] [título]` | Empieza a grabar; saca el modo de los argumentos o de la conversación y, si no se dice, graba en modo reunión (solo micrófono) |
   | `/recap:recap-stop [--no-wait]` | Para la grabación (por bita si la sigue un cronómetro), espera el procesamiento y muestra el resultado |
   | `/recap:recap-status` | Dice si se está grabando y en qué va el procesamiento |
   | `/recap:recap-list [reunión]` | Lista las reuniones o muestra la minuta de una |
@@ -285,7 +302,7 @@ bita start "Revisión semanal" --kind meeting                # recap records the
 bita stop                                                   # recap stops, processes, and writes the minutes into the entry note in inkwell
 ```
 
-`recap setup` subscribes `recap bita-hook` to bita's `start`, `stop`, `cancel` and `amend` events through the kit registry. It works the same whether the timer is started from the terminal, from Claude Code or from bita-desktop.
+`recap setup` subscribes `recap bita-hook` to bita's `start`, `stop`, `cancel` and `amend` events of `meeting`, `remote-meeting` and `in-person-meeting` entries through the kit registry. After updating recap, run `recap setup` again: the subscription is only rewritten then, and until you do, `--kind meeting` entries do not start a recording. It works the same whether the timer is started from the terminal, from Claude Code or from bita-desktop.
 
 | bita event | recap |
 |---|---|
