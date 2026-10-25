@@ -2,12 +2,12 @@ import { spawn } from 'node:child_process'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { isRecord, swiftLine } from '../core/json.ts'
 import { isoNow } from '../core/dates.ts'
-import { meetingLabel, type Meeting } from '../core/meeting.ts'
+import { hasSystemAudio, hasSystemChannel, meetingLabel, type Meeting } from '../core/meeting.ts'
 import { sleep, signalTree } from '../core/proc.ts'
 import { prefix, replaceAll, suffix, trimmed } from '../core/text.ts'
 import { RecapError, describeError } from '../errors.ts'
 import { loadResource } from '../pipeline/resources.ts'
-import { decodeSegment, orderSegments, type Segment } from '../pipeline/transcript.ts'
+import { callAudioNote, decodeSegment, orderSegments, type Segment } from '../pipeline/transcript.ts'
 import { boardEntries, makeAskId, removeBoard, writeBoard, type AskPhase, type AskingState } from './asking.ts'
 import type { ProjectContext } from './context.ts'
 import { isDuplicateQuestion } from './dedupe.ts'
@@ -161,15 +161,14 @@ export function detectorBatch(segments: readonly Segment[], cursor: DetectorCurs
   return { reviewed, fresh, cursor: { detectedThroughMs: Math.max(cursor.detectedThroughMs, through), examinedSegments: segments.length } }
 }
 
-export function renderDetectPrompt(template: string, meeting: Meeting, context: ProjectContext, batch: DetectorBatch, known: readonly string[]): string {
-  const labelled = meeting.mode === 'remote'
+export function renderDetectPrompt(template: string, meeting: Meeting, context: ProjectContext, batch: DetectorBatch, known: readonly string[], labelled: boolean = hasSystemChannel(meeting)): string {
   const title = meeting.bitaEntry?.title ?? meeting.title
   const pages =
     context.pages.length === 0
       ? '  (sin páginas registradas para este proyecto)'
       : context.pages.map((page) => `  ${'  '.repeat(Math.max(0, page.depth))}- ${page.title}`).join('\n')
   const speakers = labelled
-    ? 'Es una reunión remota: «Sala» es el micrófono de quien graba y «Remotos» es el audio de la llamada. Las preguntas que vienen de «Remotos» suelen ir dirigidas a quien graba y pesan más; una pregunta de «Sala» solo cuenta si es claramente una duda técnica abierta.'
+    ? `${meeting.mode === 'remote' ? 'Es una reunión remota' : `Es una ${meetingLabel(meeting)} con el audio de una pantalla o ventana grabada`}: «Sala» es el micrófono de quien graba y «Remotos» es el audio de la llamada.${callAudioNote(meeting)} Las preguntas que vienen de «Remotos» suelen ir dirigidas a quien graba y pesan más; una pregunta de «Sala» solo cuenta si es claramente una duda técnica abierta.`
     : `Es una ${meetingLabel(meeting)} con un solo micrófono («Sala»), sin separación por persona: juzga solo por el contenido de lo que se dice.`
   const knownList = known.length === 0 ? '(ninguna)' : known.map((question) => `- ${question}`).join('\n')
   const reviewed = batch.reviewed.length === 0 ? '(nada)' : renderLive(batch.reviewed, labelled)
@@ -290,7 +289,7 @@ export class QuestionDetector {
     let found: DetectedQuestion[]
     try {
       const template = this.dependencies.template ? this.dependencies.template() : loadResource('detect-prompt.md')
-      const prompt = renderDetectPrompt(template, this.meeting, await this.context(), batch, known)
+      const prompt = renderDetectPrompt(template, this.meeting, await this.context(), batch, known, hasSystemAudio(this.meeting, this.dir))
       found = parseDetectorResponse(await this.dependencies.complete(prompt))
     } catch (error) {
       return { type: 'failed', message: describeError(error) }

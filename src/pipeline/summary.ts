@@ -2,11 +2,11 @@ import path from 'node:path'
 import { clock } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
-import { durationSeconds, modeLabel, type Meeting } from '../core/meeting.ts'
+import { durationSeconds, hasSystemChannel, modeLabel, type Meeting } from '../core/meeting.ts'
 import { formatDuration, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { loadResource } from './resources.ts'
-import { meetingHeader } from './transcript.ts'
+import { callAudioNote, meetingHeader } from './transcript.ts'
 
 export interface FrameInfo {
   file: string
@@ -21,10 +21,9 @@ export function readFrames(dir: string): FrameInfo[] {
 
 export function renderSummaryPrompt(meeting: Meeting, transcript: string, frames: readonly FrameInfo[], template: string = loadResource('summary-prompt.md')): string {
   const mode = meeting.mode === 'remote' ? 'remota (videollamada)' : modeLabel(meeting)
-  const speakers =
-    meeting.mode === 'remote'
-      ? '- Hablantes: «Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada. No hay separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren.'
-      : '- Hablantes: un solo micrófono en la sala, sin separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren.'
+  const speakers = hasSystemChannel(meeting)
+    ? `- Hablantes: «Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada.${callAudioNote(meeting)} No hay separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren.`
+    : '- Hablantes: un solo micrófono en la sala, sin separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren.'
   let framesText = ''
   if (frames.length > 0) {
     const list = frames.map((frame) => `  - ${frame.file} [${clock(Math.trunc(frame.timeSeconds * 1000))}]`)

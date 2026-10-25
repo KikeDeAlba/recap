@@ -1,7 +1,10 @@
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { RecapError, errorMessage } from '../errors.ts'
+import { discardControl } from '../capture/control-dir.ts'
 import { applyRecovery, recoverCapture, withRecoveryLock } from '../capture/recover.ts'
+import { hadDestination, pendingCaptureBytes } from '../capture/manifest.ts'
+import type { Channel } from '../pipeline/transcript.ts'
 import type { Config } from './config.ts'
 import { rootDir } from './config.ts'
 import { idStamp, isoDate, isoNow, parseDate } from './dates.ts'
@@ -97,6 +100,7 @@ export interface Meeting {
   video?: VideoCompression | undefined
   videoRemovedAt?: string | undefined
   fallback?: MeetingMode | undefined
+  channels?: Channel[] | undefined
   [key: string]: unknown
 }
 
@@ -172,6 +176,21 @@ export function recordingPath(dir: string, mode: MeetingMode): string {
   return exists(fallback) ? fallback : primary
 }
 
+export function recordedChannels(meeting: Pick<Meeting, 'mode' | 'channels'>): Channel[] {
+  if (meeting.mode === 'remote') return ['mic', 'system']
+  const channels = Array.isArray(meeting.channels) ? meeting.channels : []
+  return channels.includes('system') ? ['mic', 'system'] : ['mic']
+}
+
+export function hasSystemChannel(meeting: Pick<Meeting, 'mode' | 'channels'>): boolean {
+  return recordedChannels(meeting).includes('system')
+}
+
+export function hasSystemAudio(meeting: Pick<Meeting, 'mode' | 'channels'>, dir: string): boolean {
+  if (hasSystemChannel(meeting)) return true
+  return meeting.mode === 'meeting' && !Array.isArray(meeting.channels) && hadDestination(dir)
+}
+
 export function isActiveStatus(status: MeetingStatus): boolean {
   return status === 'recording' || status === 'starting'
 }
@@ -182,6 +201,7 @@ export function reconcile(meeting: Meeting, dir: string): Meeting {
   const created = parseDate(meeting.createdAt)
   if (meeting.recorderPid === undefined && meeting.status === 'starting' && created && Date.now() - created.getTime() < 300_000) return meeting
   const outcome = withRecoveryLock(dir, () => {
+    discardControl(meeting, dir)
     const recovery = recoverCapture(dir, meeting.mode)
     let size = 0
     let modified: Date | null = null
@@ -190,7 +210,7 @@ export function reconcile(meeting: Meeting, dir: string): Meeting {
       size = info.size
       modified = info.mtime
     } catch {
-      size = 0
+      size = pendingCaptureBytes(dir, meeting.mode)
     }
     try {
       return updateMeeting(dir, (current) => {

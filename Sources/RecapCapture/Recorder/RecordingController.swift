@@ -4,6 +4,7 @@ import Foundation
 package final class RecordingController {
     private let dir: URL
     private var recorder: Recorder?
+    private var control: ControlServer?
     private var signalSources: [DispatchSourceSignal] = []
     private var stopRequested = false
     private var finishing = false
@@ -33,23 +34,35 @@ package final class RecordingController {
             let liveTap = live.enabled ? makeLiveTap(maxChunkSeconds: live.maxChunkSeconds) : nil
             let recorder: Recorder = switch meeting.mode {
             case .remote: RemoteRecorder(url: url, displayID: meeting.display, liveTap: liveTap)
-            case .inPerson, .meeting: InPersonRecorder(url: url, liveTap: liveTap)
+            case .inPerson: InPersonRecorder(url: url, liveTap: liveTap)
+            case .meeting: MeetingRecorder(dir: dir, liveTap: liveTap)
             }
             recorder.onFailure = { [weak self] error in
                 DispatchQueue.main.async { self?.finish(error: error) }
             }
             self.recorder = recorder
             try await recorder.start()
+            if let handler = recorder as? CaptureControlHandler { startControl(handler) }
             started = true
             _ = try MeetingFile.update(dir) {
                 $0.status = .recording
                 $0.startedAt = Date()
             }
-            log("recording \(meeting.mode.rawValue) to \(url.path)")
+            log("recording \(meeting.mode.rawValue) to \(meeting.mode == .meeting ? dir.path : url.path)")
             if liveTap != nil { startLiveWorker() }
             if stopRequested { finish(error: nil) }
         } catch {
             fail(error)
+        }
+    }
+
+    private func startControl(_ handler: CaptureControlHandler) {
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        do {
+            try server.start()
+            control = server
+        } catch {
+            log("capture control disabled: \(error)")
         }
     }
 
@@ -94,6 +107,7 @@ package final class RecordingController {
         guard !finishing else { return }
         finishing = true
         let recorder = self.recorder
+        control?.stop()
         Task { @MainActor in
             await recorder?.stop()
             _ = try? MeetingFile.update(self.dir) {

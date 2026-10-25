@@ -6,9 +6,12 @@ import { isoNow } from '../core/dates.ts'
 import { exists } from '../core/fsutil.ts'
 import { MeetingStore, isActiveStatus, loadMeeting, recordingPath, updateMeeting, type BitaTarget, type Located, type Meeting, type MeetingMode } from '../core/meeting.ts'
 import { isAlive, signalProcess, signalTree, waitUntil } from '../core/proc.ts'
-import { RecapError } from '../errors.ts'
+import { RecapError, errorMessage } from '../errors.ts'
 import { selectRecorder, type Recorder } from './recorder.ts'
 import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
+import { assembleMeeting } from './assemble.ts'
+import { discardControl } from './control-dir.ts'
+import { needsAssembly } from './manifest.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
@@ -103,11 +106,12 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
     if (recorder.kind !== 'mac-app') await waitUntil(5, 0.1, () => !isAlive(pid))
   }
   if (isActiveStatus(current.status)) {
+    discardControl(current, dir)
     const mode = current.mode
     const attempt = recorder.kind === 'mac-app' ? null : withRecoveryLock(dir, () => recoverCapture(dir, mode))
     const recovery = attempt?.ok ? attempt.value : null
     current = updateMeeting(dir, (item) => {
-      item.status = exists(recordingPath(dir, item.mode)) ? 'recorded' : 'failed'
+      item.status = exists(recordingPath(dir, item.mode)) || needsAssembly(dir, item.mode) ? 'recorded' : 'failed'
       item.endedAt = isoNow()
       delete item.recorderPid
       item.error = 'The recorder exited without closing the file cleanly'
@@ -117,12 +121,25 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
   return current
 }
 
-export async function stopRecording(timeout: number): Promise<Located> {
+export async function assembleAfterStop(meeting: Meeting, dir: string, config: Config, warn: (line: string) => void): Promise<Meeting> {
+  if (meeting.status !== 'recorded' || !needsAssembly(dir, meeting.mode)) return meeting
+  try {
+    return await assembleMeeting(dir, config, process.platform, warn)
+  } catch (error) {
+    warn(`could not assemble the recording yet, \`recap process\` retries it: ${errorMessage(error)}`)
+    return loadMeeting(dir)
+  }
+}
+
+export async function stopRecording(timeout: number, warn: (line: string) => void = (line) => process.stderr.write(`recap: ${line}\n`)): Promise<Located> {
   const current = currentRecording()
   if (!current) throw new RecapError('NOT_RECORDING', 'There is no active recording')
-  const meeting = await stopRecorder(current.meeting, current.active.dir, timeout)
+  const dir = current.active.dir
+  const stopped = await stopRecorder(current.meeting, dir, timeout)
   clearActive()
-  return { meeting, dir: current.active.dir }
+  discardControl(stopped, dir)
+  const meeting = await assembleAfterStop(stopped, dir, loadConfig(), warn)
+  return { meeting, dir }
 }
 
 export async function discardRecording(reference: string | undefined, bitaEntryId: number | undefined): Promise<Located> {

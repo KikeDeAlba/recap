@@ -115,7 +115,7 @@ export async function setupCommand(argv: string[]): Promise<number> {
     const bita = args.has('skip-bita') ? null : await BitaClient.create(config, {})
     const subscribe = capture && bita !== null
     try {
-      const file = await register(capture, subscribe)
+      const file = await register(capture, subscribe, capture ? await recorder.features() : [])
       checks.push({ name: 'registry', ok: true, detail: file })
     } catch (error) {
       checks.push({ name: 'registry', ok: false, detail: errorMessage(error) })

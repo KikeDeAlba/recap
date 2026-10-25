@@ -12,14 +12,14 @@ import { selfCommand } from '../core/self.ts'
 import { suffix, trimmed } from '../core/text.ts'
 import { requireTool } from '../core/tools.ts'
 import { RecapError, errorMessage } from '../errors.ts'
-import { DETECT_TIMEOUT_MS, runAgent } from '../pipeline/agent.ts'
+import { DETECT_TIMEOUT_MS, hideMeetingControl, runAgent, type AgentDependencies } from '../pipeline/agent.ts'
 import { whisperArguments } from '../pipeline/pipeline.ts'
 import { parseWhisper, type Channel, type Segment } from '../pipeline/transcript.ts'
 import { pruneBoard } from './asking.ts'
 import { meetingContext } from './context.ts'
 import { AutoAskProcess, AutoAskQueue, QuestionDetector, readTranscript, saveCursor } from './detector.ts'
 import { appendLines, liveFiles, readLines } from './files.ts'
-import { LiveMerger } from './merger.ts'
+import { LiveMerger, systemSpansOf } from './merger.ts'
 
 export const LIVE_THREADS = 4
 export const PROMPT_CHARACTERS = 220
@@ -172,7 +172,7 @@ export class LiveWorker {
       const model = whisperModelPath(this.config)
       if (!existsSync(model)) throw new RecapError('MODEL_MISSING', `Whisper model not found at ${model}. Run \`recap setup\`.`)
       const settings = settingsOf(this.config)
-      const merger = new LiveMerger(meeting.mode === 'remote', settings.maxChunkSeconds + 10)
+      const merger = new LiveMerger(systemSpansOf(meeting, this.dir), settings.maxChunkSeconds + 10)
       let processed = this.loadState()
       this.log(`live worker started at chunk ${processed}`)
       detectors = new DetectorSwitch(this.dir, meeting, this.detectorFactory, this.autoAskEnabled, this.log, () => {
@@ -264,13 +264,18 @@ export class LiveWorker {
   }
 }
 
+export function completeDetection(prompt: string, dir: string, config: Config, log: (line: string) => void, dependencies: AgentDependencies = {}): Promise<string> {
+  hideMeetingControl(dir)
+  return runAgent({ prompt, cwd: dir, config, scope: 'live', tools: [], addDirs: [], model: settingsOf(config).autoAskModel, restrictTools: [], timeoutMs: DETECT_TIMEOUT_MS, dependencies: { warn: log, ...dependencies } })
+}
+
 export function makeLiveDetector(dir: string, meeting: Meeting, config: Config, log: (line: string) => void): QuestionDetector | null {
   const settings = settingsOf(config)
   const runner = new AutoAskProcess(dir, selfCommand())
   const asks = new AutoAskQueue({ dir, concurrency: settings.autoAskConcurrency, run: (job) => runner.run(job), cancelRunning: () => runner.cancel(), log })
   return new QuestionDetector(dir, meeting, settings.autoAskMinSeconds, {
     context: () => meetingContext(meeting, config),
-    complete: (prompt) => runAgent({ prompt, cwd: dir, config, scope: 'live', tools: [], addDirs: [], model: settings.autoAskModel, restrictTools: [], timeoutMs: DETECT_TIMEOUT_MS, dependencies: { warn: log } }),
+    complete: (prompt) => completeDetection(prompt, dir, config, log),
     enqueue: (question, origin) => {
       asks.enqueue(question, origin)
     },

@@ -90,3 +90,7 @@ export function formatBytes(bytes: number): string {
   const text = value.toFixed(decimals).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
   return `${text} ${units[unit]}`
 }
+
+export function printable(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ')
+}

@@ -1,5 +1,5 @@
 import { clock, esHeaderDate, parseDate } from '../core/dates.ts'
-import { durationSeconds, meetingLabel, type Meeting } from '../core/meeting.ts'
+import { durationSeconds, hasSystemChannel, meetingLabel, type Meeting } from '../core/meeting.ts'
 import { isRecord } from '../core/json.ts'
 import { fold, formatDuration, jaccard, trimmed } from '../core/text.ts'
 
@@ -7,6 +7,10 @@ export type Channel = 'mic' | 'system'
 
 export function speakerLabel(channel: Channel): string {
   return channel === 'mic' ? 'Sala' : 'Remotos'
+}
+
+export function callAudioNote(meeting: Pick<Meeting, 'mode'>): string {
+  return meeting.mode === 'remote' ? '' : ' Solo hay «Remotos» en los tramos en que se grabó una pantalla o ventana; fuera de ellos todo viene del micrófono.'
 }
 
 export interface Segment {
@@ -119,13 +123,14 @@ export function meetingHeader(meeting: Meeting): string {
 
 export function transcriptMarkdown(meeting: Meeting, segments: readonly Segment[]): string {
   const lines = [`# Transcripción: ${meeting.title}`, '', meetingHeader(meeting), '']
-  if (meeting.mode === 'remote') {
+  const labelled = hasSystemChannel(meeting)
+  if (labelled) {
     lines.push('> **Sala**: micrófono local (quien graba y quien esté en la misma sala). **Remotos**: audio de la llamada.', '')
   }
   const grouped = paragraphs(segments)
   if (grouped.length === 0) lines.push('_No se detectó voz en la grabación._')
   for (const paragraph of grouped) {
-    const speaker = meeting.mode === 'remote' ? ` ${speakerLabel(paragraph.channel)}:` : ''
+    const speaker = labelled ? ` ${speakerLabel(paragraph.channel)}:` : ''
     lines.push(`**[${clock(paragraph.startMs)}]${speaker}** ${paragraph.text}`, '')
   }
   return lines.join('\n')

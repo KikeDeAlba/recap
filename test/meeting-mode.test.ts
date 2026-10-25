@@ -52,6 +52,7 @@ function fakeRecorder(meetingMode = true): Recorder {
     check: async () => ({ ok: true, missing: [] }),
     permissions: async () => ({ microphone: 'granted', screen: 'not-required' }),
     supports: async (mode) => mode !== 'meeting' || meetingMode,
+    features: async () => [],
     launch: async (dir: string) => {
       updateMeeting(dir, (current) => {
         current.status = 'recording'

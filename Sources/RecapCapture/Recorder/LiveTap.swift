@@ -40,8 +40,11 @@ package final class LiveTap {
     }
 
     package func append(_ sampleBuffer: CMSampleBuffer, channel: Channel) {
+        append(sampleBuffer, channel: channel, at: sampleBuffer.presentationTimeStamp)
+    }
+
+    package func append(_ sampleBuffer: CMSampleBuffer, channel: Channel, at pts: CMTime) {
         guard sampleBuffer.isValid, sampleBuffer.numSamples > 0 else { return }
-        let pts = sampleBuffer.presentationTimeStamp
         guard pts.isValid else { return }
         mark(pts)
         originLock.lock()
@@ -50,6 +53,13 @@ package final class LiveTap {
         let offsetMs = max(0, Int(((pts - start).seconds * 1000).rounded()))
         queue.async { [weak self] in
             self?.process(sampleBuffer, channel: channel, atMs: offsetMs)
+        }
+    }
+
+    package func flush(_ channel: Channel) {
+        queue.sync {
+            guard let state = channels[channel] else { return }
+            store(state.chunker.flush(), channel: channel)
         }
     }
 
