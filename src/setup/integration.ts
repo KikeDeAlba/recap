@@ -15,8 +15,19 @@ export const BASE_CAPABILITIES = ['meeting.process', 'meeting.import', 'meeting.
 
 export const RECORD_CAPABILITIES = ['meeting.record', 'meeting.mode.meeting']
 
-export function capabilities(captureAvailable: boolean): string[] {
-  return captureAvailable ? [...RECORD_CAPABILITIES, ...BASE_CAPABILITIES] : [...BASE_CAPABILITIES]
+export const CAPTURE_FEATURES: Readonly<Record<string, string>> = {
+  'capture.sources': 'meeting.capture.sources',
+  'capture.switch': 'meeting.capture.switch',
+}
+
+export function captureFeatures(recorderCapabilities: readonly string[]): string[] {
+  return Object.entries(CAPTURE_FEATURES)
+    .filter(([announced]) => recorderCapabilities.includes(announced))
+    .map(([, capability]) => capability)
+}
+
+export function capabilities(captureAvailable: boolean, recorderCapabilities: readonly string[] = []): string[] {
+  return captureAvailable ? [...RECORD_CAPABILITIES, ...captureFeatures(recorderCapabilities), ...BASE_CAPABILITIES] : [...BASE_CAPABILITIES]
 }
 
 function subscription(bin: readonly string[]): ToolManifest['subscribes'][number] {
@@ -32,22 +43,22 @@ export async function bitaSubscription(ctx?: PlatformContext): Promise<ToolManif
   return subscription(await stableCommand(ctx))
 }
 
-export async function manifest(captureAvailable: boolean, subscribe = captureAvailable, ctx?: PlatformContext): Promise<ToolManifest> {
+export async function manifest(captureAvailable: boolean, subscribe = captureAvailable, ctx?: PlatformContext, recorderCapabilities: readonly string[] = []): Promise<ToolManifest> {
   const bin = await stableCommand(ctx)
   return defineManifest({
     name: 'recap',
     version: VERSION,
     description: 'Meeting recorder: local transcription, minutes, live answers',
     bin,
-    capabilities: capabilities(captureAvailable),
+    capabilities: capabilities(captureAvailable, recorderCapabilities),
     subscribes: subscribe ? [subscription(bin)] : [],
     homepage: 'https://github.com/KikeDeAlba/recap',
     install: INSTALL_HINT,
   })
 }
 
-export async function register(captureAvailable: boolean, subscribe = captureAvailable): Promise<string> {
-  return registerTool(await manifest(captureAvailable, subscribe))
+export async function register(captureAvailable: boolean, subscribe = captureAvailable, recorderCapabilities: readonly string[] = []): Promise<string> {
+  return registerTool(await manifest(captureAvailable, subscribe, undefined, recorderCapabilities))
 }
 
 export async function bitaLinked(config: Config): Promise<boolean> {

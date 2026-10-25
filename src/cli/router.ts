@@ -5,7 +5,7 @@ import { selectRecorder } from '../capture/recorder.ts'
 import { capabilities } from '../setup/integration.ts'
 import { VERSION } from '../version.ts'
 import { askCommand } from './commands/ask.ts'
-import { captureWorkerCommand } from './commands/capture.ts'
+import { captureCommand, captureWorkerCommand } from './commands/capture.ts'
 import { configCommand } from './commands/config.ts'
 import { bitaHookCommand } from './commands/hook.ts'
 import { liveWorkerCommand } from './commands/live.ts'
@@ -23,8 +23,10 @@ type Command = (argv: string[]) => Promise<number>
 async function capabilitiesCommand(argv: string[]): Promise<number> {
   return output('capabilities', argv.includes('--json'), async () => {
     const registered = await readManifest('recap').catch(() => null)
-    const capture = (await selectRecorder().check()).ok
-    const data = { name: 'recap', version: VERSION, envelope: 1, capabilities: capabilities(capture), emits: [] as string[] }
+    const recorder = selectRecorder()
+    const capture = (await recorder.check()).ok
+    const features = capture ? await recorder.features() : []
+    const data = { name: 'recap', version: VERSION, envelope: 1, capabilities: capabilities(capture, features), emits: [] as string[] }
     return { data: { ...data, ...(registered ? { subscribes: registered.subscribes } : {}) }, text: data.capabilities.join('\n') }
   })
 }
@@ -55,6 +57,7 @@ const COMMANDS: Record<string, Command> = {
   watch: watchCommand,
   'live-worker': liveWorkerCommand,
   'capture-worker': captureWorkerCommand,
+  capture: captureCommand,
   'repo-git': repoGitCommand,
   capabilities: capabilitiesCommand,
 }
@@ -68,6 +71,7 @@ export function help(): string {
     '  recap stop [--no-process] [--timeout s]',
     '  recap discard [meeting] [--bita-entry id]',
     '  recap status',
+    '  recap capture sources [--thumbnails] | capture set --display id|--window id | capture clear | capture state: add, change or drop the screen or window of a meeting while it records (macOS)',
     '',
     'Any system:',
     '  recap import <audio|video file> [--title t] [--remote|--in-person] [--no-process|--background]',

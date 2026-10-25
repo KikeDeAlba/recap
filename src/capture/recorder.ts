@@ -27,6 +27,7 @@ export interface Recorder {
   check(): Promise<RecorderCheck>
   permissions(request: boolean): Promise<PermissionReport>
   supports(mode: MeetingMode): Promise<boolean>
+  features(): Promise<string[]>
   launch(dir: string, options: { live: boolean }): Promise<void>
   stop(meeting: Meeting, dir: string): Promise<void>
 }
@@ -66,6 +67,11 @@ export class MacAppRecorder implements Recorder {
     const launcher = await this.find()
     if (!launcher) return false
     return (await this.capabilities(launcher)).includes(MEETING_CAPABILITY)
+  }
+
+  async features(): Promise<string[]> {
+    const launcher = await this.find()
+    return launcher ? this.capabilities(launcher) : []
   }
 
   launch(dir: string): Promise<void> {
@@ -134,6 +140,10 @@ export class FfmpegRecorder implements Recorder {
 
   async supports(): Promise<boolean> {
     return true
+  }
+
+  async features(): Promise<string[]> {
+    return []
   }
 
   async tools(config: Config = this.configSource()): Promise<SourceTools> {
