@@ -141,7 +141,7 @@ test('ffmpeg keeps the microphone first and puts the target audio in a second tr
   assert.match(filter, /\[1:a:0\]aresample=48000,/)
   assert.match(filter, /\[v0\]\[a0\]\[v1\]\[a1\]\[v2\]\[a2\]concat=n=3:v=1:a=1\[v\]\[system\]$/)
   const args = assembleArguments(plan, '/m', '/m/out.mov', 'linux')
-  assert.deepEqual(args.slice(0, 9), ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', '/m/mic.m4a', '-i', '/m/screen-1.mov'])
+  assert.deepEqual(args.slice(0, 9), ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', path.join('/m', 'mic.m4a'), '-i', path.join('/m', 'screen-1.mov')])
   const joined = args.join(' ')
   assert.match(joined, /-map \[v\] -map 0:a:0 -map \[system\]/)
   assert.match(joined, /-c:a:0 copy -c:a:1 aac -b:a:1 96k -ac:a:1 2/)
