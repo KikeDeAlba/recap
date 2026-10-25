@@ -12,7 +12,7 @@ import { selfCommand } from '../core/self.ts'
 import { suffix, trimmed } from '../core/text.ts'
 import { requireTool } from '../core/tools.ts'
 import { RecapError, errorMessage } from '../errors.ts'
-import { DETECT_TIMEOUT_MS, hideCaptureControl, runAgent, type AgentDependencies } from '../pipeline/agent.ts'
+import { DETECT_TIMEOUT_MS, hideMeetingControl, runAgent, type AgentDependencies } from '../pipeline/agent.ts'
 import { whisperArguments } from '../pipeline/pipeline.ts'
 import { parseWhisper, type Channel, type Segment } from '../pipeline/transcript.ts'
 import { pruneBoard } from './asking.ts'
@@ -265,7 +265,7 @@ export class LiveWorker {
 }
 
 export function completeDetection(prompt: string, dir: string, config: Config, log: (line: string) => void, dependencies: AgentDependencies = {}): Promise<string> {
-  hideCaptureControl([dir])
+  hideMeetingControl(dir)
   return runAgent({ prompt, cwd: dir, config, scope: 'live', tools: [], addDirs: [], model: settingsOf(config).autoAskModel, restrictTools: [], timeoutMs: DETECT_TIMEOUT_MS, dependencies: { warn: log, ...dependencies } })
 }
 

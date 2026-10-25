@@ -279,3 +279,27 @@ test('the summary agent always clears control/ of its meeting folder, even witho
   await runSummaryAgent('p', dir, {}, fake.dependencies)
   assert.equal(existsSync(path.join(dir, 'control')), false)
 })
+
+test('live answers and the question detector clear control/ even when meeting.json is missing', async (t) => {
+  const fake = fakeRun('codex')
+  const seen: boolean[] = []
+  const runner = fake.dependencies.runner
+  fake.dependencies.runner = async (options) => {
+    seen.push(existsSync(path.join(String(options.cwd), 'control')))
+    return runner!(options)
+  }
+  const { meeting } = meetingDir(t)
+  const bare = tempDir(t)
+  mkdirSync(path.join(bare, 'control'), { recursive: true })
+  await runAsk(
+    { live: { agent: 'codex' } },
+    { meeting, dir: bare, question: '¿Cómo vamos?', windowSeconds: 180, now: '2026-10-22T10:00:00Z', auto: false },
+    emptyContext({}),
+    () => undefined,
+    undefined,
+    fake.dependencies,
+  )
+  mkdirSync(path.join(bare, 'control'), { recursive: true })
+  await completeDetection('p', bare, { live: { agent: 'codex' } }, () => undefined, fake.dependencies)
+  assert.deepEqual(seen, [false, false])
+})
