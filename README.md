@@ -4,6 +4,7 @@ Record meetings on macOS and turn them into a transcript, a summary, agreements 
 
 | Mode | Flag | Captures | Permissions |
 |---|---|---|---|
+| Meeting (default) | none | Microphone only, to `recording.m4a` | Microphone |
 | Remote (Meet, Zoom, Teams) | `--remote` | Screen (1280 px, 2 fps), system audio and microphone, as separate tracks | Screen & System Audio Recording, Microphone |
 | In-person | `--in-person` | Microphone only | Microphone |
 
@@ -36,8 +37,9 @@ configuración.
 - registra recap en el registro de herramientas de
   [kit](https://github.com/KikeDeAlba/kit) (`~/.config/kikedealba/tools.d`) con
   sus capacidades y, si bita está instalado, la suscripción a sus eventos
-  `start`, `stop`, `cancel` y `amend` de las entradas `remote-meeting` e
-  `in-person-meeting`. Reemplaza al viejo `bita hooks add` y quita ese hook si
+  `start`, `stop`, `cancel` y `amend` de las entradas `meeting`,
+  `remote-meeting` e `in-person-meeting` (vuelve a correr `recap setup` tras
+  actualizar para que la suscripción incluya `meeting`). Reemplaza al viejo `bita hooks add` y quita ese hook si
   lo encuentra, para que no se dispare dos veces;
 - en Claude Code agrega o actualiza el marketplace `KikeDeAlba/recap` e instala
   o actualiza el plugin `recap@recap` (`claude plugin marketplace add|update` y
@@ -121,6 +123,9 @@ The recorder always runs as `Recap.app`, launched with `open`, so macOS grants t
 ## Usage
 
 ```sh
+recap start "Weekly sync"            # meeting mode: microphone only
+recap stop
+
 recap start --remote "Sprint planning"
 recap status
 recap stop
@@ -131,8 +136,29 @@ recap stop
 recap list
 recap show last
 recap show --bita-entry 812 --json    # the meeting behind a bita entry, with paths to every file
+recap transcript last --json          # the transcript as segments and paragraphs
+recap summary --bita-entry 812 --json # the minutes with their agreements and action items
 recap discard <meeting>
 ```
+
+Without `--remote` or `--in-person`, `recap start` records in `meeting` mode: the microphone only, like an in-person meeting, with `"mode": "meeting"` in `meeting.json`. `list`, `show`, `process`, `compress-video`, `strip-video`, `prune`, the storage report and the bita integration treat it like the other modes. A `meeting` without `recording.mov` skips the `frames` stage.
+
+`recap transcript <meeting> --json` reads `transcript.json` (or, for older meetings, `transcript.md`) and returns times in seconds from the start of the recording; `speaker` is `Sala` or `Remotos` in remote meetings and `null` otherwise. It fails with `NO_TRANSCRIPT` until the `transcribe` stage has run. Without `--json` it prints `transcript.md`.
+
+```json
+{"segments": [{"start": 2.5, "end": 6.25, "channel": "mic", "text": "La versión 0.14 sale el viernes."}],
+ "paragraphs": [{"start": 0, "channel": "mic", "speaker": null, "text": "Buenos días, empezamos la planeación. La versión 0.14 sale el viernes."}],
+ "channels": ["mic"]}
+```
+
+`recap summary <meeting> --json` returns `summary.md` as `markdown`, the items under `## Acuerdos` as `agreements`, and the action items: the `pending` items of the wrap-up (`wrapup.json`) with the inkwell backlog key they got, or, without a wrap-up, the `Pendiente` column under `## Pendientes`. Anything not written yet comes back empty (`""` or `[]`). Without `--json` it prints `summary.md`, or fails with `NO_SUMMARY`.
+
+```json
+{"markdown": "# Planeación del sprint\n…", "agreements": ["Liberar la versión 0.14 el viernes."],
+ "actionItems": [{"text": "Preparar las notas de la versión 0.14", "backlogKey": "PEND-12"}]}
+```
+
+`recap capabilities --json` lists `meeting.record` and `meeting.mode.meeting` when this machine can record, plus `meeting.transcript.json` and `meeting.summary.json`.
 
 Free space once a meeting is processed:
 
@@ -143,7 +169,7 @@ recap prune <meeting> --intermediates            # delete mic.wav, system.wav, t
 recap delete <meeting>                           # delete the whole meeting folder
 ```
 
-`compress-video` and `strip-video` work on remote meetings only, accept `--bita-entry` and `--prune-intermediates`, check the new file (duration and audio tracks) with AVFoundation before replacing the original, and refuse while the meeting is being recorded or processed. `compress-video` keeps the original when the result is not smaller (`NOT_SMALLER`). After `strip-video` the `frames` stage is skipped and the existing frames are kept. `recap list --json` reports `hasVideo`, `storage` (`recordingBytes`, `intermediateBytes`, `framesBytes`, `otherBytes`, `totalBytes`), `video` and `videoRemovedAt` for each meeting; `--limit 0` lists them all.
+`compress-video` and `strip-video` work on meetings with a `recording.mov` (remote, or `meeting` with video), never on in-person ones, accept `--bita-entry` and `--prune-intermediates`, check the new file (duration and audio tracks) with AVFoundation before replacing the original, and refuse while the meeting is being recorded or processed. `compress-video` keeps the original when the result is not smaller (`NOT_SMALLER`). After `strip-video` the `frames` stage is skipped and the existing frames are kept. `recap list --json` reports `hasVideo`, `storage` (`recordingBytes`, `intermediateBytes`, `framesBytes`, `otherBytes`, `totalBytes`), `video` and `videoRemovedAt` for each meeting; `--limit 0` lists them all.
 
 `recap stop` processes the meeting in the background (`--no-process` to skip). Re-run the pipeline at any time:
 
@@ -255,6 +281,7 @@ With [bita](https://github.com/KikeDeAlba/bita-cli), a meeting timer records the
 ```sh
 bita start "Planeación sprint 42" --kind remote-meeting     # recap starts recording the screen, system audio and mic
 bita start "1:1 con Ana" --kind in-person-meeting           # recap records the mic only
+bita start "Revisión semanal" --kind meeting                # recap records the mic only, in meeting mode
 bita stop                                                   # recap stops, processes, and writes the minutes into the entry note in inkwell
 ```
 
@@ -380,7 +407,7 @@ recap-capture capabilities --json                             # kit envelope: na
 recap-capture --version
 ```
 
-`--json` prints one line with the same envelope as `recap` (`schemaVersion`, `ok`, `command`, `generatedAt`, `data` or `error {code, message}`). Capabilities: `capture.remote`, `capture.in-person` and `capture.live-chunks`. A usage error with `--json` prints an error envelope with code `USAGE` and exits with 64.
+`--json` prints one line with the same envelope as `recap` (`schemaVersion`, `ok`, `command`, `generatedAt`, `data` or `error {code, message}`). Capabilities: `capture.remote`, `capture.in-person`, `capture.meeting` and `capture.live-chunks`. A usage error with `--json` prints an error envelope with code `USAGE` and exits with 64.
 
 ### Launching it
 
@@ -400,14 +427,14 @@ The caller creates `<meetingDir>/meeting.json` and `recap-capture record` update
 | Key | Who writes it | Meaning |
 |---|---|---|
 | `schemaVersion`, `id`, `title`, `createdAt`, `stages` | caller | required to read the file; `stages` can be `{}` |
-| `mode` | caller | `remote` or `in-person` |
+| `mode` | caller | `remote`, `in-person` or `meeting` (microphone only, like `in-person`) |
 | `status` | caller (`starting`), recorder | `recording` once capture starts, `recorded` after a clean stop, `failed` when it cannot start |
 | `display` | caller, optional | display ID to record in remote mode; the main display otherwise |
 | `recorderPid` | recorder | the recorder's PID while it runs, removed when it stops |
 | `startedAt`, `endedAt` | recorder | when the capture started and stopped |
 | `error` | recorder | why it failed or stopped early |
 
-Every other key, including ones recap does not know, is kept. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
+Every other key, including ones recap does not know, is kept. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person and meeting: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
 
 When `live.enabled` is on (the default, see Configuration), it also cuts the audio into 16 kHz mono 16-bit WAV chunks under `live/chunks/`, named `<channel>-<seq, 5 digits>.wav` with `channel` `mic` or `system`, and appends one line per chunk to `live/chunks/index.jsonl`:
 
