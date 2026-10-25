@@ -539,12 +539,24 @@ private actor Steps {
         #expect(!SourceCatalog.isExcludedApplication(bundleId: "us.zoom.xos", pid: 7, ownPid: 42))
     }
 
-    @Test func denWithoutABundleIsExcludedByItsExecutable() {
-        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "den"))
-        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "Den"))
-        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "dentist"))
+    @Test func denWithoutABundleIsExcludedByItsBuildPath() {
+        let dev = "/Users/me/dev/den/src-tauri/target/debug/den"
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: dev))
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "/tmp/cargo/target/release/den"))
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42,
+                                                    executable: "/w/den/src-tauri/target/aarch64-apple-darwin/debug/Den"))
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "/w/target/x/../debug/den"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "den"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "/usr/local/bin/den"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "/w/target/debug/dentist"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "/w/build/debug/den"))
         #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42))
-        #expect(!SourceCatalog.isExcludedApplication(bundleId: "com.example.den", pid: 7, ownPid: 42, executable: "den"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "com.example.den", pid: 7, ownPid: 42, executable: dev))
+    }
+
+    @Test func theExecutablePathOfAProcessIsFound() {
+        #expect(SourceCatalog.executablePath(pid: getpid())?.hasPrefix("/") == true)
+        #expect(SourceCatalog.executablePath(pid: -1) == nil)
     }
 
     @Test func exclusionsAreRefreshedOnLaunchWithAPollingBackstop() {

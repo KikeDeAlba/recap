@@ -93,7 +93,8 @@ package struct WindowCandidate: Equatable {
 
 package enum SourceCatalog {
     package static let excludedBundlePrefixes = ["com.kikedealba.den", "com.kikedealba.recap"]
-    package static let excludedExecutables: Set<String> = ["den"]
+    package static let excludedExecutable = "den"
+    package static let cargoProfiles: Set<String> = ["debug", "release"]
     package static let thumbnailWidth = 320
     package static let thumbnailHeight = 240
     package static let maxThumbnailBytes = 128 * 1024
@@ -111,16 +112,26 @@ package enum SourceCatalog {
     package static func isExcludedApplication(bundleId: String, pid: Int32, ownPid: Int32 = getpid(), executable: String? = nil) -> Bool {
         if pid == ownPid || isExcluded(bundleId: bundleId) { return true }
         guard bundleId.isEmpty, let executable else { return false }
-        return excludedExecutables.contains(executable.lowercased())
+        return isDenBuild(executable)
+    }
+
+    package static func isDenBuild(_ path: String) -> Bool {
+        let parts = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        guard parts.count >= 4, parts[parts.count - 1].lowercased() == excludedExecutable,
+              cargoProfiles.contains(parts[parts.count - 2]) else { return false }
+        return parts[parts.count - 3] == "target" || (parts.count >= 5 && parts[parts.count - 4] == "target")
     }
 
     package static func isExcludedApplication(_ app: NSRunningApplication, ownPid: Int32 = getpid()) -> Bool {
         isExcludedApplication(bundleId: app.bundleIdentifier ?? "", pid: app.processIdentifier, ownPid: ownPid,
-                              executable: app.executableURL?.lastPathComponent)
+                              executable: app.executableURL?.path)
     }
 
-    package static func executableName(pid: Int32, fallback: String) -> String {
-        NSRunningApplication(processIdentifier: pid)?.executableURL?.lastPathComponent ?? fallback
+    package static func executablePath(pid: Int32) -> String? {
+        if let path = NSRunningApplication(processIdentifier: pid)?.executableURL?.path { return path }
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
     }
 
     package static func isRecordable(_ window: WindowCandidate, ownPid: Int32 = getpid()) -> Bool {
@@ -193,7 +204,7 @@ package enum SourceCatalog {
     package static func excludedApplications(_ content: SCShareableContent) -> [SCRunningApplication] {
         content.applications.filter {
             isExcludedApplication(bundleId: $0.bundleIdentifier, pid: $0.processID,
-                                  executable: $0.bundleIdentifier.isEmpty ? executableName(pid: $0.processID, fallback: $0.applicationName) : nil)
+                                  executable: $0.bundleIdentifier.isEmpty ? executablePath(pid: $0.processID) : nil)
         }
     }
 
