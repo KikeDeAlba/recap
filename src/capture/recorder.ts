@@ -50,7 +50,7 @@ export class MacAppRecorder implements Recorder {
   }
 
   async check(): Promise<RecorderCheck> {
-    if (await findCapture()) return { ok: true, missing: [] }
+    if (await this.find()) return { ok: true, missing: [] }
     const hint = captureUnavailable().hint
     return { ok: false, missing: ['Recap.app'], ...(hint ? { hint } : {}) }
   }

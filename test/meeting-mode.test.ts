@@ -121,6 +121,14 @@ test('the mac recorder supports meeting mode only when recap-capture announces c
   assert.equal(await missing.supports('in-person'), true)
 })
 
+test('the mac recorder check uses the injected lookup like supports', async () => {
+  const app = { kind: 'app', app: '/Applications/Recap.app' } as const
+  assert.deepEqual(await new MacAppRecorder(async () => app, async () => []).check(), { ok: true, missing: [] })
+  const missing = await new MacAppRecorder(async () => null, async () => []).check()
+  assert.equal(missing.ok, false)
+  assert.deepEqual(missing.missing, ['Recap.app'])
+})
+
 test('captureCapabilities reads the envelope and treats failures as no capabilities', async (t) => {
   const binary = { kind: 'binary', binary: '/usr/local/bin/recap-capture' } as const
   const envelope = JSON.stringify({ schemaVersion: 1, ok: true, command: 'capabilities', generatedAt: '2026-10-24T10:00:00Z', data: { name: 'recap-capture', capabilities: ['capture.meeting', 3] } })
