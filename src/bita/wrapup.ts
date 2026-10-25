@@ -123,7 +123,7 @@ export function noteBody(summary: string, meeting: Meeting, dir: string): string
   let body = summary
   const start = body.indexOf('## Resumen')
   if (start !== -1) body = body.slice(start)
-  const lines = [`Minuta de la ${meetingLabel(meeting.mode)} (${formatDuration(durationSeconds(meeting))}), generada por recap a partir de la grabación.`, '']
+  const lines = [`Minuta de la ${meetingLabel(meeting)} (${formatDuration(durationSeconds(meeting))}), generada por recap a partir de la grabación.`, '']
   let inFence = false
   for (const line of body.split('\n')) {
     if (line.startsWith('```')) inFence = !inFence
@@ -210,7 +210,7 @@ export async function planWrapup(
   prompt = replaceAll(prompt, '{{currentProject}}', snapshot.projectName ?? 'ninguno')
   prompt = replaceAll(prompt, '{{date}}', meetingDay(meeting))
   prompt = replaceAll(prompt, '{{duration}}', formatDuration(durationSeconds(meeting)))
-  prompt = replaceAll(prompt, '{{mode}}', modeLabel(meeting.mode))
+  prompt = replaceAll(prompt, '{{mode}}', modeLabel(meeting))
   prompt = replaceAll(prompt, '{{projects}}', projects.map((name) => `  - ${name}`).join('\n'))
   prompt = replaceAll(prompt, '{{existingPage}}', pageNote)
   prompt = replaceAll(prompt, '{{summary}}', summary)

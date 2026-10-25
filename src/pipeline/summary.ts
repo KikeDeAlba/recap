@@ -20,7 +20,7 @@ export function readFrames(dir: string): FrameInfo[] {
 }
 
 export function renderSummaryPrompt(meeting: Meeting, transcript: string, frames: readonly FrameInfo[], template: string = loadResource('summary-prompt.md')): string {
-  const mode = meeting.mode === 'remote' ? 'remota (videollamada)' : modeLabel(meeting.mode)
+  const mode = meeting.mode === 'remote' ? 'remota (videollamada)' : modeLabel(meeting)
   const speakers =
     meeting.mode === 'remote'
       ? '- Hablantes: «Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada. No hay separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren.'

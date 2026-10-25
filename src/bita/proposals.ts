@@ -354,7 +354,7 @@ export class ProposalGenerator {
     let text = loadResource('proposals-prompt.md')
     text = replaceAll(text, '{{title}}', meeting.bitaEntry?.title ?? meeting.title)
     text = replaceAll(text, '{{date}}', meetingDay(meeting))
-    text = replaceAll(text, '{{mode}}', modeLabel(meeting.mode))
+    text = replaceAll(text, '{{mode}}', modeLabel(meeting))
     text = replaceAll(text, '{{speakers}}', speakers)
     text = replaceAll(text, '{{docsRoot}}', docsRoot)
     text = replaceAll(text, '{{pages}}', list)

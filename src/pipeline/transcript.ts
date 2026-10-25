@@ -114,7 +114,7 @@ export function paragraphs(segments: readonly Segment[]): Paragraph[] {
 
 export function meetingHeader(meeting: Meeting): string {
   const date = parseDate(meeting.startedAt) ?? parseDate(meeting.createdAt) ?? new Date()
-  return `${esHeaderDate(date)} · ${formatDuration(durationSeconds(meeting))} · ${meetingLabel(meeting.mode)}`
+  return `${esHeaderDate(date)} · ${formatDuration(durationSeconds(meeting))} · ${meetingLabel(meeting)}`
 }
 
 export function transcriptMarkdown(meeting: Meeting, segments: readonly Segment[]): string {

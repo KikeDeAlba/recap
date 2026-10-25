@@ -13,7 +13,7 @@ Responde únicamente con un objeto JSON, sin texto antes ni después y sin bloqu
 
 Reglas por campo:
 
-- **title**: el tema real de la reunión, corto (máximo 80 caracteres), reconocible en Jira. Por ejemplo, «Reunión presencial: iniciativa de recompra con cupón post-entrega». Sin fecha.
+- **title**: el tema real de la reunión, corto (máximo 80 caracteres), reconocible en Jira. Por ejemplo, «Reunión: iniciativa de recompra con cupón post-entrega». Sin fecha.
 - **project**: el nombre exacto de uno de los proyectos de la lista, solo si la conversación deja claro a cuál pertenece (se menciona el cliente, el producto o el sistema). Si hay duda, o si ninguno aplica, `null`. Nunca inventes un nombre.
 - **pageTitle**: el título de la página de documentación, el tema sin la palabra «reunión». Por ejemplo, «Iniciativa de recompra con cupón post-entrega».
 - **pageMarkdown**: el cuerpo de la página, en Markdown, sin título H1. Debe ser un documento técnico formal que explica **cómo es** lo que se trató, en presente:

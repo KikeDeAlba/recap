@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { currentRecording } from '../../core/active.ts'
 import { loadConfig } from '../../core/config.ts'
-import { MeetingStore, durationSeconds, type MeetingMode } from '../../core/meeting.ts'
+import { MeetingStore, durationSeconds, type Meeting, type MeetingMode } from '../../core/meeting.ts'
 import { meetingRecord } from '../../core/record.ts'
 import { processInBackground } from '../../core/self.ts'
 import { formatDuration } from '../../core/text.ts'
@@ -20,6 +20,16 @@ export function modeFrom(remote: boolean, inPerson: boolean): MeetingMode | unde
   return undefined
 }
 
+export function recordingLine(meeting: Pick<Meeting, 'mode' | 'fallback' | 'title'>): string {
+  const kind = meeting.fallback === undefined && meeting.mode !== 'meeting' ? `${meeting.mode} meeting` : 'meeting'
+  return `Recording ${kind} "${meeting.title}"`
+}
+
+export function startText(meeting: Pick<Meeting, 'mode' | 'fallback' | 'title'>, dir: string): string {
+  const note = meeting.fallback === undefined ? '' : '\nRecap.app does not support meeting mode yet; recording the microphone only. Update it with `recap setup`.'
+  return `${recordingLine(meeting)}${note}\n${dir}`
+}
+
 export async function startCommand(argv: string[]): Promise<number> {
   return output('start', argv.includes('--json'), async () => {
     const args = parseArgs(argv, { booleans: ['remote', 'in-person'], values: ['display', 'bita-entry', 'timeout'] })
@@ -31,8 +41,7 @@ export async function startCommand(argv: string[]): Promise<number> {
       bitaEntryId: args.int('bita-entry'),
       timeout: args.number('timeout') ?? 60,
     })
-    const note = located.meeting.fallback === undefined ? '' : `\nRecap.app does not support meeting mode yet; recording the microphone only as an ${located.meeting.fallback} meeting. Update it with \`recap setup\`.`
-    return { data: meetingRecord(located.meeting, located.dir), text: `Recording ${located.meeting.mode} meeting "${located.meeting.title}"${note}\n${located.dir}` }
+    return { data: meetingRecord(located.meeting, located.dir), text: startText(located.meeting, located.dir) }
   })
 }
 
@@ -67,7 +76,7 @@ export async function statusCommand(argv: string[]): Promise<number> {
       const elapsed = durationSeconds(current.meeting)
       return {
         data: { recording: true, active: meetingRecord(current.meeting, current.active.dir), elapsedSeconds: elapsed, bitaLinked: linked },
-        text: `Recording ${current.meeting.mode} meeting "${current.meeting.title}" for ${formatDuration(elapsed)}\n${current.active.dir}`,
+        text: `${recordingLine(current.meeting)} for ${formatDuration(elapsed)}\n${current.active.dir}`,
       }
     }
     const latest = new MeetingStore(config).all()[0]

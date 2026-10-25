@@ -19,17 +19,21 @@ export function isMeetingMode(value: unknown): value is MeetingMode {
   return typeof value === 'string' && (MEETING_MODES as string[]).includes(value)
 }
 
-export function modality(mode: MeetingMode): string | null {
+export type ModeSubject = MeetingMode | { mode: MeetingMode; fallback?: MeetingMode | undefined }
+
+export function modality(subject: ModeSubject): string | null {
+  if (typeof subject !== 'string' && subject.fallback !== undefined) return null
+  const mode = typeof subject === 'string' ? subject : subject.mode
   if (mode === 'remote') return 'remota'
   return mode === 'in-person' ? 'presencial' : null
 }
 
-export function modeLabel(mode: MeetingMode): string {
-  return modality(mode) ?? 'reunión'
+export function modeLabel(subject: ModeSubject): string {
+  return modality(subject) ?? 'reunión'
 }
 
-export function meetingLabel(mode: MeetingMode): string {
-  const kind = modality(mode)
+export function meetingLabel(subject: ModeSubject): string {
+  const kind = modality(subject)
   return kind === null ? 'reunión' : `reunión ${kind}`
 }
 
