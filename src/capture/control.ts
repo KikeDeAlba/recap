@@ -191,14 +191,25 @@ export function sweepResponses(folder: string, now: number = Date.now()): void {
   }
 }
 
-function writeRequest(file: string, content: string): void {
+function controlVanished(error: unknown): unknown {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return error
+  return new RecapError('NOT_RECORDING', 'The control folder of the recording disappeared before the request was sent', {
+    hint: 'The recording probably stopped; check it with `recap capture state`.',
+  })
+}
+
+export function writeRequest(file: string, content: string): void {
   const temporary = path.join(path.dirname(file), `.${randomUUID()}.tmp`)
-  writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 })
+  try {
+    writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    throw controlVanished(error)
+  }
   try {
     renameSync(temporary, file)
   } catch (error) {
     rmSync(temporary, { force: true })
-    throw error
+    throw controlVanished(error)
   }
 }
 

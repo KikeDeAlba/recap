@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
-import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses } from '../src/capture/control.ts'
+import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, writeRequest } from '../src/capture/control.ts'
 import { discardControl } from '../src/capture/control-dir.ts'
 import { assembleMeeting } from '../src/capture/assemble.ts'
 import { decodeManifest, needsAssembly, pendingCaptureBytes } from '../src/capture/manifest.ts'
@@ -490,4 +490,14 @@ test('control/ goes away once no live recorder can use it, before assembly and r
   plant(recorded.dir)
   await assembleMeeting(recorded.dir, { tools: { ffmpeg: '/nonexistent/ffmpeg', ffprobe: '/nonexistent/ffprobe' } })
   assert.ok(!existsSync(path.join(recorded.dir, 'control')))
+})
+
+test('a control folder that disappears before the request is written ends in NOT_RECORDING', (t) => {
+  const dir = tempDir(t)
+  const folder = prepareControlDir(dir)
+  rmSync(folder, { recursive: true, force: true })
+  assert.throws(() => writeRequest(path.join(folder, 'a.request.json'), '{}'), code('NOT_RECORDING'))
+  assert.throws(() => writeRequest(path.join(dir, 'missing', 'a.request.json'), '{}'), code('NOT_RECORDING'))
+  writeFileSync(path.join(dir, 'blocker'), 'x')
+  assert.throws(() => writeRequest(path.join(dir, 'blocker', 'a.request.json'), '{}'), (error: unknown) => !(error instanceof RecapError))
 })
