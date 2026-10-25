@@ -257,7 +257,7 @@ test('standalone sources run recap-capture sources --json and map its errors', a
   assert.throws(() => readSourcesOutput(null, 'crashed'), code('CAPTURE_FAILED'))
 })
 
-test('requests carry when they were issued and the control folder is private to the user', async (t) => {
+test('requests carry when they were issued and the control folder is private to the user', { skip: process.platform === 'win32' && 'POSIX permissions and symlinks' }, async (t) => {
   assert.deepEqual(requestBody('r1', { action: 'clear' }, 1_700_000_000_000), { id: 'r1', issuedAt: 1_700_000_000_000, action: 'clear' })
   const current = located(t)
   writeManifest(current.dir, {})
@@ -280,7 +280,7 @@ test('requests carry when they were issued and the control folder is private to 
   assert.ok(Math.abs(Number(seen[0]?.['issuedAt']) - Date.now()) < 5_000)
 })
 
-test('a linked answer is refused and old answers are swept', async (t) => {
+test('a linked answer is refused and old answers are swept', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, async (t) => {
   const { dir } = located(t)
   const control = prepareControlDir(dir)
   const outside = path.join(dir, 'outside.json')
