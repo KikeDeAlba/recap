@@ -33,7 +33,7 @@ package final class RecordingController {
             let liveTap = live.enabled ? makeLiveTap(maxChunkSeconds: live.maxChunkSeconds) : nil
             let recorder: Recorder = switch meeting.mode {
             case .remote: RemoteRecorder(url: url, displayID: meeting.display, liveTap: liveTap)
-            case .inPerson: InPersonRecorder(url: url, liveTap: liveTap)
+            case .inPerson, .meeting: InPersonRecorder(url: url, liveTap: liveTap)
             }
             recorder.onFailure = { [weak self] error in
                 DispatchQueue.main.async { self?.finish(error: error) }

@@ -4,11 +4,12 @@ import Foundation
 package enum MeetingMode: String, Codable, CaseIterable, ExpressibleByArgument {
     case remote
     case inPerson = "in-person"
+    case meeting
 
     package var recordingFileName: String {
         switch self {
         case .remote: "recording.mov"
-        case .inPerson: "recording.m4a"
+        case .inPerson, .meeting: "recording.m4a"
         }
     }
 }

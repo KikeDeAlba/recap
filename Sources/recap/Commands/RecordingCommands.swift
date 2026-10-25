@@ -202,6 +202,7 @@ enum Recording {
         switch mode {
         case .remote: "Remote meeting"
         case .inPerson: "In-person meeting"
+        case .meeting: "Meeting"
         }
     }
 }
