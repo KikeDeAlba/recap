@@ -94,4 +94,19 @@ import Testing
         #expect(MeetingMode.inPerson.meetingLabel == "reunión presencial")
         #expect(MeetingMode.meeting.modeLabel == "reunión")
     }
+
+    @Test func dropsTheModalityOfAMeetingThatFellBackToInPerson() throws {
+        let json = #"{"schemaVersion":1,"id":"x","title":"Daily","mode":"in-person","fallback":"in-person","status":"processed","createdAt":"2026-10-24T10:00:00Z","startedAt":"2026-10-24T10:00:00Z","endedAt":"2026-10-24T10:30:00Z","stages":{}}"#
+        let meeting = try MeetingFile.decoder.decode(Meeting.self, from: Data(json.utf8))
+        #expect(meeting.mode == .inPerson && meeting.fallback == .inPerson)
+        let encoded = try JSONSerialization.jsonObject(with: MeetingFile.encoder.encode(meeting)) as? [String: Any]
+        #expect(encoded?["fallback"] as? String == "in-person")
+        #expect(meeting.modality == nil && meeting.modeLabel == "reunión" && meeting.meetingLabel == "reunión")
+        let body = BitaBridge.noteBody(summary: "## Resumen\nTodo bien.", meeting: meeting, dir: URL(fileURLWithPath: "/tmp/m"))
+        #expect(body.hasPrefix("Minuta de la reunión (30m00s)") && !body.contains("presencial"))
+        #expect(TranscriptRenderer.header(meeting).hasSuffix(" · reunión"))
+        var plain = meeting
+        plain.fallback = nil
+        #expect(plain.meetingLabel == "reunión presencial" && TranscriptRenderer.header(plain).hasSuffix(" · reunión presencial"))
+    }
 }

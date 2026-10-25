@@ -241,7 +241,7 @@ struct MeetingWrapup {
             .replacingOccurrences(of: "{{currentProject}}", with: snapshot.projectName ?? "ninguno")
             .replacingOccurrences(of: "{{date}}", with: Self.day(meeting))
             .replacingOccurrences(of: "{{duration}}", with: Duration.format(meeting.durationSeconds))
-            .replacingOccurrences(of: "{{mode}}", with: meeting.mode.modeLabel)
+            .replacingOccurrences(of: "{{mode}}", with: meeting.modeLabel)
             .replacingOccurrences(of: "{{projects}}", with: projects.map { "  - \($0)" }.joined(separator: "\n"))
             .replacingOccurrences(of: "{{existingPage}}", with: pageNote)
             .replacingOccurrences(of: "{{summary}}", with: summary)

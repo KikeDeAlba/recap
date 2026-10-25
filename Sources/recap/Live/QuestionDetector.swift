@@ -164,7 +164,7 @@ enum DetectPrompt {
             : context.pages.map { "  \(String(repeating: "  ", count: max(0, $0.depth)))- \($0.title)" }.joined(separator: "\n")
         let speakers = labelled
             ? "Es una reunión remota: «Sala» es el micrófono de quien graba y «Remotos» es el audio de la llamada. Las preguntas que vienen de «Remotos» suelen ir dirigidas a quien graba y pesan más; una pregunta de «Sala» solo cuenta si es claramente una duda técnica abierta."
-            : "Es una \(meeting.mode.meetingLabel) con un solo micrófono («Sala»), sin separación por persona: juzga solo por el contenido de lo que se dice."
+            : "Es una \(meeting.meetingLabel) con un solo micrófono («Sala»), sin separación por persona: juzga solo por el contenido de lo que se dice."
         let knownList = known.isEmpty ? "(ninguna)" : known.map { "- \($0)" }.joined(separator: "\n")
         let reviewed = batch.reviewed.isEmpty ? "(nada)" : LiveTranscript.render(batch.reviewed, labelled: labelled)
         return template

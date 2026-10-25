@@ -87,6 +87,7 @@ package struct Meeting: Codable {
     package var id: String
     package var title: String
     package var mode: MeetingMode
+    package var fallback: MeetingMode?
     package var status: MeetingStatus
     package var createdAt: Date
     package var startedAt: Date?
@@ -103,7 +104,7 @@ package struct Meeting: Codable {
     package var video: VideoCompression?
     package var videoRemovedAt: Date?
 
-    package init(schemaVersion: Int = 1, id: String, title: String, mode: MeetingMode, status: MeetingStatus,
+    package init(schemaVersion: Int = 1, id: String, title: String, mode: MeetingMode, fallback: MeetingMode? = nil, status: MeetingStatus,
                  createdAt: Date, startedAt: Date? = nil, endedAt: Date? = nil, recorderPid: Int32? = nil,
                  display: UInt32? = nil, bitaEntryId: Int? = nil, bitaDatabasePath: String? = nil,
                  bitaDocsRoot: String? = nil, bitaEntry: BitaEntrySnapshot? = nil, wrapup: Wrapup? = nil,
@@ -113,6 +114,7 @@ package struct Meeting: Codable {
         self.id = id
         self.title = title
         self.mode = mode
+        self.fallback = fallback
         self.status = status
         self.createdAt = createdAt
         self.startedAt = startedAt

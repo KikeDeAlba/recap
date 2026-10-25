@@ -292,7 +292,7 @@ struct ProposalGenerator {
         return try ResourceText.load("proposals-prompt.md")
             .replacingOccurrences(of: "{{title}}", with: meeting.bitaEntry?.title ?? meeting.title)
             .replacingOccurrences(of: "{{date}}", with: MeetingWrapup.day(meeting))
-            .replacingOccurrences(of: "{{mode}}", with: meeting.mode.modeLabel)
+            .replacingOccurrences(of: "{{mode}}", with: meeting.modeLabel)
             .replacingOccurrences(of: "{{speakers}}", with: speakers)
             .replacingOccurrences(of: "{{docsRoot}}", with: docsRoot)
             .replacingOccurrences(of: "{{pages}}", with: list)

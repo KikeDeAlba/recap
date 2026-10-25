@@ -172,3 +172,11 @@ extension MeetingMode {
 
     var meetingLabel: String { modality.map { "reunión \($0)" } ?? "reunión" }
 }
+
+extension Meeting {
+    var modality: String? { fallback == nil ? mode.modality : nil }
+
+    var modeLabel: String { modality ?? "reunión" }
+
+    var meetingLabel: String { modality.map { "reunión \($0)" } ?? "reunión" }
+}
