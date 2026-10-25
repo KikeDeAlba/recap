@@ -5,13 +5,14 @@ import type { Config } from '../core/config.ts'
 import { isoNow } from '../core/dates.ts'
 import { exists, fileSize } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
-import { updateMeeting, type Meeting } from '../core/meeting.ts'
+import { loadMeeting, updateMeeting, type Meeting } from '../core/meeting.ts'
 import { exec } from '../core/proc.ts'
 import { suffix, trimmed } from '../core/text.ts'
 import { requireTool } from '../core/tools.ts'
 import { RecapError, errorMessage } from '../errors.ts'
 import { AUDIO_FILE, VIDEO_FILE } from '../media/media.ts'
 import type { Channel } from '../pipeline/transcript.ts'
+import { discardControl } from './control-dir.ts'
 import { CAPTURE_RATE } from './sources.ts'
 import { hasRecording, isCaptureSource, readManifest, type CaptureManifest } from './manifest.ts'
 
@@ -252,6 +253,7 @@ export function assembledChannels(dir: string): Channel[] {
 
 export async function assembleMeeting(dir: string, config: Config, platform: NodeJS.Platform = process.platform, warn: (line: string) => void = stderrWarn): Promise<Meeting> {
   try {
+    discardControl(loadMeeting(dir), dir)
     const result = await assembleCapture(dir, config, platform, warn)
     return updateMeeting(dir, (meeting) => {
       if (result) meeting.channels = result.channels

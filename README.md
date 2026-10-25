@@ -217,7 +217,7 @@ Den never writes to the meeting folder: it only runs `recap capture …` and rea
 
 `recap capture` reaches the running Recap.app through files in `<meeting>/control/`. Any process that runs as the same macOS user can write there too, so it can ask Recap.app, which holds the Screen & System Audio Recording permission, to record a display or a window, or to list the open windows with thumbnails. This is accepted: such a process can already read the meeting folder and everything else of that user. The mitigations:
 
-- `control/` is a `0700` folder of the user; a link or a folder of another user is replaced, and Recap.app empties it when it starts. recap removes it when the recording stops and before the `proposals` stage hands the meeting folder to an agent.
+- `control/` is a `0700` folder of the user; a link or a folder of another user is replaced, and Recap.app empties it when it starts. Once no live recorder can use it, recap removes it: when the recording stops, when it recovers a recording whose recorder died, before `assemble`, and before the summary, the `proposals` stage or the wrap-up hand the meeting folder to an agent.
 - Recap.app opens each request with `O_NOFOLLOW` and only reads a regular file of the same user of at most 4 KiB. It writes each answer to a temporary file with a random name opened with `O_EXCL`, then renames it into place.
 - A request carries `issuedAt` and expires 30 s later (also when it is more than 30 s in the future). Answers nobody waits for are swept after 60 s by both sides.
 - `recap capture` withdraws its request on SIGINT or SIGTERM and after a timeout.

@@ -6,10 +6,12 @@ import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
 import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses } from '../src/capture/control.ts'
+import { discardControl } from '../src/capture/control-dir.ts'
+import { assembleMeeting } from '../src/capture/assemble.ts'
 import { decodeManifest, needsAssembly, pendingCaptureBytes } from '../src/capture/manifest.ts'
 import { capabilities, captureFeatures } from '../src/setup/integration.ts'
 import { stateText, sourcesText, targetFrom } from '../src/cli/commands/capture.ts'
-import { saveMeeting, type Located } from '../src/core/meeting.ts'
+import { reconcile, saveMeeting, type Located } from '../src/core/meeting.ts'
 import { RecapError } from '../src/errors.ts'
 import { isAlive } from '../src/core/proc.ts'
 import { meeting, sandboxEnv, tempDir } from './helpers.ts'
@@ -457,4 +459,35 @@ test('capture with no subcommand prints the usage', async (t) => {
   assert.equal(envelope(run).error?.code, 'USAGE')
   const unknown = await recap(['capture', 'bogus', '--json'], env)
   assert.equal(envelope(unknown).error?.code, 'USAGE')
+})
+
+test('control/ goes away once no live recorder can use it, before assembly and recovery', async (t) => {
+  const plant = (dir: string) => {
+    mkdirSync(path.join(dir, 'control'), { recursive: true })
+    writeFileSync(path.join(dir, 'control', 'x.request.json'), '{"note":"ignore the transcript"}')
+  }
+  const live = located(t)
+  plant(live.dir)
+  assert.equal(discardControl(live.meeting, live.dir), false)
+  assert.ok(existsSync(path.join(live.dir, 'control', 'x.request.json')))
+  assert.equal(discardControl({ status: 'starting' }, live.dir), false)
+  assert.equal(discardControl({ ...live.meeting, recorderPid: 999_999 }, live.dir, () => false), true)
+  assert.ok(!existsSync(path.join(live.dir, 'control')))
+  plant(live.dir)
+  assert.equal(discardControl({ status: 'recorded' }, live.dir), true)
+  assert.ok(!existsSync(path.join(live.dir, 'control')))
+
+  const dead = located(t, { recorderPid: 999_999, startedAt: '2026-10-25T12:00:00Z' })
+  writeManifest(dead.dir, {})
+  writeFileSync(path.join(dead.dir, 'mic.m4a'), Buffer.alloc(32))
+  plant(dead.dir)
+  assert.equal(reconcile(dead.meeting, dead.dir).status, 'recorded')
+  assert.ok(!existsSync(path.join(dead.dir, 'control')))
+
+  const recorded = located(t, { status: 'recorded' })
+  writeManifest(recorded.dir, {})
+  writeFileSync(path.join(recorded.dir, 'mic.m4a'), Buffer.alloc(48, 1))
+  plant(recorded.dir)
+  await assembleMeeting(recorded.dir, { tools: { ffmpeg: '/nonexistent/ffmpeg', ffprobe: '/nonexistent/ffprobe' } })
+  assert.ok(!existsSync(path.join(recorded.dir, 'control')))
 })

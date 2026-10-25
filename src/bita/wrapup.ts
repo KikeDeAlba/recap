@@ -7,6 +7,7 @@ import { durationSeconds, emptyWrapup, meetingLabel, modeLabel, updateMeeting, t
 import { fold, formatDuration, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { runSummaryAgent } from '../pipeline/agent.ts'
+import { discardControl } from '../capture/control-dir.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import { INKWELL_CAPABILITIES, INKWELL_HINT, StageSkipped, callBita, callInkwell, lookupInkwell, meetingTarget, requireBita, type ToolCalling } from './client.ts'
 import { entryPages } from '../live/context.ts'
@@ -243,6 +244,7 @@ export async function runWrapup(meeting: Meeting, dir: string, config: Config, d
   const existingPageId = wrapup.pageId ?? (await entryPages(docs, entryId, true))[0]?.pageId
   const existingPage = existingPageId === undefined ? null : await pageText(docs, existingPageId)
 
+  discardControl(meeting, dir)
   const plan = await planWrapup(meeting, dir, snapshot, projects, existingPage, claude)
   writeAtomic(path.join(dir, 'wrapup.json'), encodeWrapupPlan(plan))
 

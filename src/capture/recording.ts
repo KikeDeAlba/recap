@@ -10,7 +10,7 @@ import { RecapError, errorMessage } from '../errors.ts'
 import { selectRecorder, type Recorder } from './recorder.ts'
 import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
 import { assembleMeeting } from './assemble.ts'
-import { removeControlDir } from './control.ts'
+import { discardControl } from './control-dir.ts'
 import { needsAssembly } from './manifest.ts'
 import path from 'node:path'
 
@@ -106,6 +106,7 @@ async function stopRecorder(meeting: Meeting, dir: string, timeout: number, reco
     if (recorder.kind !== 'mac-app') await waitUntil(5, 0.1, () => !isAlive(pid))
   }
   if (isActiveStatus(current.status)) {
+    discardControl(current, dir)
     const mode = current.mode
     const attempt = recorder.kind === 'mac-app' ? null : withRecoveryLock(dir, () => recoverCapture(dir, mode))
     const recovery = attempt?.ok ? attempt.value : null
@@ -136,7 +137,7 @@ export async function stopRecording(timeout: number, warn: (line: string) => voi
   const dir = current.active.dir
   const stopped = await stopRecorder(current.meeting, dir, timeout)
   clearActive()
-  removeControlDir(dir)
+  discardControl(stopped, dir)
   const meeting = await assembleAfterStop(stopped, dir, loadConfig(), warn)
   return { meeting, dir }
 }

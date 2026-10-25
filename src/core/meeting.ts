@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { RecapError, errorMessage } from '../errors.ts'
+import { discardControl } from '../capture/control-dir.ts'
 import { applyRecovery, recoverCapture, withRecoveryLock } from '../capture/recover.ts'
 import { hadDestination, pendingCaptureBytes } from '../capture/manifest.ts'
 import type { Channel } from '../pipeline/transcript.ts'
@@ -200,6 +201,7 @@ export function reconcile(meeting: Meeting, dir: string): Meeting {
   const created = parseDate(meeting.createdAt)
   if (meeting.recorderPid === undefined && meeting.status === 'starting' && created && Date.now() - created.getTime() < 300_000) return meeting
   const outcome = withRecoveryLock(dir, () => {
+    discardControl(meeting, dir)
     const recovery = recoverCapture(dir, meeting.mode)
     let size = 0
     let modified: Date | null = null

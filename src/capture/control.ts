@@ -10,10 +10,11 @@ import type { Located, Meeting } from '../core/meeting.ts'
 import { exec, isAlive, signalNumber, sleep, type ExecResult } from '../core/proc.ts'
 import { trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
+import { controlDir } from './control-dir.ts'
 import { captureBinary, captureUnavailable, findCapture, hasCaptureBinary, type CaptureLauncher } from './capture.ts'
 import { decodeVideo, readManifest, type CaptureTarget, type CaptureVideo } from './manifest.ts'
 
-export const CONTROL_DIR = 'control'
+export { CONTROL_DIR, controlDir } from './control-dir.ts'
 export const REQUEST_SUFFIX = '.request.json'
 export const RESPONSE_SUFFIX = '.response.json'
 export const CONTROL_TIMEOUT_MS = 15_000
@@ -139,10 +140,6 @@ function activeLocated(): Located | null {
   return current ? { meeting: current.meeting, dir: current.active.dir } : null
 }
 
-export function controlDir(dir: string): string {
-  return path.join(dir, CONTROL_DIR)
-}
-
 export interface ControlOptions {
   timeoutMs?: number
   pollMs?: number
@@ -174,10 +171,6 @@ export function prepareControlDir(dir: string): string {
   if (!info.isDirectory() || (uid !== null && info.uid !== uid)) throw new RecapError('CAPTURE_FAILED', `${folder} is not a private folder of this user`)
   chmodSync(folder, 0o700)
   return folder
-}
-
-export function removeControlDir(dir: string): void {
-  rmSync(controlDir(dir), { recursive: true, force: true })
 }
 
 export function sweepResponses(folder: string, now: number = Date.now()): void {

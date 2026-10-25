@@ -12,7 +12,7 @@ import { entryPages, loadProjectContext, meetingProject, type PageRef, type Proj
 import { runReadAgent } from '../pipeline/agent.ts'
 import { loadResource } from '../pipeline/resources.ts'
 import { callAudioNote, type Channel } from '../pipeline/transcript.ts'
-import { removeControlDir } from '../capture/control.ts'
+import { discardControl } from '../capture/control-dir.ts'
 import { callInkwell, type ToolCalling } from './client.ts'
 import { meetingDay } from './wrapup.ts'
 
@@ -304,7 +304,7 @@ export class ProposalGenerator {
     const transcript = readText(path.join(dir, 'transcript.md'))
     if (transcript === null) throw new RecapError('NO_TRANSCRIPT', `"${meeting.title}" has no transcript yet`)
     const prompt = this.render(meeting, context.docsRoot, pages, transcript, hasSystemAudio(meeting, dir))
-    if (meeting.status !== 'recording') removeControlDir(dir)
+    discardControl(meeting, dir)
     const answer = await this.claude(prompt, [context.docsRoot, dir])
     const parsed = parseProposalPlan(answer, new Set(pages.map((page) => page.pageId)))
     file.discarded = parsed.discarded
