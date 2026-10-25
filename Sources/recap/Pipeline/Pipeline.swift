@@ -266,7 +266,7 @@ enum SummaryPrompt {
     }
 
     static func render(meeting: Meeting, transcript: String, frames: [FrameInfo]) throws -> String {
-        let mode = meeting.mode == .remote ? "remota (videollamada)" : "presencial"
+        let mode = meeting.mode == .remote ? "remota (videollamada)" : meeting.mode.modeLabel
         let speakers = meeting.mode == .remote
             ? "- Hablantes: «Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada. No hay separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren."
             : "- Hablantes: un solo micrófono en la sala, sin separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren."
