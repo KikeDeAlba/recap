@@ -175,7 +175,41 @@ recap asks the installed recorder (`recap-capture capabilities --json`) whether 
  "actionItems": [{"text": "Preparar las notas de la versión 0.14", "backlogKey": "PEND-12"}]}
 ```
 
-`recap capabilities --json` lists `meeting.record` and `meeting.mode.meeting` when this machine can record, plus `meeting.transcript.json` and `meeting.summary.json`.
+`recap capabilities --json` lists `meeting.record` and `meeting.mode.meeting` when this machine can record, `meeting.capture.sources` and `meeting.capture.switch` when the installed Recap.app announces `capture.sources` and `capture.switch`, plus `meeting.transcript.json` and `meeting.summary.json`.
+
+### Adding a screen or a window while a meeting records (macOS)
+
+A `meeting` always starts with the microphone only. While it records, add the whole screen or one window, switch between them, or drop them; the microphone keeps recording until `recap stop`:
+
+```sh
+recap capture sources --thumbnails --json   # displays and windows, with 320 px JPEG thumbnails as data: URLs
+recap capture set --window 4242 --json      # record that window and the audio of its app
+recap capture set --display 1 --json        # switch to the whole display and the audio of the whole system
+recap capture clear --json                  # back to the microphone only
+recap capture state --json
+```
+
+```json
+{"displays": [{"id": 1, "name": "Built-in Retina Display", "width": 1512, "height": 982, "main": true, "thumbnail": "data:image/jpeg;base64,…"}],
+ "windows": [{"id": 4242, "app": "zoom.us", "bundleId": "us.zoom.xos", "title": "Zoom Meeting", "pid": 777, "width": 1280, "height": 800, "thumbnail": "data:image/jpeg;base64,…"}]}
+```
+
+```json
+{"meetingId": "2026-10-25-1200-sync", "mic": true, "systemAudio": true,
+ "video": {"kind": "window", "id": 4242, "title": "Zoom Meeting", "app": "zoom.us", "since": "2026-10-25T12:03:10Z"}}
+```
+
+`thumbnail` only appears with `--thumbnails`. `sources` leaves out the windows of Den and Recap, menus and other non-standard windows, and windows without a title. `set`, `clear` and `state` return the state; `video` is `null` and `systemAudio` is `false` when only the microphone records, and `app` is `null` for a display. ScreenCaptureKit gives the audio of the whole system with a display and the audio of the window's app with a window. `set` and `clear` wait up to 15 s for the recorder (`--timeout s`); `sources` up to 30 s.
+
+| Code | When |
+|---|---|
+| `NOT_RECORDING` | no recording is running, it is still starting, or it stopped while waiting |
+| `CAPTURE_UNSUPPORTED` | not macOS, a `--remote` or `--in-person` recording, a fallback meeting, or a Recap.app that cannot switch (update it with `recap setup`) |
+| `WINDOW_GONE` | the window was closed or is no longer on screen; `DISPLAY_GONE` for a display that was unplugged |
+| `SCREEN_PERMISSION_DENIED` | Recap.app has no Screen & System Audio Recording permission; macOS shows the prompt the first time |
+| `CAPTURE_TIMEOUT` | the recorder did not answer in time; see `recorder.log` |
+
+When the window being recorded closes, the recorder goes back to the microphone only and `capture.json` keeps the reason in `error`.
 
 Free space once a meeting is processed:
 
@@ -333,6 +367,7 @@ The hook output goes to `hooks.log` beside the bita database. Minutes regenerate
 
 | Stage | Remote | In-person | Output |
 |---|---|---|---|
+| `assemble` | — | — | `meeting` only: `recording.mov` from `mic.m4a` and `screen-<n>.mov`, or `recording.m4a` when there was never a screen or window; also runs on `recap stop` |
 | `audio` | mic and system tracks | mic track | `mic.wav`, `system.wav` (16 kHz mono) |
 | `transcribe` | per channel, then merged | mic | `transcript.json`, `transcript.md` |
 | `frames` | scene changes, at least 20 s apart, at most 40 | skipped | `frames/hh-mm-ss.jpg`, `frames.json` |
@@ -361,6 +396,7 @@ Each meeting gets a folder under `~/Recap` (configurable):
 ├── meeting.json      metadata, status and pipeline stages
 ├── recording.mov     remote: video + mic track + system track
 ├── recording.m4a     in-person: mic track; remote after strip-video: mic + system tracks
+├── capture.json      meeting: the screen and window segments (kept after assembly)
 ├── mic.wav, system.wav
 ├── transcript.md     merged transcript with timestamps
 ├── frames/           remote only
@@ -372,6 +408,8 @@ Each meeting gets a folder under `~/Recap` (configurable):
 ```
 
 Recordings are written as fragmented QuickTime (remote) or M4A (in-person), so a crash or a forced quit keeps everything up to the last few seconds.
+
+While a `meeting` records, the folder holds `mic.m4a`, one `screen-<n>.mov` per stretch with a screen or window, `capture.json` and `control/`. The `assemble` stage turns them into one recording: `recording.mov` with H.264 video at the size of the first segment and 2 fps (black frames where there was no target), the microphone as the first audio track and the audio of the targets as the second one (silence in between), or `recording.m4a` with the microphone only when no target was ever added. It checks the length with ffprobe and then deletes `mic.m4a` and the segments; `meeting.json` gets `"channels": ["mic", "system"]` (or `["mic"]`), which the transcription, the `Sala` and `Remotos` labels and `transcript --json` follow. If assembling fails on `recap stop`, the meeting stays `recorded` with the error in `stages.assemble` and `recap process` tries again.
 
 ## Configuration
 
@@ -421,10 +459,11 @@ Environment overrides: `RECAP_ROOT`, `RECAP_STATE_DIR`, `RECAP_DATA_DIR`, `RECAP
 recap-capture record <meetingDir> [--live-worker <command>]   # record until SIGINT or SIGTERM
 recap-capture permissions [--request] [--json]                # {microphone, screen}: granted, denied, not-determined, restricted
 recap-capture capabilities --json                             # kit envelope: name, version, capabilities, emits
+recap-capture sources [--thumbnails] --json                   # {displays, windows}, the same JSON as recap capture sources
 recap-capture --version
 ```
 
-`--json` prints one line with the same envelope as `recap` (`schemaVersion`, `ok`, `command`, `generatedAt`, `data` or `error {code, message}`). Capabilities: `capture.remote`, `capture.in-person`, `capture.meeting` and `capture.live-chunks`. A usage error with `--json` prints an error envelope with code `USAGE` and exits with 64.
+`--json` prints one line with the same envelope as `recap` (`schemaVersion`, `ok`, `command`, `generatedAt`, `data` or `error {code, message}`). Capabilities: `capture.remote`, `capture.in-person`, `capture.meeting`, `capture.live-chunks`, `capture.sources` and `capture.switch`. A usage error with `--json` prints an error envelope with code `USAGE` and exits with 64.
 
 ### Launching it
 
@@ -451,7 +490,14 @@ The caller creates `<meetingDir>/meeting.json` and `recap-capture record` update
 | `startedAt`, `endedAt` | recorder | when the capture started and stopped |
 | `error` | recorder | why it failed or stopped early |
 
-Every other key, including ones recap does not know, is kept. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person and meeting: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
+Every other key, including ones recap does not know, is kept. The recording goes to `recording.mov` (remote: H.264 video at 1280 px and 2 fps, then the microphone and the system audio as separate AAC tracks) or `recording.m4a` (in-person: microphone only). Send SIGINT or SIGTERM to `recorderPid` to stop; the recorder closes the file, sets `status` to `recorded` and exits with 0, or with 1 after an error.
+
+A `meeting` records differently, so that a screen or a window can come and go without touching the microphone:
+
+- The microphone goes through AVCaptureSession to `mic.m4a` (AAC mono, 64 kb/s) from start to stop.
+- A display or a window goes through one SCStream to `screen-<n>.mov` (H.264 at 1280 px wide with the main display's aspect, 2 fps, and the target audio as stereo AAC at 96 kb/s) only while it is set. Changing the target calls `updateContentFilter` on the running stream, so the segment goes on; if that fails, the segment is closed and a new one starts. Clearing the target closes the segment. The windows of Den and Recap are left out of a display capture.
+- `capture.json` (rewritten atomically after each change) holds `mic`, `startedAt`, `endedAt`, the current `video` and the `segments`, each with `file`, `startMs`, `endMs` (milliseconds from the first microphone sample) and the `targets` it went through, plus the last capture `error`.
+- `control/` takes requests: write `<id>.request.json` (atomically: a dot-file renamed into place; `id` is up to 64 letters, digits or dashes) with `{"id", "action": "set", "target": {"kind": "display"|"window", "id": n}}`, `{"id", "action": "clear"}` or `{"id", "action": "sources", "thumbnails": true}`. The recorder checks every 100 ms, handles one request at a time in name order, deletes it and writes `<id>.response.json` with `{"id", "ok": true, "data": …}` (the state without `meetingId`, or the sources) or `{"id", "ok": false, "error": {"code", "message"}}`. Requests still waiting when the recording stops get `NOT_RECORDING`. This is an internal protocol: tools use `recap capture`.
 
 When `live.enabled` is on (the default, see Configuration), it also cuts the audio into 16 kHz mono 16-bit WAV chunks under `live/chunks/`, named `<channel>-<seq, 5 digits>.wav` with `channel` `mic` or `system`, and appends one line per chunk to `live/chunks/index.jsonl`:
 
@@ -461,6 +507,19 @@ When `live.enabled` is on (the default, see Configuration), it also cuts the aud
 ```
 
 Offsets are milliseconds from the start of the recording; chunks without speech have no `file` and no WAV. Then it spawns the live worker, detached, with its output in `live/worker.log`. `--live-worker` (or `RECAP_LIVE_WORKER` when the option is absent) picks it: an executable runs as `<executable> live-worker <meetingDir>`, a JSON array such as `["node", "/path/recap.js", "live-worker"]` is the whole command with `<meetingDir>` appended, and `none` turns it off. Use absolute paths: an app started by `open` gets the minimal launchd `PATH`, and bare names are only searched there and in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. `open` does not pass the caller's environment either; `recap start` forwards `RECAP_LIVE_WORKER` with `open --env`, and other callers should do the same or use `--live-worker`. There is no default worker: without `--live-worker` or `RECAP_LIVE_WORKER` the recording goes on, no worker starts and `recorder.log` says `live worker not started: No live worker configured…`.
+
+### Checking live capture on a Mac
+
+The tests cover the control protocol with a fake recorder, the JSON of `sources` and `state`, the errors and `assemble` with ffmpeg on synthetic files. What needs the screen permission (real thumbnails, ScreenCaptureKit audio and `updateContentFilter`) is checked by hand, with an installed Recap.app built from this branch (`make install`) and a scratch root so no real meeting is touched:
+
+1. `export RECAP_ROOT=$(mktemp -d)` and `recap capture sources --thumbnails --json > /tmp/sources.json`. Expect `ok: true`, every display and window with a `thumbnail`, and no window of Den or Recap. Paste one `thumbnail` value in a browser address bar: it shows a ~320 px picture of that window. If macOS asks for Screen & System Audio Recording, allow Recap and run it again (a first run fails with `SCREEN_PERMISSION_DENIED`).
+2. Play a video with sound in Safari or Chrome. `recap start "Capture check" --json`, then `recap capture state --json`: `mic: true`, `video: null`.
+3. Say "one" and `recap capture set --window <id of the browser window> --json`: `systemAudio: true`, `video.kind: "window"`. Wait 10 s.
+4. Say "two" and `recap capture set --display <main display id> --json`: `video.kind: "display"`. Wait 10 s. `jq '.segments' "$RECAP_ROOT"/*/capture.json` still shows one segment with two `targets` (the switch kept the stream). If it shows two segments, `updateContentFilter` failed and the fallback opened a new one; note it in the issue.
+5. Say "three", `recap capture clear --json` (`video: null`), wait 5 s, close the browser window after `recap capture set --window <id>` and check that `recap capture state --json` goes back to `video: null` and `capture.json` has `error` starting with `WINDOW_GONE`.
+6. `recap stop --no-process --json`: `stages.assemble.status` is `done` and the folder has `recording.mov`, `capture.json` and `meeting.json` but no `mic.m4a` or `screen-*.mov`.
+7. `ffprobe -v error -show_entries stream=index,codec_type,width,height -of csv "$RECAP_ROOT"/*/recording.mov` lists one video and two audio streams. Play it in QuickTime and switch tracks (View > Languages / Subtitles, or `ffplay -ast 1`): track 1 has your voice saying "one", "two" and "three" all along; track 2 has the browser audio during step 3 (only that app) and all the system audio during step 4, and silence elsewhere; the picture shows the window, then the display, then black.
+8. `recap process last --only audio` writes `mic.wav` and `system.wav`; `recap process last` labels the transcript `Sala` and `Remotos`.
 
 ## Development
 
