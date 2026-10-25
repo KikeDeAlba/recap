@@ -661,14 +661,14 @@ extension DeadlineTests {
         #expect(ControlFiles.isPrivateDirectory(control))
         #expect(mode(control.path) == 0o700)
         #expect(try FileManager.default.contentsOfDirectory(atPath: control.path) == ["s1.response.json"])
-        #expect(try errorCode(dir, id: "s1") == "NOT_RECORDING")
+        #expect(try errorCode(dir, id: "s1") == "CONTROL_REPLACED")
         try FileManager.default.removeItem(at: control)
         try FileManager.default.createSymbolicLink(at: control, withDestinationURL: elsewhere)
         server.stop()
         #expect(FileManager.default.fileExists(atPath: request.path))
         #expect(!FileManager.default.fileExists(atPath: elsewhere.appending(path: "s1.response.json").path))
         #expect(ControlFiles.isPrivateDirectory(control))
-        #expect(try errorCode(dir, id: "s1") == "NOT_RECORDING")
+        #expect(try errorCode(dir, id: "s1") == "CONTROL_REPLACED")
     }
 
     @Test(arguments: [1, 3, ControlServer.maxLookups])
@@ -738,6 +738,11 @@ extension DeadlineTests {
         #expect(ControlServer.lookupExpired(25, thumbnails: true).message.contains("without thumbnails"))
         #expect(!ControlServer.lookupExpired(25, thumbnails: false).message.contains("thumbnails"))
         #expect(ControlServer.lookupExpired(25, thumbnails: false).code == "CAPTURE_TIMEOUT")
+    }
+
+    @Test func aReplacedControlFolderHasItsOwnCode() {
+        #expect(ControlServer.controlReplaced.code == "CONTROL_REPLACED")
+        #expect(ControlServer.notRecording.code == "NOT_RECORDING")
     }
 
     @Test func idsAreShortAndSafeForFileNames() {

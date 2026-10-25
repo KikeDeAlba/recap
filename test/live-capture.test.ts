@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
-import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, videoLabel, writeRequest } from '../src/capture/control.ts'
+import { CONTROL_ATTEMPTS, CONTROL_REPLACED, MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses, videoLabel, writeRequest } from '../src/capture/control.ts'
 import { discardControl } from '../src/capture/control-dir.ts'
 import { assembleMeeting } from '../src/capture/assemble.ts'
 import { decodeManifest, needsAssembly, pendingCaptureBytes } from '../src/capture/manifest.ts'
@@ -173,6 +173,30 @@ test('a recorder that does not answer times out and its request is withdrawn', a
   assert.equal(existsSync(path.join(dir, 'control', 'late.request.json')), false)
   await assert.rejects(sendControl(dir, { action: 'clear' }, { timeoutMs: 5_000, pollMs: 10, id: 'dead', alive: () => false }), code('NOT_RECORDING'))
   assert.equal(existsSync(path.join(dir, 'control', 'dead.request.json')), false)
+})
+
+test('a request lost in a replaced control folder is sent once more and then ends in CONTROL_REPLACED', async (t) => {
+  const current = located(t)
+  writeManifest(current.dir, {})
+  const seen: string[] = []
+  let replaced = 1
+  const stop = fakeRecorder(current.dir, (request) => {
+    seen.push(String(request['id']))
+    if (replaced > 0) {
+      replaced -= 1
+      return { ok: false, error: { code: 'CONTROL_REPLACED', message: 'The control folder of the recording was replaced; send the request again' } }
+    }
+    return { ok: true, data: { mic: true, video: null } }
+  })
+  t.after(stop)
+  const deps = { platform: 'darwin' as const, current: () => current }
+  assert.deepEqual(await clearCapture(deps), { meetingId: current.meeting.id, mic: true, systemAudio: false, video: null })
+  assert.equal(seen.length, 2)
+  assert.equal(seen[0], seen[1])
+  replaced = CONTROL_ATTEMPTS
+  await assert.rejects(clearCapture(deps), (error: unknown) => error instanceof RecapError && error.code === CONTROL_REPLACED && /send it again/.test(error.hint ?? ''))
+  assert.equal(seen.length, 2 + CONTROL_ATTEMPTS)
+  assert.deepEqual(readdirSync(path.join(current.dir, 'control')), [])
 })
 
 test('a garbled or foreign answer is rejected', async (t) => {

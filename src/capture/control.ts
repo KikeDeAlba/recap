@@ -26,6 +26,8 @@ export const THUMBNAIL_MAX_CHARS = 512 * 1024
 export const MAX_THUMBNAILS = 64
 export const MAX_DISPLAYS = 32
 export const MAX_WINDOWS = 256
+export const CONTROL_REPLACED = 'CONTROL_REPLACED'
+export const CONTROL_ATTEMPTS = 2
 const THUMBNAIL = /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/
 
 export interface DisplaySource {
@@ -257,14 +259,24 @@ export async function sendControl(dir: string, request: ControlRequest, options:
   process.once('SIGINT', onSignal)
   process.once('SIGTERM', onSignal)
   try {
-    writeRequest(requestFile, `${JSON.stringify(requestBody(id, request, (options.now ?? Date.now)()))}\n`)
+    const send = () => writeRequest(requestFile, `${JSON.stringify(requestBody(id, request, (options.now ?? Date.now)()))}\n`)
+    send()
     const deadline = Date.now() + (options.timeoutMs ?? CONTROL_TIMEOUT_MS)
     const alive = options.alive ?? (() => true)
+    let attempts = 1
     for (;;) {
       const text = readResponse(responseFile)
       if (text !== null) {
         rmSync(responseFile, { force: true })
-        return readReply(text, id)
+        try {
+          return readReply(text, id)
+        } catch (error) {
+          if (!(error instanceof RecapError) || error.code !== CONTROL_REPLACED || attempts >= CONTROL_ATTEMPTS || Date.now() >= deadline) throw error
+          attempts += 1
+          prepareControlDir(dir)
+          send()
+          continue
+        }
       }
       if (!alive()) {
         withdraw()
@@ -294,6 +306,7 @@ function readReply(text: string, id: string): unknown {
   const error = isRecord(reply['error']) ? reply['error'] : {}
   const code = typeof error['code'] === 'string' ? error['code'] : 'CAPTURE_FAILED'
   const message = typeof error['message'] === 'string' ? printable(error['message']) : 'The recorder could not do it'
+  if (code === CONTROL_REPLACED) throw new RecapError(code, message, { hint: 'The request was not run; send it again.' })
   throw new RecapError(code, message)
 }
 

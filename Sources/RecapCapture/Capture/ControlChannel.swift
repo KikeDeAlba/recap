@@ -156,7 +156,7 @@ package final class ControlServer {
     package static let requestLifetime: TimeInterval = 30
     package static let responseLifetime: TimeInterval = 60
     package static let notRecording = RecapError("NOT_RECORDING", "The recording is stopping")
-    package static let controlReplaced = RecapError("NOT_RECORDING", "The control folder of the recording was replaced; send the request again")
+    package static let controlReplaced = RecapError("CONTROL_REPLACED", "The control folder of the recording was replaced; send the request again")
     package static let maxLookups = 2
     package static let maxAbandonedLookups = 4
     package static let lookupTimeout: TimeInterval = 25
