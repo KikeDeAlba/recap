@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { currentRecording } from '../core/active.ts'
-import { exists, readText, writeAtomic } from '../core/fsutil.ts'
+import { exists, readText } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
 import type { Located, Meeting } from '../core/meeting.ts'
-import { exec, isAlive, sleep, type ExecResult } from '../core/proc.ts'
+import { exec, isAlive, signalNumber, sleep, type ExecResult } from '../core/proc.ts'
 import { trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { captureBinary, captureUnavailable, findCapture, hasCaptureBinary, type CaptureLauncher } from './capture.ts'
@@ -19,6 +19,13 @@ export const RESPONSE_SUFFIX = '.response.json'
 export const CONTROL_TIMEOUT_MS = 15_000
 export const CONTROL_POLL_MS = 50
 export const SOURCES_TIMEOUT_MS = 30_000
+export const RESPONSE_LIFETIME_MS = 60_000
+export const RESPONSE_MAX_BYTES = 16 * 1024 * 1024
+export const THUMBNAIL_MAX_CHARS = 512 * 1024
+export const MAX_THUMBNAILS = 64
+export const MAX_DISPLAYS = 32
+export const MAX_WINDOWS = 256
+const THUMBNAIL = /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/
 
 export interface DisplaySource {
   id: number
@@ -58,13 +65,19 @@ function integer(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) ? value : null
 }
 
-function thumbnail(value: unknown): { thumbnail?: string } {
-  return typeof value === 'string' && value.startsWith('data:image/') ? { thumbnail: value } : {}
+export function isThumbnail(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= THUMBNAIL_MAX_CHARS && THUMBNAIL.test(value)
 }
 
 export function decodeSources(value: unknown): CaptureSources {
   if (!isRecord(value)) throw new RecapError('CAPTURE_FAILED', 'The recorder returned no sources')
-  const displays = (Array.isArray(value['displays']) ? value['displays'] : []).flatMap((item): DisplaySource[] => {
+  let thumbnails = 0
+  const thumbnail = (value: unknown): { thumbnail?: string } => {
+    if (!isThumbnail(value) || thumbnails >= MAX_THUMBNAILS) return {}
+    thumbnails += 1
+    return { thumbnail: value }
+  }
+  const displays = (Array.isArray(value['displays']) ? value['displays'] : []).slice(0, MAX_DISPLAYS).flatMap((item): DisplaySource[] => {
     if (!isRecord(item)) return []
     const id = integer(item['id'])
     const width = integer(item['width'])
@@ -72,7 +85,7 @@ export function decodeSources(value: unknown): CaptureSources {
     if (id === null || width === null || height === null || typeof item['name'] !== 'string') return []
     return [{ id, name: item['name'], width, height, main: item['main'] === true, ...thumbnail(item['thumbnail']) }]
   })
-  const windows = (Array.isArray(value['windows']) ? value['windows'] : []).flatMap((item): WindowSource[] => {
+  const windows = (Array.isArray(value['windows']) ? value['windows'] : []).slice(0, MAX_WINDOWS).flatMap((item): WindowSource[] => {
     if (!isRecord(item)) return []
     const id = integer(item['id'])
     const pid = integer(item['pid'])
@@ -135,38 +148,138 @@ export interface ControlOptions {
   pollMs?: number
   alive?: () => boolean
   id?: string
+  now?: () => number
 }
 
-export function requestBody(id: string, request: ControlRequest): Record<string, unknown> {
-  return { id, ...request }
+export function requestBody(id: string, request: ControlRequest, issuedAt: number = Date.now()): Record<string, unknown> {
+  return { id, issuedAt, ...request }
+}
+
+function ownUid(): number | null {
+  return typeof process.getuid === 'function' ? process.getuid() : null
+}
+
+export function prepareControlDir(dir: string): string {
+  const folder = controlDir(dir)
+  try {
+    const info = lstatSync(folder)
+    const uid = ownUid()
+    if (!info.isDirectory() || (uid !== null && info.uid !== uid)) rmSync(folder, { recursive: true, force: true })
+  } catch {
+    undefined
+  }
+  mkdirSync(folder, { recursive: true, mode: 0o700 })
+  const info = lstatSync(folder)
+  const uid = ownUid()
+  if (!info.isDirectory() || (uid !== null && info.uid !== uid)) throw new RecapError('CAPTURE_FAILED', `${folder} is not a private folder of this user`)
+  chmodSync(folder, 0o700)
+  return folder
+}
+
+export function removeControlDir(dir: string): void {
+  rmSync(controlDir(dir), { recursive: true, force: true })
+}
+
+export function sweepResponses(folder: string, now: number = Date.now()): void {
+  let names: string[]
+  try {
+    names = readdirSync(folder)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!name.endsWith(RESPONSE_SUFFIX) && !name.endsWith('.tmp')) continue
+    try {
+      const info = lstatSync(path.join(folder, name))
+      if (now - info.mtimeMs > RESPONSE_LIFETIME_MS) rmSync(path.join(folder, name), { force: true })
+    } catch {
+      undefined
+    }
+  }
+}
+
+function writeRequest(file: string, content: string): void {
+  const temporary = path.join(path.dirname(file), `.${randomUUID()}.tmp`)
+  writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 })
+  try {
+    renameSync(temporary, file)
+  } catch (error) {
+    rmSync(temporary, { force: true })
+    throw error
+  }
+}
+
+export function readResponse(file: string): string | null {
+  let descriptor: number
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw new RecapError('CAPTURE_FAILED', 'The recorder sent an unreadable answer')
+  }
+  try {
+    const info = fstatSync(descriptor)
+    const uid = ownUid()
+    if (!info.isFile() || (uid !== null && info.uid !== uid) || info.size > RESPONSE_MAX_BYTES) {
+      throw new RecapError('CAPTURE_FAILED', 'The recorder sent an unreadable answer')
+    }
+    const buffer = Buffer.alloc(info.size)
+    let offset = 0
+    while (offset < buffer.length) {
+      const count = readSync(descriptor, buffer, offset, buffer.length - offset, offset)
+      if (count === 0) break
+      offset += count
+    }
+    return buffer.subarray(0, offset).toString('utf8')
+  } finally {
+    closeSync(descriptor)
+  }
 }
 
 export async function sendControl(dir: string, request: ControlRequest, options: ControlOptions = {}): Promise<unknown> {
   const id = options.id ?? randomUUID()
-  const folder = controlDir(dir)
-  mkdirSync(folder, { recursive: true })
+  const folder = prepareControlDir(dir)
+  sweepResponses(folder)
   const requestFile = path.join(folder, `${id}${REQUEST_SUFFIX}`)
   const responseFile = path.join(folder, `${id}${RESPONSE_SUFFIX}`)
-  writeAtomic(requestFile, `${JSON.stringify(requestBody(id, request))}\n`)
-  const deadline = Date.now() + (options.timeoutMs ?? CONTROL_TIMEOUT_MS)
-  const alive = options.alive ?? (() => true)
-  for (;;) {
-    const text = readText(responseFile)
-    if (text !== null) {
-      rmSync(responseFile, { force: true })
-      return readReply(text, id)
+  const withdraw = () => {
+    rmSync(requestFile, { force: true })
+    rmSync(responseFile, { force: true })
+  }
+  const onSignal = (signal: NodeJS.Signals) => {
+    withdraw()
+    process.exit(128 + signalNumber(signal))
+  }
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  try {
+    writeRequest(requestFile, `${JSON.stringify(requestBody(id, request, (options.now ?? Date.now)()))}\n`)
+    const deadline = Date.now() + (options.timeoutMs ?? CONTROL_TIMEOUT_MS)
+    const alive = options.alive ?? (() => true)
+    for (;;) {
+      const text = readResponse(responseFile)
+      if (text !== null) {
+        rmSync(responseFile, { force: true })
+        return readReply(text, id)
+      }
+      if (!alive()) {
+        withdraw()
+        throw new RecapError('NOT_RECORDING', 'The recorder stopped before answering')
+      }
+      if (Date.now() >= deadline) {
+        withdraw()
+        throw new RecapError('CAPTURE_TIMEOUT', `The recorder did not answer within ${Math.round((options.timeoutMs ?? CONTROL_TIMEOUT_MS) / 1000)}s`, {
+          hint: 'Check recorder.log in the meeting folder.',
+        })
+      }
+      await sleep(options.pollMs ?? CONTROL_POLL_MS)
     }
-    if (!alive()) {
-      rmSync(requestFile, { force: true })
-      throw new RecapError('NOT_RECORDING', 'The recorder stopped before answering')
-    }
-    if (Date.now() >= deadline) {
-      rmSync(requestFile, { force: true })
-      throw new RecapError('CAPTURE_TIMEOUT', `The recorder did not answer within ${Math.round((options.timeoutMs ?? CONTROL_TIMEOUT_MS) / 1000)}s`, {
-        hint: 'Check recorder.log in the meeting folder.',
-      })
-    }
-    await sleep(options.pollMs ?? CONTROL_POLL_MS)
+  } catch (error) {
+    withdraw()
+    throw error
+  } finally {
+    process.removeListener('SIGINT', onSignal)
+    process.removeListener('SIGTERM', onSignal)
   }
 }
 
@@ -195,16 +308,38 @@ export interface CaptureDeps {
   timeoutMs?: number
 }
 
+export function videoLabel(video: CaptureVideo | null): string {
+  if (!video) return 'the microphone only'
+  return `${video.kind} ${video.id} "${video.title}"`
+}
+
+export function confirmAfterTimeout(error: unknown, current: () => Located | null): never {
+  if (!(error instanceof RecapError) || error.code !== 'CAPTURE_TIMEOUT') throw error
+  const located = current()
+  const state = located ? captureState(located.meeting, readManifest(located.dir)?.video ?? null) : null
+  const now = state === null || !state.mic ? 'the meeting is no longer recording' : `the meeting records ${videoLabel(state.video)}`
+  throw new RecapError('CAPTURE_TIMEOUT', `${error.message}; ${now}`, {
+    hint: 'The recorder may still apply the change; check it with `recap capture state` and recorder.log in the meeting folder.',
+  })
+}
+
+async function control(request: ControlRequest, deps: CaptureDeps): Promise<CaptureState> {
+  const current = deps.current ?? activeLocated
+  const located = requireSwitchable(requireMeetingRecording(deps.platform, current))
+  try {
+    const data = await sendControl(located.dir, request, { alive: recorderAlive(located.meeting), ...(deps.timeoutMs ? { timeoutMs: deps.timeoutMs } : {}) })
+    return stateFromReply(located.meeting, data)
+  } catch (error) {
+    return confirmAfterTimeout(error, current)
+  }
+}
+
 export async function setCapture(target: CaptureTarget, deps: CaptureDeps = {}): Promise<CaptureState> {
-  const located = requireSwitchable(requireMeetingRecording(deps.platform, deps.current))
-  const data = await sendControl(located.dir, { action: 'set', target }, { alive: recorderAlive(located.meeting), ...(deps.timeoutMs ? { timeoutMs: deps.timeoutMs } : {}) })
-  return stateFromReply(located.meeting, data)
+  return control({ action: 'set', target }, deps)
 }
 
 export async function clearCapture(deps: CaptureDeps = {}): Promise<CaptureState> {
-  const located = requireSwitchable(requireMeetingRecording(deps.platform, deps.current))
-  const data = await sendControl(located.dir, { action: 'clear' }, { alive: recorderAlive(located.meeting), ...(deps.timeoutMs ? { timeoutMs: deps.timeoutMs } : {}) })
-  return stateFromReply(located.meeting, data)
+  return control({ action: 'clear' }, deps)
 }
 
 export function readCaptureState(deps: CaptureDeps = {}): CaptureState {

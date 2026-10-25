@@ -95,6 +95,7 @@ function recordMeeting(dir) {
     manifest.video = null
   }
   const answer = (request) => {
+    if (typeof request.issuedAt !== 'number' || Math.abs(Date.now() - request.issuedAt) > 30_000) return { ok: false, error: { code: 'CONTROL_EXPIRED', message: 'stale request' } }
     if (request.action === 'sources') return { ok: true, data: sources(Boolean(request.thumbnails)) }
     if (request.action === 'clear') {
       closeSegment()

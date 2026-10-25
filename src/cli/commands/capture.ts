@@ -7,6 +7,7 @@ import { loadConfig, settingsOf } from '../../core/config.ts'
 import { isoNow } from '../../core/dates.ts'
 import { loadMeeting, updateMeeting } from '../../core/meeting.ts'
 import { home } from '../../core/paths.ts'
+import { printable } from '../../core/text.ts'
 import { errorMessage, usageError } from '../../errors.ts'
 import { clearCapture, listSources, readCaptureState, setCapture, type CaptureSources, type CaptureState } from '../../capture/control.ts'
 import type { CaptureTarget } from '../../capture/manifest.ts'
@@ -71,14 +72,15 @@ export function stateText(state: CaptureState): string {
   const mic = `Microphone: ${state.mic ? 'recording' : 'off'}`
   const video = state.video
   if (!video) return `${mic}\nScreen: none, microphone only`
-  const what = video.kind === 'display' ? `display ${video.id} "${video.title}"` : `window ${video.id} "${video.title}"${video.app ? ` (${video.app})` : ''}`
+  const title = printable(video.title)
+  const what = video.kind === 'display' ? `display ${video.id} "${title}"` : `window ${video.id} "${title}"${video.app ? ` (${printable(video.app)})` : ''}`
   const audio = video.kind === 'display' ? 'system audio' : 'its app audio'
-  return `${mic}\nScreen: ${what} with ${audio} since ${video.since}`
+  return `${mic}\nScreen: ${what} with ${audio} since ${printable(video.since)}`
 }
 
 export function sourcesText(sources: CaptureSources): string {
-  const displays = sources.displays.map((display) => `display ${display.id}${display.main ? ' (main)' : ''}: ${display.name} ${display.width}x${display.height}`)
-  const windows = sources.windows.map((window) => `window ${window.id}: ${window.app} — ${window.title}`)
+  const displays = sources.displays.map((display) => `display ${display.id}${display.main ? ' (main)' : ''}: ${printable(display.name)} ${display.width}x${display.height}`)
+  const windows = sources.windows.map((window) => `window ${window.id}: ${printable(window.app)} — ${printable(window.title)}`)
   const lines = [...displays, ...windows]
   return lines.length > 0 ? lines.join('\n') : 'No displays or windows to record'
 }

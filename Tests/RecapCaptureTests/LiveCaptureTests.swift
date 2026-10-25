@@ -24,6 +24,7 @@ private final class FakeCaptureHandler: CaptureControlHandler {
     var calls: [String] = []
     var failure: RecapError?
     var video: CaptureVideo?
+    var sourcesDelay: UInt64 = 0
 
     func setTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
         calls.append("set \(target.kind.rawValue) \(target.id)")
@@ -40,6 +41,7 @@ private final class FakeCaptureHandler: CaptureControlHandler {
     }
 
     func sources(thumbnails: Bool) async throws -> CaptureSources {
+        if sourcesDelay > 0 { try await Task.sleep(nanoseconds: sourcesDelay) }
         calls.append("sources \(thumbnails)")
         if let failure { throw failure }
         return CaptureSources(displays: [DisplaySource(id: 1, name: "Built-in Retina Display", width: 1512, height: 982, main: true)],
@@ -47,10 +49,25 @@ private final class FakeCaptureHandler: CaptureControlHandler {
     }
 }
 
+private func issued(_ date: Date = Date()) -> String {
+    String(Int(date.timeIntervalSince1970 * 1000))
+}
+
 private func writeRequest(_ dir: URL, _ body: String, id: String) throws {
     let control = ControlServer.directory(dir)
     try FileManager.default.createDirectory(at: control, withIntermediateDirectories: true)
-    try Data(body.utf8).write(to: control.appending(path: id + ControlServer.requestSuffix))
+    let stamped = body.contains("issuedAt") ? body : "{\"issuedAt\":\(issued())," + body.dropFirst()
+    try Data(stamped.utf8).write(to: control.appending(path: id + ControlServer.requestSuffix))
+}
+
+private func errorCode(_ dir: URL, id: String) throws -> String? {
+    (try response(dir, id: id)["error"] as? [String: Any])?["code"] as? String
+}
+
+private func mode(_ path: String) -> mode_t {
+    var info = stat()
+    lstat(path, &info)
+    return info.st_mode & 0o777
 }
 
 private func response(_ dir: URL, id: String) throws -> [String: Any] {
@@ -149,7 +166,8 @@ private func response(_ dir: URL, id: String) throws -> [String: Any] {
         try writeRequest(dir, #"{"id":"0001-a","action":"set","target":{"kind":"display","id":1}}"#, id: "0001-a")
         try writeRequest(dir, #"{"id":"0003-c","action":"sources","thumbnails":true}"#, id: "0003-c")
         await server.poll()
-        #expect(handler.calls == ["set display 1", "clear", "sources true"])
+        #expect(handler.calls.filter { $0 != "sources true" } == ["set display 1", "clear"])
+        #expect(handler.calls.contains("sources true"))
         let sources = try #require(try response(dir, id: "0003-c")["data"] as? [String: Any])
         #expect((sources["displays"] as? [[String: Any]])?.first?["name"] as? String == "Built-in Retina Display")
         #expect((sources["windows"] as? [Any])?.isEmpty == true)
@@ -208,6 +226,104 @@ private func response(_ dir: URL, id: String) throws -> [String: Any] {
         #expect(late["ok"] as? Bool == false)
         #expect((late["error"] as? [String: Any])?["code"] as? String == "NOT_RECORDING")
         #expect(handler.calls == ["clear"])
+    }
+
+    @Test func setAndClearDoNotWaitForThumbnails() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        handler.sourcesDelay = 400_000_000
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        try writeRequest(dir, #"{"id":"0001-a","action":"sources","thumbnails":true}"#, id: "0001-a")
+        try writeRequest(dir, #"{"id":"0002-b","action":"set","target":{"kind":"display","id":1}}"#, id: "0002-b")
+        await server.pollCommands()
+        #expect(try response(dir, id: "0002-b")["ok"] as? Bool == true)
+        #expect(!FileManager.default.fileExists(atPath: ControlServer.responseURL(dir, id: "0001-a").path))
+        await server.waitForLookups()
+        #expect(try response(dir, id: "0001-a")["ok"] as? Bool == true)
+        #expect(handler.calls == ["set display 1", "sources true"])
+    }
+
+    @Test func staleOrUndatedRequestsAreRefused() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        let old = issued(Date().addingTimeInterval(-31))
+        let ahead = issued(Date().addingTimeInterval(60))
+        try writeRequest(dir, #"{"issuedAt":"# + old + #","id":"old","action":"clear"}"#, id: "old")
+        try writeRequest(dir, #"{"issuedAt":"# + ahead + #","id":"ahead","action":"clear"}"#, id: "ahead")
+        try writeRequest(dir, #"{"issuedAt":null,"id":"undated","action":"clear"}"#, id: "undated")
+        await server.poll()
+        #expect(handler.calls.isEmpty)
+        #expect(try errorCode(dir, id: "old") == "CONTROL_EXPIRED")
+        #expect(try errorCode(dir, id: "ahead") == "CONTROL_EXPIRED")
+        #expect(try errorCode(dir, id: "undated") == "CONTROL_EXPIRED")
+    }
+
+    @Test func linkedForeignOrLargeRequestsAreNotRead() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        let control = ControlServer.directory(dir)
+        try FileManager.default.createDirectory(at: control, withIntermediateDirectories: true)
+        let outside = dir.appending(path: "outside.json")
+        try Data(("{\"issuedAt\":\(issued()),\"id\":\"link\",\"action\":\"clear\"}").utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: control.appending(path: "link.request.json"), withDestinationURL: outside)
+        try writeRequest(dir, #"{"id":"big","action":"clear","pad":""# + String(repeating: "x", count: 4_200) + #""}"#, id: "big")
+        try FileManager.default.createDirectory(at: control.appending(path: "dir.request.json"), withIntermediateDirectories: true)
+        await server.poll()
+        #expect(handler.calls.isEmpty)
+        #expect(server.pendingRequests().isEmpty)
+        #expect(try errorCode(dir, id: "link") == "CONTROL_INVALID")
+        #expect(try errorCode(dir, id: "big") == "CONTROL_INVALID")
+        #expect(FileManager.default.fileExists(atPath: outside.path))
+    }
+
+    @Test func theControlFolderIsPrivateAndStartsEmpty() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let elsewhere = dir.appending(path: "elsewhere")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: elsewhere.appending(path: "keep.txt"))
+        try FileManager.default.createSymbolicLink(at: ControlServer.directory(dir), withDestinationURL: elsewhere)
+        let handler = FakeCaptureHandler()
+        let server = ControlServer(meetingDir: dir, handler: handler, interval: 0.02)
+        try server.start()
+        defer { server.stop() }
+        let control = ControlServer.directory(dir)
+        #expect(mode(control.path) == 0o700)
+        #expect(FileManager.default.fileExists(atPath: elsewhere.appending(path: "keep.txt").path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path).isEmpty)
+        try writeRequest(dir, #"{"id":"p1","action":"clear"}"#, id: "p1")
+        let answered = ControlServer.responseURL(dir, id: "p1")
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: answered.path), Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        #expect(mode(answered.path) == 0o600)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path) == ["p1.response.json"])
+    }
+
+    @Test func startClearsLeftoversAndPollSweepsOldAnswers() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let control = ControlServer.directory(dir)
+        try FileManager.default.createDirectory(at: control, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: control.appending(path: "left.request.json"))
+        try ControlFiles.prepare(control)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path).isEmpty)
+        let handler = FakeCaptureHandler()
+        let server = ControlServer(meetingDir: dir, handler: handler)
+        let stale = control.appending(path: "gone.response.json")
+        let fresh = control.appending(path: "kept.response.json")
+        try Data("{}".utf8).write(to: stale)
+        try Data("{}".utf8).write(to: fresh)
+        let old = Date().addingTimeInterval(-ControlServer.responseLifetime - 30)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: stale.path)
+        await server.poll()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: control.path) == ["kept.response.json"])
     }
 
     @Test func idsAreShortAndSafeForFileNames() {

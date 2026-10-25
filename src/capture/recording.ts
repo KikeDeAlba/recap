@@ -10,6 +10,7 @@ import { RecapError, errorMessage } from '../errors.ts'
 import { selectRecorder, type Recorder } from './recorder.ts'
 import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
 import { assembleMeeting } from './assemble.ts'
+import { removeControlDir } from './control.ts'
 import { needsAssembly } from './manifest.ts'
 import path from 'node:path'
 
@@ -135,6 +136,7 @@ export async function stopRecording(timeout: number, warn: (line: string) => voi
   const dir = current.active.dir
   const stopped = await stopRecorder(current.meeting, dir, timeout)
   clearActive()
+  removeControlDir(dir)
   const meeting = await assembleAfterStop(stopped, dir, loadConfig(), warn)
   return { meeting, dir }
 }

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { execFile, spawn } from 'node:child_process'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { parseEnvelope } from '@kikedealba/kit/envelope'
 import { PACKAGE_ROOT } from '../src/version.ts'
-import { captureState, decodeSources, listSources, readCaptureState, readSourcesOutput, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources } from '../src/capture/control.ts'
+import { MAX_THUMBNAILS, THUMBNAIL_MAX_CHARS, captureState, clearCapture, decodeSources, listSources, prepareControlDir, readCaptureState, readSourcesOutput, requestBody, requireMeetingRecording, sendControl, setCapture, sourcesArguments, standaloneSources, sweepResponses } from '../src/capture/control.ts'
 import { decodeManifest, needsAssembly, pendingCaptureBytes } from '../src/capture/manifest.ts'
 import { capabilities, captureFeatures } from '../src/setup/integration.ts'
 import { stateText, sourcesText, targetFrom } from '../src/cli/commands/capture.ts'
@@ -219,6 +219,85 @@ test('standalone sources run recap-capture sources --json and map its errors', a
   assert.throws(() => readSourcesOutput(null, 'crashed'), code('CAPTURE_FAILED'))
 })
 
+test('requests carry when they were issued and the control folder is private to the user', async (t) => {
+  assert.deepEqual(requestBody('r1', { action: 'clear' }, 1_700_000_000_000), { id: 'r1', issuedAt: 1_700_000_000_000, action: 'clear' })
+  const current = located(t)
+  writeManifest(current.dir, {})
+  const elsewhere = path.join(current.dir, 'elsewhere')
+  mkdirSync(elsewhere)
+  writeFileSync(path.join(elsewhere, 'keep.txt'), 'keep')
+  symlinkSync(elsewhere, path.join(current.dir, 'control'))
+  const seen: Record<string, unknown>[] = []
+  const stop = fakeRecorder(current.dir, (request) => {
+    seen.push(request)
+    return { ok: true, data: { mic: true, systemAudio: false, video: null } }
+  })
+  t.after(stop)
+  await clearCapture({ platform: 'darwin', current: () => current })
+  const control = path.join(current.dir, 'control')
+  assert.ok(lstatSync(control).isDirectory())
+  assert.equal(statSync(control).mode & 0o777, 0o700)
+  assert.ok(existsSync(path.join(elsewhere, 'keep.txt')))
+  assert.equal(typeof seen[0]?.['issuedAt'], 'number')
+  assert.ok(Math.abs(Number(seen[0]?.['issuedAt']) - Date.now()) < 5_000)
+})
+
+test('a linked answer is refused and old answers are swept', async (t) => {
+  const { dir } = located(t)
+  const control = prepareControlDir(dir)
+  const outside = path.join(dir, 'outside.json')
+  writeFileSync(outside, '{"id":"l1","ok":true,"data":{}}')
+  symlinkSync(outside, path.join(control, 'l1.response.json'))
+  await assert.rejects(sendControl(dir, { action: 'clear' }, { id: 'l1', timeoutMs: 1_000, pollMs: 10 }), code('CAPTURE_FAILED'))
+  assert.ok(existsSync(outside))
+  assert.ok(!existsSync(path.join(control, 'l1.request.json')))
+  writeFileSync(path.join(control, 'old.response.json'), '{}')
+  writeFileSync(path.join(control, 'new.response.json'), '{}')
+  const old = new Date(Date.now() - 5 * 60_000)
+  utimesSync(path.join(control, 'old.response.json'), old, old)
+  sweepResponses(control)
+  assert.deepEqual(readdirSync(control), ['new.response.json'])
+})
+
+test('a timed out set reports what the meeting really records', async (t) => {
+  const current = located(t)
+  writeManifest(current.dir, { video: ZOOM })
+  const deps = { platform: 'darwin' as const, current: () => current, timeoutMs: 150 }
+  await assert.rejects(setCapture({ kind: 'display', id: 1 }, deps), (error: unknown) => error instanceof RecapError && error.code === 'CAPTURE_TIMEOUT' && /records window 4242 "Zoom Meeting"/.test(error.message))
+  writeManifest(current.dir, {})
+  await assert.rejects(clearCapture(deps), (error: unknown) => error instanceof RecapError && /records the microphone only/.test(error.message))
+  assert.deepEqual(readdirSync(path.join(current.dir, 'control')), [])
+})
+
+test('thumbnails must be bounded inline JPEG data URLs', () => {
+  const window = (id: number, thumbnail: unknown) => ({ id, app: 'a', bundleId: 'b', title: 't', pid: 1, width: 10, height: 10, thumbnail })
+  const sources = decodeSources({
+    displays: [],
+    windows: [
+      window(1, 'data:image/jpeg;base64,/9j/AA=='),
+      window(2, 'data:image/png;base64,AAAA'),
+      window(3, 'data:image/jpeg;base64,AA"><script>'),
+      window(4, `data:image/jpeg;base64,${'A'.repeat(THUMBNAIL_MAX_CHARS)}`),
+      window(5, 'data:image/svg+xml;base64,AAAA'),
+    ],
+  })
+  assert.deepEqual(sources.windows.map((item) => item.thumbnail), ['data:image/jpeg;base64,/9j/AA==', undefined, undefined, undefined, undefined])
+  const many = decodeSources({ displays: [], windows: Array.from({ length: MAX_THUMBNAILS + 5 }, (_, index) => window(index, 'data:image/jpeg;base64,AA')) })
+  assert.equal(many.windows.filter((item) => item.thumbnail !== undefined).length, MAX_THUMBNAILS)
+})
+
+test('titles and names are printed without control characters', () => {
+  const sources = decodeSources({
+    displays: [{ id: 1, name: 'LG\u001b[2J', width: 1, height: 1, main: false }],
+    windows: [{ id: 2, app: 'Evil\u0007', bundleId: 'x', title: 'Hi\u001b]0;pwned\u0007\u202Egpj.exe\nnext', pid: 1, width: 1, height: 1 }],
+  })
+  const text = sourcesText(sources)
+  assert.doesNotMatch(text, /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/)
+  assert.equal(text.split('\n').length, 2)
+  const state = stateText({ meetingId: 'm', mic: true, systemAudio: true, video: { kind: 'window', id: 2, title: 'a\u001b[31mb', app: 'c\rd', since: 's' } })
+  assert.doesNotMatch(state, /[\u001b\r]/)
+})
+
 test('capture set takes exactly one target and the text output describes the state', () => {
   assert.deepEqual(targetFrom(2, undefined), { kind: 'display', id: 2 })
   assert.deepEqual(targetFrom(undefined, 4242), { kind: 'window', id: 4242 })
@@ -319,6 +398,7 @@ test('recap capture end to end against a fake recorder', { skip: !onMac }, async
   assert.ok(String(stopped['recording']).endsWith('recording.m4a'))
   assert.equal((stopped['stages'] as Record<string, { status: string }>)['assemble']?.status, 'done')
   assert.ok(!existsSync(path.join(dir, 'mic.m4a')))
+  assert.ok(!existsSync(path.join(dir, 'control')))
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'meeting.json'), 'utf8'))['channels'], ['mic'])
   assert.equal(envelope(await recap(['capture', 'clear', '--json'], env)).error?.code, 'NOT_RECORDING')
 
@@ -351,6 +431,23 @@ test('a recorder that never answers makes capture set time out', { skip: !onMac 
   const run = await recap(['capture', 'set', '--display', '1', '--timeout', '1', '--json'], env)
   assert.equal(envelope(run).error?.code, 'CAPTURE_TIMEOUT')
   await recap(['stop', '--no-process', '--timeout', '15'], env)
+})
+
+test('an interrupted capture set withdraws its request', { skip: !onMac }, async (t) => {
+  const env = helperEnv(t, { FAKE_CAPTURE_CONTROL: 'silent' })
+  const started = data(await recap(['start', '--timeout', '15', '--json'], env))
+  const control = path.join(String(started['dir']), 'control')
+  t.after(async () => {
+    await recap(['stop', '--no-process', '--timeout', '15'], env)
+  })
+  const child = spawn(process.execPath, [BIN, 'capture', 'set', '--display', '1', '--timeout', '30', '--json'], { env, stdio: 'ignore' })
+  const exited = new Promise<number | null>((resolve) => child.on('exit', (status) => resolve(status)))
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline && !(existsSync(control) && readdirSync(control).some((name) => name.endsWith('.request.json')))) await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.ok(readdirSync(control).some((name) => name.endsWith('.request.json')))
+  child.kill('SIGTERM')
+  assert.equal(await exited, 143)
+  assert.deepEqual(readdirSync(control), [])
 })
 
 test('capture with no subcommand prints the usage', async (t) => {
