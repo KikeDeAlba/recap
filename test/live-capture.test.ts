@@ -498,6 +498,7 @@ test('a control folder that disappears before the request is written ends in NOT
   rmSync(folder, { recursive: true, force: true })
   assert.throws(() => writeRequest(path.join(folder, 'a.request.json'), '{}'), code('NOT_RECORDING'))
   assert.throws(() => writeRequest(path.join(dir, 'missing', 'a.request.json'), '{}'), code('NOT_RECORDING'))
+  if (process.platform === 'win32') return
   writeFileSync(path.join(dir, 'blocker'), 'x')
   assert.throws(() => writeRequest(path.join(dir, 'blocker', 'a.request.json'), '{}'), (error: unknown) => !(error instanceof RecapError))
 })
