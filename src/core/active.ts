@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs'
 import { activeFile } from './paths.ts'
 import { readText, writeAtomic } from './fsutil.ts'
 import { isRecord, swiftPretty } from './json.ts'
-import { isActiveStatus, loadMeeting, reconcile, type Meeting, type MeetingMode } from './meeting.ts'
+import { isActiveStatus, isMeetingMode, loadMeeting, reconcile, type Meeting, type MeetingMode } from './meeting.ts'
 
 export interface ActiveRecording {
   meetingId: string
@@ -17,7 +17,7 @@ export function loadActive(): ActiveRecording | null {
   try {
     const value = JSON.parse(text) as unknown
     if (!isRecord(value) || typeof value['meetingId'] !== 'string' || typeof value['dir'] !== 'string' || typeof value['startedAt'] !== 'string') return null
-    if (value['mode'] !== 'remote' && value['mode'] !== 'in-person') return null
+    if (!isMeetingMode(value['mode'])) return null
     return { meetingId: value['meetingId'], dir: value['dir'], mode: value['mode'], startedAt: value['startedAt'] }
   } catch {
     return null

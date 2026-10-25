@@ -5,7 +5,7 @@ import { isoNow } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { asIntLoose, extractBetween, isRecord, swiftPretty } from '../core/json.ts'
 import { withDirectoryLockAsync } from '../core/lock.ts'
-import type { Meeting } from '../core/meeting.ts'
+import { modeLabel, type Meeting } from '../core/meeting.ts'
 import { fold, prefix, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError, errorMessage } from '../errors.ts'
 import { entryPages, loadProjectContext, meetingProject, type PageRef, type ProjectContext } from '../live/context.ts'
@@ -354,7 +354,7 @@ export class ProposalGenerator {
     let text = loadResource('proposals-prompt.md')
     text = replaceAll(text, '{{title}}', meeting.bitaEntry?.title ?? meeting.title)
     text = replaceAll(text, '{{date}}', meetingDay(meeting))
-    text = replaceAll(text, '{{mode}}', meeting.mode === 'remote' ? 'remota' : 'presencial')
+    text = replaceAll(text, '{{mode}}', modeLabel(meeting))
     text = replaceAll(text, '{{speakers}}', speakers)
     text = replaceAll(text, '{{docsRoot}}', docsRoot)
     text = replaceAll(text, '{{pages}}', list)

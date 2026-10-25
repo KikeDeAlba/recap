@@ -9,7 +9,7 @@ export function isStage(value: string): value is Stage {
 }
 
 export function stageApplies(stage: Stage, meeting: Meeting): boolean {
-  if (stage === 'frames') return meeting.mode === 'remote'
+  if (stage === 'frames') return meeting.mode !== 'in-person'
   if (stage === 'wrapup' || stage === 'proposals') return meeting.bitaEntryId !== undefined
   return true
 }

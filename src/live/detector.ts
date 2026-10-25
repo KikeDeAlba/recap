@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { isRecord, swiftLine } from '../core/json.ts'
 import { isoNow } from '../core/dates.ts'
-import type { Meeting } from '../core/meeting.ts'
+import { meetingLabel, type Meeting } from '../core/meeting.ts'
 import { sleep, signalTree } from '../core/proc.ts'
 import { prefix, replaceAll, suffix, trimmed } from '../core/text.ts'
 import { RecapError, describeError } from '../errors.ts'
@@ -170,7 +170,7 @@ export function renderDetectPrompt(template: string, meeting: Meeting, context: 
       : context.pages.map((page) => `  ${'  '.repeat(Math.max(0, page.depth))}- ${page.title}`).join('\n')
   const speakers = labelled
     ? 'Es una reunión remota: «Sala» es el micrófono de quien graba y «Remotos» es el audio de la llamada. Las preguntas que vienen de «Remotos» suelen ir dirigidas a quien graba y pesan más; una pregunta de «Sala» solo cuenta si es claramente una duda técnica abierta.'
-    : 'Es una reunión presencial con un solo micrófono («Sala»), sin separación por persona: juzga solo por el contenido de lo que se dice.'
+    : `Es una ${meetingLabel(meeting)} con un solo micrófono («Sala»), sin separación por persona: juzga solo por el contenido de lo que se dice.`
   const knownList = known.length === 0 ? '(ninguna)' : known.map((question) => `- ${question}`).join('\n')
   const reviewed = batch.reviewed.length === 0 ? '(nada)' : renderLive(batch.reviewed, labelled)
   let text = template

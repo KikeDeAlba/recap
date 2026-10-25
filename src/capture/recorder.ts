@@ -4,14 +4,14 @@ import { platformContext, type PlatformContext } from '@kikedealba/kit/platform'
 import { loadConfig, type Config } from '../core/config.ts'
 import { isoNow } from '../core/dates.ts'
 import { exists } from '../core/fsutil.ts'
-import type { Meeting } from '../core/meeting.ts'
+import type { Meeting, MeetingMode } from '../core/meeting.ts'
 import { home } from '../core/paths.ts'
 import { exec, signalProcess } from '../core/proc.ts'
 import { spawnSelf } from '../core/self.ts'
 import { trimmed } from '../core/text.ts'
 import { installHint, locateTool, requireTool } from '../core/tools.ts'
 import { RecapError } from '../errors.ts'
-import { capturePermissions, captureUnavailable, findCapture, launchRecorder, type PermissionReport } from './capture.ts'
+import { MEETING_CAPABILITY, captureCapabilities, capturePermissions, captureUnavailable, findCapture, launchRecorder, type CaptureLauncher, type PermissionReport } from './capture.ts'
 import { DEFAULT_MONITOR, STOP_REQUEST, hasPulseInput, loopbackPath, micDevice, monitorOf, parseDefaultSink, type SourceTools } from './sources.ts'
 
 export type RecorderKind = 'mac-app' | 'ffmpeg-linux' | 'windows'
@@ -26,6 +26,7 @@ export interface Recorder {
   readonly kind: RecorderKind
   check(): Promise<RecorderCheck>
   permissions(request: boolean): Promise<PermissionReport>
+  supports(mode: MeetingMode): Promise<boolean>
   launch(dir: string, options: { live: boolean }): Promise<void>
   stop(meeting: Meeting, dir: string): Promise<void>
 }
@@ -40,17 +41,31 @@ function requirePid(meeting: Meeting): number {
 
 export class MacAppRecorder implements Recorder {
   readonly kind = 'mac-app' as const
+  private readonly find: () => Promise<CaptureLauncher | null>
+  private readonly capabilities: (launcher: CaptureLauncher) => Promise<string[]>
+
+  constructor(find: () => Promise<CaptureLauncher | null> = findCapture, capabilities: (launcher: CaptureLauncher) => Promise<string[]> = (launcher) => captureCapabilities(launcher)) {
+    this.find = find
+    this.capabilities = capabilities
+  }
 
   async check(): Promise<RecorderCheck> {
-    if (await findCapture()) return { ok: true, missing: [] }
+    if (await this.find()) return { ok: true, missing: [] }
     const hint = captureUnavailable().hint
     return { ok: false, missing: ['Recap.app'], ...(hint ? { hint } : {}) }
   }
 
   async permissions(request: boolean): Promise<PermissionReport> {
-    const launcher = await findCapture()
+    const launcher = await this.find()
     if (!launcher) throw captureUnavailable()
     return capturePermissions(launcher, request)
+  }
+
+  async supports(mode: MeetingMode): Promise<boolean> {
+    if (mode !== 'meeting') return true
+    const launcher = await this.find()
+    if (!launcher) return false
+    return (await this.capabilities(launcher)).includes(MEETING_CAPABILITY)
   }
 
   launch(dir: string): Promise<void> {
@@ -115,6 +130,10 @@ export class FfmpegRecorder implements Recorder {
 
   async permissions(): Promise<PermissionReport> {
     return { microphone: 'not-checked', screen: 'not-required' }
+  }
+
+  async supports(): Promise<boolean> {
+    return true
   }
 
   async tools(config: Config = this.configSource()): Promise<SourceTools> {

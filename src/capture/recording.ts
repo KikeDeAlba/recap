@@ -12,7 +12,8 @@ import { applyRecovery, recoverCapture, withRecoveryLock } from './recover.ts'
 import path from 'node:path'
 
 export function defaultTitle(mode: MeetingMode): string {
-  return mode === 'remote' ? 'Remote meeting' : 'In-person meeting'
+  if (mode === 'remote') return 'Remote meeting'
+  return mode === 'in-person' ? 'In-person meeting' : 'Meeting'
 }
 
 export async function startRecording(options: {
@@ -29,10 +30,13 @@ export async function startRecording(options: {
   if (current) throw new RecapError('ALREADY_RECORDING', `"${current.meeting.title}" is already being recorded. Stop it first.`)
   const config = options.config ?? loadConfig()
   const recorder = options.recorder ?? selectRecorder(undefined, config)
+  const fallback = options.mode === 'meeting' && !(await recorder.supports('meeting')) ? 'in-person' : undefined
+  const mode = fallback ?? options.mode
   const store = new MeetingStore(config)
   const { meeting, dir } = store.create({
     title: options.title.length === 0 ? defaultTitle(options.mode) : options.title,
-    mode: options.mode,
+    mode,
+    fallback,
     display: options.display,
     bitaEntryId: options.bitaEntryId,
     bita: options.bita,
@@ -67,7 +71,12 @@ export async function startRecording(options: {
     }
     throw new RecapError('RECORDER_TIMEOUT', `The recorder did not start within ${Math.trunc(options.timeout)}s. Check the permissions with \`recap setup\`.`)
   }
-  saveActive({ meetingId: latest.id, dir, mode: options.mode, startedAt: latest.startedAt ?? isoNow() })
+  if (fallback !== undefined && latest.fallback !== fallback) {
+    latest = updateMeeting(dir, (item) => {
+      item.fallback = fallback
+    })
+  }
+  saveActive({ meetingId: latest.id, dir, mode, startedAt: latest.startedAt ?? isoNow() })
   return { meeting: latest, dir }
 }
 

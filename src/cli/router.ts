@@ -12,7 +12,7 @@ import { liveWorkerCommand } from './commands/live.ts'
 import { compressVideoCommand, deleteCommand, pruneCommand, stripVideoCommand } from './commands/media.ts'
 import { proposalsCommand } from './commands/proposals.ts'
 import { repoGitCommand } from './commands/repo-git.ts'
-import { listCommand, processCommand, promptCommand, saveSummaryCommand, showCommand, waitCommand } from './commands/query.ts'
+import { listCommand, processCommand, promptCommand, saveSummaryCommand, showCommand, summaryCommand, transcriptCommand, waitCommand } from './commands/query.ts'
 import { discardCommand, importCommand, startCommand, statusCommand, stopCommand } from './commands/recording.ts'
 import { setupCommand } from './commands/setup.ts'
 import { watchCommand } from './commands/watch.ts'
@@ -36,6 +36,8 @@ const COMMANDS: Record<string, Command> = {
   status: statusCommand,
   list: listCommand,
   show: showCommand,
+  transcript: transcriptCommand,
+  summary: summaryCommand,
   process: processCommand,
   import: importCommand,
   'compress-video': compressVideoCommand,
@@ -62,7 +64,7 @@ export function help(): string {
     `recap ${VERSION} — record meetings, transcribe them locally and summarize them with a coding agent (Claude Code by default)`,
     '',
     'Recording (macOS through Recap.app; Linux with ffmpeg and PulseAudio/PipeWire; Windows with ffmpeg and recap-loopback):',
-    '  recap start --remote|--in-person [title] [--bita-entry id] [--display id] [--timeout s]',
+    '  recap start [title] [--remote|--in-person] [--bita-entry id] [--display id] [--timeout s]: without a mode it records a meeting from the microphone only',
     '  recap stop [--no-process] [--timeout s]',
     '  recap discard [meeting] [--bita-entry id]',
     '  recap status',
@@ -71,6 +73,7 @@ export function help(): string {
     '  recap import <audio|video file> [--title t] [--remote|--in-person] [--no-process|--background]',
     '  recap process [meeting] [--from stage] [--only stage] [--background]',
     '  recap list [--limit n] | show [meeting] [--bita-entry id] [--path] | wait [meeting] [--bita-entry id] [--timeout s]',
+    '  recap transcript [meeting] [--bita-entry id] | summary [meeting] [--bita-entry id]: with --json, segments and paragraphs, or agreements and action items',
     '  recap prompt [meeting] | save-summary <meeting> <file|->',
     '  recap ask (--active|--meeting m|--bita-entry id) [--question q] [--window s] [--json-stream] | ask --sources --project p',
     '  recap proposals ls|show|accept|reject <meeting> [n] [--bita-entry id] [--md file]',

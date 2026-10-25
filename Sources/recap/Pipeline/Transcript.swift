@@ -139,8 +139,7 @@ enum TranscriptRenderer {
         formatter.locale = Locale(identifier: "es_MX")
         formatter.dateFormat = "d 'de' MMMM 'de' yyyy, HH:mm"
         let date = formatter.string(from: meeting.startedAt ?? meeting.createdAt)
-        let mode = meeting.mode == .remote ? "remota" : "presencial"
-        return "\(date) · \(Duration.format(meeting.durationSeconds)) · reunión \(mode)"
+        return "\(date) · \(Duration.format(meeting.durationSeconds)) · \(meeting.meetingLabel)"
     }
 
     static func timestamp(_ ms: Int) -> String {

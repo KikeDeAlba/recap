@@ -18,6 +18,8 @@ function event(name: string, options: { kind?: string | null; previous?: string;
 test('the planner starts in the mode of the kind', () => {
   assert.deepEqual(planHook(event('start', { kind: 'remote-meeting' }), undefined), { type: 'start', mode: 'remote' })
   assert.deepEqual(planHook(event('start', { kind: 'in-person-meeting' }), undefined), { type: 'start', mode: 'in-person' })
+  assert.deepEqual(planHook(event('start', { kind: 'meeting' }), undefined), { type: 'start', mode: 'meeting' })
+  assert.deepEqual(planHook(event('start', { kind: 'meeting' }), 3), { type: 'ignore', reason: 'another meeting is already being recorded' })
 })
 
 test('the planner ignores starts that are not meetings or collide', () => {
@@ -36,6 +38,14 @@ test('amend starts or stops when the kind crosses the meeting line', () => {
   assert.deepEqual(planHook(event('amend', { kind: 'remote-meeting', running: false }), undefined), { type: 'ignore', reason: 'entry #7 already stopped' })
   assert.deepEqual(planHook(event('amend', { kind: null, previous: 'remote-meeting' }), 7), { type: 'stopWithoutProcessing' })
   assert.deepEqual(planHook(event('amend', { kind: 'in-person-meeting', previous: 'remote-meeting' }), 7), { type: 'ignore', reason: 'kind change does not affect the recording' })
+})
+
+test('amend treats the meeting kind like the other meeting kinds', () => {
+  assert.deepEqual(planHook(event('amend', { kind: 'meeting' }), undefined), { type: 'start', mode: 'meeting' })
+  assert.deepEqual(planHook(event('amend', { kind: null, previous: 'meeting' }), 7), { type: 'stopWithoutProcessing' })
+  assert.deepEqual(planHook(event('amend', { kind: 'meeting', previous: 'remote-meeting' }), 7), { type: 'ignore', reason: 'kind change does not affect the recording' })
+  assert.deepEqual(planHook(event('stop', { kind: 'meeting' }), 7), { type: 'stopAndProcess' })
+  assert.deepEqual(planHook(event('cancel', { kind: 'meeting' }), 7), { type: 'discard' })
 })
 
 test('the event carries the bita database, docs, project and pages', () => {

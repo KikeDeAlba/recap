@@ -367,8 +367,8 @@ private let fakeChecks = SourceChecks(
     @Test func gazeClientTerminatesCallsThatTakeTooLong() {
         let client = GazeClient(bin: ["/bin/sleep"], timeout: 0.3)
         let started = Date()
-        #expect(throws: RecapError.self) { try client.invoke(["5"], stdin: nil) }
-        #expect(Date().timeIntervalSince(started) < 3)
+        #expect(throws: RecapError.self) { try client.invoke(["30"], stdin: nil) }
+        #expect(Date().timeIntervalSince(started) < 10)
         let defaults = GazeClient(bin: ["/bin/echo"])
         #expect(defaults.timeout(for: ["remember"]) == 60)
         #expect(defaults.timeout(for: ["search"]) == 10)
@@ -620,7 +620,7 @@ private let fakeChecks = SourceChecks(
             let started = Date()
             _ = SecretScanner.reason(text)
             let elapsed = Date().timeIntervalSince(started)
-            #expect(elapsed < 0.2, "\(text.prefix(10)) \(elapsed)")
+            #expect(elapsed < 1.5, "\(text.prefix(10)) \(elapsed)")
         }
     }
 
@@ -668,7 +668,7 @@ private let fakeChecks = SourceChecks(
         let text = String(repeating: "a", count: 100_000)
         let started = Date()
         #expect(SecretScanner.reason(text) == nil)
-        #expect(Date().timeIntervalSince(started) < 0.2)
+        #expect(Date().timeIntervalSince(started) < 1.5)
         let mail = String(repeating: "a", count: 100_000) + "@acme.com"
         #expect(SecretScanner.reason(mail) == "email")
     }

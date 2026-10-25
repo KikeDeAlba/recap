@@ -14,6 +14,16 @@ import Testing
     @Test func startsInTheModeOfTheKind() throws {
         #expect(BitaHookPlanner.plan(try event("start", kind: "remote-meeting"), activeEntryId: nil) == .start(.remote))
         #expect(BitaHookPlanner.plan(try event("start", kind: "in-person-meeting"), activeEntryId: nil) == .start(.inPerson))
+        #expect(BitaHookPlanner.plan(try event("start", kind: "meeting"), activeEntryId: nil) == .start(.meeting))
+    }
+
+    @Test func treatsMeetingLikeTheOtherMeetingKinds() throws {
+        #expect(BitaBridge.kinds["meeting"] == .meeting)
+        #expect(BitaHookPlanner.plan(try event("stop", kind: "meeting"), activeEntryId: 7) == .stopAndProcess)
+        #expect(BitaHookPlanner.plan(try event("cancel", kind: "meeting"), activeEntryId: 7) == .discard)
+        #expect(BitaHookPlanner.plan(try event("amend", kind: "meeting", previous: nil), activeEntryId: nil) == .start(.meeting))
+        #expect(BitaHookPlanner.plan(try event("amend", kind: "meeting", previous: "remote-meeting"), activeEntryId: 7)
+                == .ignore("kind change does not affect the recording"))
     }
 
     @Test func ignoresStartsThatAreNotMeetingsOrCollide() throws {
@@ -72,5 +82,31 @@ import Testing
         #expect(body.contains("\n## not a heading\n"))
         #expect(!body.contains("# Daily"))
         #expect(body.contains("`/tmp/m` (`summary.md`, `transcript.md`, `frames/`)"))
+    }
+
+    @Test func namesAMeetingWithoutAModality() {
+        let meeting = Meeting(id: "x", title: "Daily", mode: .meeting, status: .processed, createdAt: Date(),
+                              startedAt: Date(timeIntervalSince1970: 0), endedAt: Date(timeIntervalSince1970: 1_800))
+        let body = BitaBridge.noteBody(summary: "## Resumen\nTodo bien.", meeting: meeting, dir: URL(fileURLWithPath: "/tmp/m"))
+        #expect(body.hasPrefix("Minuta de la reunión (30m00s)"))
+        #expect(!body.contains("presencial"))
+        #expect(TranscriptRenderer.header(meeting).hasSuffix(" · reunión"))
+        #expect(MeetingMode.inPerson.meetingLabel == "reunión presencial")
+        #expect(MeetingMode.meeting.modeLabel == "reunión")
+    }
+
+    @Test func dropsTheModalityOfAMeetingThatFellBackToInPerson() throws {
+        let json = #"{"schemaVersion":1,"id":"x","title":"Daily","mode":"in-person","fallback":"in-person","status":"processed","createdAt":"2026-10-24T10:00:00Z","startedAt":"2026-10-24T10:00:00Z","endedAt":"2026-10-24T10:30:00Z","stages":{}}"#
+        let meeting = try MeetingFile.decoder.decode(Meeting.self, from: Data(json.utf8))
+        #expect(meeting.mode == .inPerson && meeting.fallback == .inPerson)
+        let encoded = try JSONSerialization.jsonObject(with: MeetingFile.encoder.encode(meeting)) as? [String: Any]
+        #expect(encoded?["fallback"] as? String == "in-person")
+        #expect(meeting.modality == nil && meeting.modeLabel == "reunión" && meeting.meetingLabel == "reunión")
+        let body = BitaBridge.noteBody(summary: "## Resumen\nTodo bien.", meeting: meeting, dir: URL(fileURLWithPath: "/tmp/m"))
+        #expect(body.hasPrefix("Minuta de la reunión (30m00s)") && !body.contains("presencial"))
+        #expect(TranscriptRenderer.header(meeting).hasSuffix(" · reunión"))
+        var plain = meeting
+        plain.fallback = nil
+        #expect(plain.meetingLabel == "reunión presencial" && TranscriptRenderer.header(plain).hasSuffix(" · reunión presencial"))
     }
 }

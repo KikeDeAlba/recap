@@ -17,6 +17,7 @@ export interface ExecOptions {
   onStdout?: (chunk: string) => void
   onSpawn?: (pid: number) => void
   detached?: boolean
+  timeoutMs?: number
 }
 
 export function isAlive(pid: number): boolean {
@@ -69,6 +70,15 @@ export function exec(command: string, args: readonly string[], options: ExecOpti
     })
     let stdout = ''
     let stderr = ''
+    const timer =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            child.kill('SIGKILL')
+            child.stdout.destroy()
+            child.stderr.destroy()
+            resolve({ status: 128 + signalNumber('SIGKILL'), signal: 'SIGKILL', stdout, stderr })
+          }, options.timeoutMs)
     child.once('spawn', () => {
       if (child.pid !== undefined) options.onSpawn?.(child.pid)
     })
@@ -80,9 +90,11 @@ export function exec(command: string, args: readonly string[], options: ExecOpti
       stderr += chunk
     })
     child.once('error', (error) => {
+      clearTimeout(timer)
       reject(new RecapError('SPAWN_FAILED', `Cannot start ${path.basename(command)}: ${error.message}`))
     })
     child.once('close', (code, signal) => {
+      clearTimeout(timer)
       resolve({ status: code ?? (signal ? 128 + signalNumber(signal) : 1), signal, stdout, stderr })
     })
     child.stdin.on('error', () => undefined)

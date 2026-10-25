@@ -1,0 +1,25 @@
+{
+  "bitaEntryId" : 42,
+  "createdAt" : "2026-10-24T10:00:00Z",
+  "endedAt" : "2026-10-24T10:30:00Z",
+  "id" : "20261024-1000-planeacion-del-sprint",
+  "mode" : "meeting",
+  "schemaVersion" : 1,
+  "stages" : {
+    "audio" : { "status" : "done", "updatedAt" : "2026-10-24T10:31:00Z" },
+    "frames" : { "status" : "skipped", "updatedAt" : "2026-10-24T10:32:00Z" },
+    "summarize" : { "status" : "done", "updatedAt" : "2026-10-24T10:33:00Z" },
+    "transcribe" : { "status" : "done", "updatedAt" : "2026-10-24T10:32:00Z" },
+    "wrapup" : { "status" : "done", "updatedAt" : "2026-10-24T10:34:00Z" }
+  },
+  "startedAt" : "2026-10-24T10:00:00Z",
+  "status" : "processed",
+  "title" : "Planeación del sprint",
+  "wrapup" : {
+    "backlogKeys" : { "Preparar las notas de la versión 0.14" : "PEND-12" },
+    "pageCreated" : true,
+    "pageId" : 151,
+    "projectResolved" : true,
+    "titleChanged" : false
+  }
+}

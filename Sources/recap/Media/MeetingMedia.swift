@@ -9,9 +9,9 @@ enum MeetingMedia {
 
     static func recordingURL(dir: URL, mode: MeetingMode) -> URL {
         let primary = dir.appending(path: mode.recordingFileName)
-        guard mode == .remote, !exists(primary) else { return primary }
-        let audio = dir.appending(path: audioFileName)
-        return exists(audio) ? audio : primary
+        guard mode != .inPerson, !exists(primary) else { return primary }
+        let alternate = dir.appending(path: mode == .remote ? audioFileName : videoFileName)
+        return exists(alternate) ? alternate : primary
     }
 
     static func hasVideo(dir: URL, mode: MeetingMode) -> Bool {

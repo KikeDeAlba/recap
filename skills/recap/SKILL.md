@@ -25,16 +25,17 @@ la reunión se graba con otra app y se procesa con
 
 ## Modo
 
-Hay que elegirlo siempre; no tiene valor por defecto.
+| Modo | Flag | Kind de bita | Cuándo |
+|---|---|---|---|
+| Reunión | ninguno | `meeting` | Por omisión, cuando no se dice la modalidad |
+| Remota | `--remote` | `remote-meeting` | Meet, Zoom, Teams, Slack huddle, llamada, videollamada, "en línea" |
+| Presencial | `--in-person` | `in-person-meeting` | En sala, en oficina, en persona, junta física, comida, "aquí con" |
 
-| Modo | Flag | Cuándo |
-|---|---|---|
-| Remota | `--remote` | Meet, Zoom, Teams, Slack huddle, llamada, videollamada, "en línea" |
-| Presencial | `--in-person` | En sala, en oficina, en persona, junta física, comida, "aquí con" |
-
-En remota se graba pantalla, audio del sistema y micrófono; en presencial solo
-el micrófono. Si el contexto no deja claro cuál es, pregunta con una sola línea
-("¿remota o presencial?") antes de arrancar.
+En remota se graba pantalla, audio del sistema y micrófono; en reunión y en
+presencial solo el micrófono. Una reunión va sin modalidad: no digas
+«presencial» ni «remota» al hablar de ella. Si la respuesta de `start` trae
+`"fallback": "in-person"`, el Recap.app instalado es anterior al modo reunión y
+grabó solo el micrófono como presencial; sugiere `recap setup`.
 
 ## Flujo de una reunión
 
@@ -44,8 +45,8 @@ el micrófono. Si el contexto no deja claro cuál es, pregunta con una sola lín
    de bita: arranca por bita para que el tiempo también quede medido.
 
    ```sh
-   bita start "<título>" --kind remote-meeting      # o --kind in-person-meeting
-   recap start --remote "<título>"                  # solo si bitaLinked es false
+   bita start "<título>" --kind meeting             # o remote-meeting, in-person-meeting
+   recap start "<título>"                           # solo si bitaLinked es false; --remote o --in-person si se dijo
    ```
 
 3. **Durante la reunión**: `recap ask --active --json` responde la última

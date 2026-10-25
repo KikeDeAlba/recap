@@ -11,10 +11,12 @@ import { PACKAGE_ROOT, VERSION } from '../version.ts'
 
 export const INSTALL_HINT = 'npm install -g @kikedealba/recap && recap setup'
 
-export const BASE_CAPABILITIES = ['meeting.process', 'meeting.import', 'meeting.minutes', 'meeting.ask', 'meeting.live', 'meeting.media']
+export const BASE_CAPABILITIES = ['meeting.process', 'meeting.import', 'meeting.minutes', 'meeting.ask', 'meeting.live', 'meeting.media', 'meeting.transcript.json', 'meeting.summary.json']
+
+export const RECORD_CAPABILITIES = ['meeting.record', 'meeting.mode.meeting']
 
 export function capabilities(captureAvailable: boolean): string[] {
-  return captureAvailable ? ['meeting.record', ...BASE_CAPABILITIES] : [...BASE_CAPABILITIES]
+  return captureAvailable ? [...RECORD_CAPABILITIES, ...BASE_CAPABILITIES] : [...BASE_CAPABILITIES]
 }
 
 function subscription(bin: readonly string[]): ToolManifest['subscribes'][number] {

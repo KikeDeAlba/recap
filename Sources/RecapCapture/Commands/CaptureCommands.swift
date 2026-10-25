@@ -7,7 +7,7 @@ package enum CaptureTool {
     package static let name = "recap-capture"
     package static let version = "0.13.0"
     package static let envelope = 1
-    package static let capabilities = ["capture.remote", "capture.in-person", "capture.live-chunks"]
+    package static let capabilities = ["capture.remote", "capture.in-person", "capture.meeting", "capture.live-chunks"]
     package static let subcommands: [ParsableCommand.Type] = [
         CaptureRecordCommand.self,
         CapturePermissionsCommand.self,
@@ -53,7 +53,7 @@ package struct CaptureRecordCommand: ParsableCommand {
         abstract: "Record the meeting in <meetingDir> until SIGINT or SIGTERM.",
         discussion: """
         Reads meeting.json (mode, display), writes status, recorderPid, startedAt and endedAt back to it, \
-        and records to recording.mov (remote) or recording.m4a (in-person). When live.enabled is on, it also \
+        and records to recording.mov (remote) or recording.m4a (in-person and meeting, microphone only). When live.enabled is on, it also \
         writes live/chunks/*.wav and live/chunks/index.jsonl and spawns the live worker as \
         <command…> <meetingDir>.
         """

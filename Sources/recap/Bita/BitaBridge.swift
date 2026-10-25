@@ -10,6 +10,7 @@ struct BitaBridge {
     static let kinds: [String: MeetingMode] = [
         "remote-meeting": .remote,
         "in-person-meeting": .inPerson,
+        "meeting": .meeting,
     ]
 
     let config: Config
@@ -37,8 +38,7 @@ struct BitaBridge {
     static func noteBody(summary: String, meeting: Meeting, dir: URL) -> String {
         var body = summary
         if let start = body.range(of: "## Resumen") { body = String(body[start.lowerBound...]) }
-        let mode = meeting.mode == .remote ? "remota" : "presencial"
-        var lines = ["Minuta de la reunión \(mode) (\(Duration.format(meeting.durationSeconds))), generada por recap a partir de la grabación.", ""]
+        var lines = ["Minuta de la \(meeting.meetingLabel) (\(Duration.format(meeting.durationSeconds))), generada por recap a partir de la grabación.", ""]
         var inFence = false
         for line in body.components(separatedBy: "\n") {
             if line.hasPrefix("```") { inFence.toggle() }
