@@ -1,11 +1,38 @@
 import Foundation
 
+package final class AbandonedWork {
+    package let limit: Int
+    private let lock = NSLock()
+    private var running = 0
+
+    package init(limit: Int) {
+        self.limit = max(1, limit)
+    }
+
+    package var count: Int { lock.withLock { running } }
+
+    package var isSaturated: Bool { count >= limit }
+
+    fileprivate func abandon() {
+        lock.withLock { running += 1 }
+    }
+
+    fileprivate func finish() {
+        lock.withLock { running = max(0, running - 1) }
+    }
+}
+
 package enum Deadline {
     private final class Outcome<T> {
         private let lock = NSLock()
+        private let abandoned: AbandonedWork?
         private var continuation: CheckedContinuation<T, Error>?
         private var result: Result<T, Error>?
         private var settled = false
+
+        init(abandoned: AbandonedWork?) {
+            self.abandoned = abandoned
+        }
 
         func attach(_ continuation: CheckedContinuation<T, Error>) {
             let ready = lock.withLock { () -> Result<T, Error>? in
@@ -17,10 +44,14 @@ package enum Deadline {
         }
 
         @discardableResult
-        func settle(_ outcome: Result<T, Error>) -> Bool {
+        func settle(_ outcome: Result<T, Error>, abandoning: Bool) -> Bool {
             let (won, waiting) = lock.withLock { () -> (Bool, CheckedContinuation<T, Error>?) in
-                guard !settled else { return (false, nil) }
+                guard !settled else {
+                    if !abandoning { abandoned?.finish() }
+                    return (false, nil)
+                }
                 settled = true
+                if abandoning { abandoned?.abandon() }
                 let waiting = continuation
                 continuation = nil
                 if waiting == nil { result = outcome }
@@ -32,8 +63,9 @@ package enum Deadline {
     }
 
     package static func run<T>(within nanoseconds: UInt64, onTimeout timeout: @autoclosure @escaping () -> Error,
+                               abandoned: AbandonedWork? = nil,
                                _ operation: @escaping () async throws -> T) async throws -> T {
-        let outcome = Outcome<T>()
+        let outcome = Outcome<T>(abandoned: abandoned)
         let work = Task {
             let result: Result<T, Error>
             do {
@@ -41,11 +73,11 @@ package enum Deadline {
             } catch {
                 result = .failure(error)
             }
-            outcome.settle(result)
+            outcome.settle(result, abandoning: false)
         }
         let timer = Task {
             try? await Task.sleep(nanoseconds: nanoseconds)
-            guard !Task.isCancelled, outcome.settle(.failure(timeout())) else { return }
+            guard !Task.isCancelled, outcome.settle(.failure(timeout()), abandoning: true) else { return }
             work.cancel()
         }
         defer { timer.cancel() }
@@ -54,7 +86,7 @@ package enum Deadline {
                 outcome.attach(continuation)
             }
         } onCancel: {
-            if outcome.settle(.failure(CancellationError())) { work.cancel() }
+            if outcome.settle(.failure(CancellationError()), abandoning: true) { work.cancel() }
         }
     }
 }

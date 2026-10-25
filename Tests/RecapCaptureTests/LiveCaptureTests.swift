@@ -27,11 +27,29 @@ private final class FakeCaptureHandler: CaptureControlHandler {
     private let lock = NSLock()
     private var recorded: [String] = []
     private var hang: TimeInterval = 0
-    var failure: RecapError?
-    var video: CaptureVideo?
-    var sourcesDelay: UInt64 = 0
+    private var storedFailure: RecapError?
+    private var storedVideo: CaptureVideo?
+    private var delay: UInt64 = 0
+    private var started = 0
 
     var calls: [String] { lock.withLock { recorded } }
+
+    var sourcesStarted: Int { lock.withLock { started } }
+
+    var failure: RecapError? {
+        get { lock.withLock { storedFailure } }
+        set { lock.withLock { storedFailure = newValue } }
+    }
+
+    var video: CaptureVideo? {
+        get { lock.withLock { storedVideo } }
+        set { lock.withLock { storedVideo = newValue } }
+    }
+
+    var sourcesDelay: UInt64 {
+        get { lock.withLock { delay } }
+        set { lock.withLock { delay = newValue } }
+    }
 
     var sourcesHang: TimeInterval {
         get { lock.withLock { hang } }
@@ -57,7 +75,9 @@ private final class FakeCaptureHandler: CaptureControlHandler {
     }
 
     func sources(thumbnails: Bool) async throws -> CaptureSources {
-        if sourcesDelay > 0 { try await Task.sleep(nanoseconds: sourcesDelay) }
+        lock.withLock { started += 1 }
+        let pause = sourcesDelay
+        if pause > 0 { try await Task.sleep(nanoseconds: pause) }
         let wait = sourcesHang
         if wait > 0 { await uncancellableWait(wait) }
         record("sources \(thumbnails)")
@@ -70,6 +90,13 @@ private final class FakeCaptureHandler: CaptureControlHandler {
 private func uncancellableWait(_ seconds: TimeInterval) async {
     await withCheckedContinuation { continuation in
         DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { continuation.resume() }
+    }
+}
+
+private func waitUntil(_ seconds: TimeInterval = 5, _ condition: () -> Bool) async throws {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !condition(), Date() < deadline {
+        try await Task.sleep(nanoseconds: 20_000_000)
     }
 }
 
@@ -273,6 +300,66 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
             #expect((error as? RecapError)?.code == "LATE")
         }
         #expect(Date().timeIntervalSince(started) < 3)
+    }
+}
+
+extension DeadlineTests {
+    @Test func aTimedOutOperationCountsAsAbandonedUntilItEnds() async throws {
+        let abandoned = AbandonedWork(limit: 1)
+        #expect(try await Deadline.run(within: 1_000_000_000, onTimeout: RecapError("LATE", "late"), abandoned: abandoned) { 1 } == 1)
+        #expect(abandoned.count == 0)
+        await #expect(throws: RecapError.self) {
+            try await Deadline.run(within: 50_000_000, onTimeout: RecapError("LATE", "late"), abandoned: abandoned) { () async -> Int in
+                await uncancellableWait(0.4)
+                return 1
+            }
+        }
+        #expect(abandoned.count == 1)
+        #expect(abandoned.isSaturated)
+        try await waitUntil { abandoned.count == 0 }
+        #expect(abandoned.count == 0)
+        #expect(!abandoned.isSaturated)
+    }
+}
+
+@Suite struct HungScreenCaptureKitTests {
+    @Test @MainActor func aHungListingInsideAChangeEndsInCaptureTimeoutAndStopFinishes() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = MeetingRecorder(dir: dir, contentTimeout: 0.2) {
+            await uncancellableWait(3)
+            throw RecapError("LATE", "late")
+        }
+        let started = Date()
+        let set = Task { @MainActor in try await recorder.setTarget(CaptureTargetRef(kind: .display, id: 1)) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await recorder.stop()
+        #expect(Date().timeIntervalSince(started) < 2)
+        do {
+            _ = try await set.value
+            Issue.record("set did not fail")
+        } catch {
+            #expect((error as? RecapError)?.code == "CAPTURE_TIMEOUT")
+        }
+        await #expect(throws: RecapError.self) { try await recorder.setTarget(CaptureTargetRef(kind: .display, id: 1)) }
+    }
+
+    @Test @MainActor func setGivesCaptureTimeoutWhileTheListingHangs() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = MeetingRecorder(dir: dir, contentTimeout: 0.1) {
+            await uncancellableWait(3)
+            throw RecapError("LATE", "late")
+        }
+        do {
+            _ = try await recorder.setTarget(CaptureTargetRef(kind: .window, id: 4242))
+            Issue.record("set did not fail")
+        } catch {
+            #expect((error as? RecapError)?.code == "CAPTURE_TIMEOUT")
+        }
+        let started = Date()
+        await recorder.stop()
+        #expect(Date().timeIntervalSince(started) < 2)
     }
 }
 
@@ -621,6 +708,38 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
         #expect(try response(dir, id: "0009-h")["ok"] as? Bool == true)
     }
 
+    @Test func lookupsThatHangPastTheirDeadlineHoldOffNewOnesUntilTheyEnd() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let handler = FakeCaptureHandler()
+        handler.sourcesHang = 0.8
+        let server = ControlServer(meetingDir: dir, handler: handler, lookupTimeout: 0.1, maxLookups: 2, maxAbandonedLookups: 2)
+        #expect((1...4).contains(ControlServer.maxAbandonedLookups))
+        for id in ["0001-a", "0002-a"] { try writeRequest(dir, #"{"id":""# + id + #"","action":"sources"}"#, id: id) }
+        await server.poll()
+        #expect(try errorCode(dir, id: "0001-a") == "CAPTURE_TIMEOUT")
+        #expect(try errorCode(dir, id: "0002-a") == "CAPTURE_TIMEOUT")
+        #expect(server.abandonedLookups == 2)
+        #expect(handler.sourcesStarted == 2)
+        try writeRequest(dir, #"{"id":"0003-b","action":"sources"}"#, id: "0003-b")
+        await server.poll()
+        #expect(try errorCode(dir, id: "0003-b") == "BUSY")
+        #expect(handler.sourcesStarted == 2)
+        try await waitUntil { server.abandonedLookups == 0 }
+        #expect(server.abandonedLookups == 0)
+        handler.sourcesHang = 0
+        try writeRequest(dir, #"{"id":"0004-c","action":"sources"}"#, id: "0004-c")
+        await server.poll()
+        #expect(try response(dir, id: "0004-c")["ok"] as? Bool == true)
+        #expect(handler.sourcesStarted == 3)
+    }
+
+    @Test func theTimeoutAdviceDependsOnTheThumbnails() {
+        #expect(ControlServer.lookupExpired(25, thumbnails: true).message.contains("without thumbnails"))
+        #expect(!ControlServer.lookupExpired(25, thumbnails: false).message.contains("thumbnails"))
+        #expect(ControlServer.lookupExpired(25, thumbnails: false).code == "CAPTURE_TIMEOUT")
+    }
+
     @Test func idsAreShortAndSafeForFileNames() {
         #expect(ControlServer.isValidId("7c9e6679-7425-40de-944b-e07fc1f90ae7"))
         #expect(!ControlServer.isValidId(""))
@@ -722,6 +841,25 @@ private final class FakeLaunchedApp: NSObject, LaunchedApplication {
         }
         #expect(Date().timeIntervalSince(started) < 3)
         #expect(found == [2: 2, 3: 3])
+    }
+
+    @Test func hungThumbnailsKeepTheirSlotUntilTheyReallyEnd() async throws {
+        let abandoned = AbandonedWork(limit: 2)
+        let steps = Steps()
+        let started = Date()
+        let found = await SourceCatalog.concurrently(6, limit: 2, timeout: 100_000_000, abandoned: abandoned) { position -> Int? in
+            await steps.add("start \(position)")
+            await uncancellableWait(0.6)
+            return position
+        }
+        #expect(Date().timeIntervalSince(started) < 0.5)
+        #expect(found.isEmpty)
+        #expect(await steps.items.sorted() == ["start 0", "start 1"])
+        #expect(abandoned.count == 2)
+        try await waitUntil { abandoned.count == 0 }
+        let again = await SourceCatalog.concurrently(3, limit: 2, timeout: 1_000_000_000, abandoned: abandoned) { $0 }
+        #expect(again == [0: 0, 1: 1, 2: 2])
+        #expect(SourceCatalog.abandonedThumbnails.limit == SourceCatalog.thumbnailConcurrency)
     }
 
     @Test func largeThumbnailsAreDropped() throws {

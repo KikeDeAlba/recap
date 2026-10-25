@@ -157,11 +157,32 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     private var appliedExclusions: Set<Int32> = []
     package static let exclusionInterval: UInt64 = 5_000_000_000
     package static let launchRetryDelay: UInt64 = 300_000_000
+    package static let contentTimeout: TimeInterval = 10
+    package static let maxAbandonedContent = 2
+    package static let contentStuck = RecapError("BUSY", "Recap.app is still waiting for ScreenCaptureKit to list the screens and windows; try again in a moment")
 
-    package init(dir: URL, liveTap: LiveTap? = nil) {
+    private let shareableContent: () async throws -> SCShareableContent
+    private let contentTimeout: TimeInterval
+    private let abandonedContent = AbandonedWork(limit: MeetingRecorder.maxAbandonedContent)
+
+    package init(dir: URL, liveTap: LiveTap? = nil, contentTimeout: TimeInterval = MeetingRecorder.contentTimeout,
+                 shareableContent: @escaping () async throws -> SCShareableContent = SourceCatalog.shareableContent) {
         self.dir = dir
         self.liveTap = liveTap
+        self.contentTimeout = contentTimeout
+        self.shareableContent = shareableContent
         manifest = CaptureManifestStore(dir: dir)
+    }
+
+    package static func contentExpired(_ timeout: TimeInterval) -> RecapError {
+        RecapError("CAPTURE_TIMEOUT", "Recap.app took more than \(Int(timeout))s to list the screens and windows; try again")
+    }
+
+    private func content() async throws -> SCShareableContent {
+        guard !abandonedContent.isSaturated else { throw Self.contentStuck }
+        let timeout = contentTimeout
+        return try await Deadline.run(within: UInt64(timeout * 1_000_000_000), onTimeout: Self.contentExpired(timeout),
+                                      abandoned: abandonedContent, shareableContent)
     }
 
     @MainActor
@@ -254,7 +275,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
 
     @MainActor
     private func applyTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
-        let content = try await SourceCatalog.shareableContent()
+        let content = try await self.content()
         let (filter, video) = try resolve(target, content: content)
         if let segment {
             do {
@@ -309,7 +330,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     @MainActor
     private func refreshDisplayExclusions() async throws {
         guard let segment, let video = manifest.current.video, video.kind == .display else { return }
-        let content = try await SourceCatalog.shareableContent()
+        let content = try await self.content()
         let excluded = SourceCatalog.excludedPids(content)
         guard excluded != appliedExclusions,
               let display = content.displays.first(where: { $0.displayID == video.id }) else { return }
