@@ -297,18 +297,21 @@ private func detector(_ dir: URL, _ meeting: Meeting, recorder: Recorder, minSec
         var active = 0
         var peak = 0
         var started: [String] = []
+        let questions = (1...7).map { "¿Pregunta \($0)?" }
         let queue = AutoAskQueue(dir: dir, concurrency: 2, run: { job in
+            let position = questions.firstIndex(of: job.question) ?? 0
+            let turn = Date().addingTimeInterval(2)
+            while lock.withLock({ started.count < position }), Date() < turn { Thread.sleep(forTimeInterval: 0.01) }
             lock.withLock {
                 active += 1
                 peak = max(peak, active)
                 started.append(job.question)
             }
-            let deadline = Date().addingTimeInterval(5)
-            while lock.withLock({ peak < 2 }), Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+            let overlap = Date().addingTimeInterval(2)
+            while lock.withLock({ peak < 2 }), Date() < overlap { Thread.sleep(forTimeInterval: 0.01) }
             Thread.sleep(forTimeInterval: 0.08)
             lock.withLock { active -= 1 }
         }, log: { _ in })
-        let questions = (1...7).map { "¿Pregunta \($0)?" }
         for question in questions { queue.enqueue(question, origin: nil) }
         #expect(queue.runningCount <= 2)
         #expect(queue.waitUntilIdle(timeout: 10))
