@@ -2,7 +2,7 @@ import path from 'node:path'
 import { clock } from '../core/dates.ts'
 import { readText, writeAtomic } from '../core/fsutil.ts'
 import { isRecord, parseJsonSafe } from '../core/json.ts'
-import { durationSeconds, type Meeting } from '../core/meeting.ts'
+import { durationSeconds, modeLabel, type Meeting } from '../core/meeting.ts'
 import { formatDuration, replaceAll, trimmed } from '../core/text.ts'
 import { RecapError } from '../errors.ts'
 import { loadResource } from './resources.ts'
@@ -20,7 +20,7 @@ export function readFrames(dir: string): FrameInfo[] {
 }
 
 export function renderSummaryPrompt(meeting: Meeting, transcript: string, frames: readonly FrameInfo[], template: string = loadResource('summary-prompt.md')): string {
-  const mode = meeting.mode === 'remote' ? 'remota (videollamada)' : 'presencial'
+  const mode = meeting.mode === 'remote' ? 'remota (videollamada)' : modeLabel(meeting.mode)
   const speakers =
     meeting.mode === 'remote'
       ? '- Hablantes: «Sala» es el micrófono local (quien graba y quien esté en su sala); «Remotos» es el audio de la llamada. No hay separación por persona; identifica a cada quien por contexto cuando se presenten o se nombren.'

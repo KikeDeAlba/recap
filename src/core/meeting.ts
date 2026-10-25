@@ -19,6 +19,20 @@ export function isMeetingMode(value: unknown): value is MeetingMode {
   return typeof value === 'string' && (MEETING_MODES as string[]).includes(value)
 }
 
+export function modality(mode: MeetingMode): string | null {
+  if (mode === 'remote') return 'remota'
+  return mode === 'in-person' ? 'presencial' : null
+}
+
+export function modeLabel(mode: MeetingMode): string {
+  return modality(mode) ?? 'reunión'
+}
+
+export function meetingLabel(mode: MeetingMode): string {
+  const kind = modality(mode)
+  return kind === null ? 'reunión' : `reunión ${kind}`
+}
+
 export function recordingFileName(mode: MeetingMode): string {
   return mode === 'remote' ? 'recording.mov' : 'recording.m4a'
 }

@@ -1,5 +1,5 @@
 import { clock, esHeaderDate, parseDate } from '../core/dates.ts'
-import { durationSeconds, type Meeting } from '../core/meeting.ts'
+import { durationSeconds, meetingLabel, type Meeting } from '../core/meeting.ts'
 import { isRecord } from '../core/json.ts'
 import { fold, formatDuration, jaccard, trimmed } from '../core/text.ts'
 
@@ -114,8 +114,7 @@ export function paragraphs(segments: readonly Segment[]): Paragraph[] {
 
 export function meetingHeader(meeting: Meeting): string {
   const date = parseDate(meeting.startedAt) ?? parseDate(meeting.createdAt) ?? new Date()
-  const mode = meeting.mode === 'remote' ? 'remota' : 'presencial'
-  return `${esHeaderDate(date)} · ${formatDuration(durationSeconds(meeting))} · reunión ${mode}`
+  return `${esHeaderDate(date)} · ${formatDuration(durationSeconds(meeting))} · ${meetingLabel(meeting.mode)}`
 }
 
 export function transcriptMarkdown(meeting: Meeting, segments: readonly Segment[]): string {

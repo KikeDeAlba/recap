@@ -1,6 +1,6 @@
 # Planeación del sprint
 
-sábado 24 de octubre de 2026 · 00:30:00 · reunión presencial
+sábado 24 de octubre de 2026 · 00:30:00 · reunión
 
 ## Resumen
 Se planeó el sprint y la salida de la versión 0.14.
