@@ -56,7 +56,7 @@ export class MacAppRecorder implements Recorder {
   }
 
   async permissions(request: boolean): Promise<PermissionReport> {
-    const launcher = await findCapture()
+    const launcher = await this.find()
     if (!launcher) throw captureUnavailable()
     return capturePermissions(launcher, request)
   }
