@@ -46,11 +46,13 @@ package struct CaptureStatus: Codable, Equatable {
     package var mic: Bool
     package var systemAudio: Bool
     package var video: CaptureVideo?
+    package var error: String?
 
-    package init(mic: Bool, video: CaptureVideo?) {
+    package init(mic: Bool, video: CaptureVideo?, error: String? = nil) {
         self.mic = mic
         self.systemAudio = video != nil
         self.video = video
+        self.error = mic && video == nil ? error : nil
     }
 
     package func encode(to encoder: Encoder) throws {
@@ -58,6 +60,7 @@ package struct CaptureStatus: Codable, Equatable {
         try container.encode(mic, forKey: .mic)
         try container.encode(systemAudio, forKey: .systemAudio)
         try container.encode(video, forKey: .video)
+        try container.encodeIfPresent(error, forKey: .error)
     }
 }
 
@@ -143,7 +146,7 @@ package struct CaptureManifest: Codable, Equatable {
             segments[index].endMs = max(atMs, segments[index].startMs)
         }
         video = nil
-        if let error { self.error = error }
+        self.error = error
     }
 
     package mutating func dropSegment(_ file: String) {

@@ -179,6 +179,8 @@ private func response(_ dir: URL, id: String) throws -> [String: Any] {
 
     @Test func statusAlwaysCarriesVideoAndSystemAudio() throws {
         #expect(try encoded(CaptureStatus(mic: true, video: nil)) == #"{"mic":true,"systemAudio":false,"video":null}"#)
+        #expect(try encoded(CaptureStatus(mic: true, video: nil, error: "CAPTURE_STOPPED: gone")).contains(#""error":"CAPTURE_STOPPED: gone""#))
+        #expect(CaptureStatus(mic: false, video: nil, error: "CAPTURE_STOPPED: gone").error == nil)
         let window = CaptureVideo(kind: .window, id: 9, title: "Meet", app: "Google Chrome", since: since)
         #expect(try encoded(CaptureStatus(mic: true, video: window))
             == #"{"mic":true,"systemAudio":true,"video":{"app":"Google Chrome","id":9,"kind":"window","since":"2026-10-25T12:00:00Z","title":"Meet"}}"#)
@@ -497,6 +499,7 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         let recorder = screens.recorder(dir)
         #expect(await code(of: Task { @MainActor in try await recorder.setTarget(window) }) == "CAPTURE_TIMEOUT")
         #expect(recorder.manifest.current.video == nil)
+        #expect(recorder.manifest.current.error?.hasPrefix("CAPTURE_STOPPED: the screen is not recorded because ScreenCaptureKit did not start") == true)
         #expect(!FileManager.default.fileExists(atPath: dir.appending(path: "screen-1.mov").path))
         try await waitUntil { screens.created.first?.calls == ["start", "stop", "stop"] }
         #expect(screens.created.first?.calls == ["start", "stop", "stop"])
@@ -545,6 +548,12 @@ private func code(of task: Task<CaptureStatus, Error>) async -> String? {
         #expect(recorder.manifest.current.video == nil)
         #expect(screens.created.count == 1)
         #expect(screens.created.first?.calls == ["start", "update", "stop"])
+        let error = try #require(recorder.manifest.current.error)
+        #expect(error.hasPrefix("CAPTURE_STOPPED: the screen is no longer recorded because ScreenCaptureKit did not switch"))
+        #expect(error.contains("the microphone keeps recording"))
+        let cleared = try await recorder.clearTarget()
+        #expect(cleared.error == nil)
+        #expect(recorder.manifest.current.error == nil)
         await recorder.stop()
     }
 

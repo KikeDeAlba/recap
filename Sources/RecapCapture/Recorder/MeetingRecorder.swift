@@ -327,7 +327,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
 
     @MainActor
     private var status: CaptureStatus {
-        CaptureStatus(mic: micRunning && !stopped, video: manifest.current.video)
+        CaptureStatus(mic: micRunning && !stopped, video: manifest.current.video, error: manifest.current.error)
     }
 
     @MainActor
@@ -353,7 +353,11 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
                 return status
             } catch {
                 await endSegment()
-                if Task.isCancelled || Self.isTimeout(error) { throw error }
+                if Task.isCancelled { throw error }
+                if Self.isTimeout(error) {
+                    recordStop("the screen is no longer recorded because ScreenCaptureKit did not switch the capture in time", error)
+                    throw error
+                }
             }
         }
         try await beginSegment(filter: filter, video: video, content: content)
@@ -365,6 +369,7 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
     package func clearTarget() async throws -> CaptureStatus {
         try await exclusive {
             await self.endSegment()
+            self.manifest.update { $0.error = nil }
             return self.status
         }
     }
@@ -459,6 +464,13 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         return .refreshed
     }
 
+    @MainActor
+    private func recordStop(_ what: String, _ error: Error) {
+        let message = "CAPTURE_STOPPED: \(what); the microphone keeps recording (\(Self.describe(error)))"
+        manifest.update { $0.error = message }
+        log(message)
+    }
+
     private static func isTimeout(_ error: Error) -> Bool {
         (error as? RecapError)?.code == "CAPTURE_TIMEOUT"
     }
@@ -503,6 +515,9 @@ package final class MeetingRecorder: NSObject, Recorder, CaptureControlHandler, 
         } catch {
             _ = await created.stop()
             manifest.update { $0.dropSegment(file) }
+            if Self.isTimeout(error) {
+                recordStop("the screen is not recorded because ScreenCaptureKit did not start the capture in time", error)
+            }
             try? FileManager.default.removeItem(at: dir.appending(path: file))
             throw Self.streamError(error)
         }

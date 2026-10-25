@@ -334,6 +334,25 @@ test('a timeout says whether the change can still be applied', async (t) => {
   })
 })
 
+test('the stop reason travels in the reply of the recorder and in a timeout', async (t) => {
+  const reason = 'CAPTURE_STOPPED: the screen is not recorded because ScreenCaptureKit did not start the capture in time; the microphone keeps recording'
+  const current = located(t)
+  writeManifest(current.dir, {})
+  const stop = fakeRecorder(current.dir, (request) => request['action'] === 'clear'
+    ? { ok: true, data: { mic: true, systemAudio: false, video: null } }
+    : { ok: true, data: { mic: true, systemAudio: false, video: null, error: reason } })
+  t.after(stop)
+  const deps = { platform: 'darwin' as const, current: () => current }
+  assert.deepEqual(await setCapture({ kind: 'display', id: 1 }, deps), { meetingId: 'm', mic: true, systemAudio: false, video: null, error: reason })
+  assert.deepEqual(await clearCapture(deps), { meetingId: 'm', mic: true, systemAudio: false, video: null })
+
+  const silent = located(t)
+  writeManifest(silent.dir, { video: null, error: reason })
+  await assert.rejects(setCapture({ kind: 'display', id: 1 }, { platform: 'darwin', current: () => silent, timeoutMs: 150 }), (error: unknown) => {
+    return error instanceof RecapError && error.message.includes(`the meeting records the microphone only (${reason})`)
+  })
+})
+
 test('the client waits longer than the longest change of the recorder', () => {
   assert.equal(CONTROL_TIMEOUT_MS, 20_000)
 })

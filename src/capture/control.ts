@@ -337,7 +337,8 @@ function recorderAlive(meeting: Meeting): () => boolean {
 
 export function stateFromReply(meeting: Meeting, data: unknown): CaptureState {
   const video = isRecord(data) ? decodeVideo(data['video']) : null
-  return captureState(meeting, video)
+  const error = isRecord(data) && typeof data['error'] === 'string' ? data['error'] : undefined
+  return captureState(meeting, video, error)
 }
 
 export interface CaptureDeps {
@@ -354,8 +355,8 @@ export function videoLabel(video: CaptureVideo | null): string {
 export function confirmAfterTimeout(error: unknown, current: () => Located | null): never {
   if (!(error instanceof RecapError) || error.code !== 'CAPTURE_TIMEOUT') throw error
   const located = current()
-  const state = located ? captureState(located.meeting, readManifest(located.dir)?.video ?? null) : null
-  const now = state === null || !state.mic ? 'the meeting is no longer recording' : `the meeting records ${videoLabel(state.video)}`
+  const state = located ? stateOf(located) : null
+  const now = state === null || !state.mic ? 'the meeting is no longer recording' : `the meeting records ${videoLabel(state.video)}${state.error ? ` (${state.error})` : ''}`
   if (error instanceof ControlTimeout && error.taken) {
     throw new RecapError('CAPTURE_TIMEOUT', `${error.message}; ${now}`, {
       hint: 'The recorder may still apply the change; check it with `recap capture state` and recorder.log in the meeting folder.',
