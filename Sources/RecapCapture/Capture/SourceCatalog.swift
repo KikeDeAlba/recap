@@ -93,6 +93,7 @@ package struct WindowCandidate: Equatable {
 
 package enum SourceCatalog {
     package static let excludedBundlePrefixes = ["com.kikedealba.den", "com.kikedealba.recap"]
+    package static let excludedExecutables: Set<String> = ["den"]
     package static let thumbnailWidth = 320
     package static let thumbnailHeight = 240
     package static let maxThumbnailBytes = 128 * 1024
@@ -106,8 +107,19 @@ package enum SourceCatalog {
         excludedBundlePrefixes.contains { bundleId == $0 || bundleId.hasPrefix($0 + ".") }
     }
 
-    package static func isExcludedApplication(bundleId: String, pid: Int32, ownPid: Int32 = getpid()) -> Bool {
-        pid == ownPid || isExcluded(bundleId: bundleId)
+    package static func isExcludedApplication(bundleId: String, pid: Int32, ownPid: Int32 = getpid(), executable: String? = nil) -> Bool {
+        if pid == ownPid || isExcluded(bundleId: bundleId) { return true }
+        guard bundleId.isEmpty, let executable else { return false }
+        return excludedExecutables.contains(executable.lowercased())
+    }
+
+    package static func isExcludedApplication(_ app: NSRunningApplication, ownPid: Int32 = getpid()) -> Bool {
+        isExcludedApplication(bundleId: app.bundleIdentifier ?? "", pid: app.processIdentifier, ownPid: ownPid,
+                              executable: app.executableURL?.lastPathComponent)
+    }
+
+    package static func executableName(pid: Int32, fallback: String) -> String {
+        NSRunningApplication(processIdentifier: pid)?.executableURL?.lastPathComponent ?? fallback
     }
 
     package static func isRecordable(_ window: WindowCandidate, ownPid: Int32 = getpid()) -> Bool {
@@ -178,7 +190,10 @@ package enum SourceCatalog {
     }
 
     package static func excludedApplications(_ content: SCShareableContent) -> [SCRunningApplication] {
-        content.applications.filter { isExcludedApplication(bundleId: $0.bundleIdentifier, pid: $0.processID) }
+        content.applications.filter {
+            isExcludedApplication(bundleId: $0.bundleIdentifier, pid: $0.processID,
+                                  executable: $0.bundleIdentifier.isEmpty ? executableName(pid: $0.processID, fallback: $0.applicationName) : nil)
+        }
     }
 
     package static func excludedPids(_ content: SCShareableContent) -> Set<Int32> {

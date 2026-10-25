@@ -487,6 +487,19 @@ private actor Steps {
         #expect(!SourceCatalog.isExcludedApplication(bundleId: "us.zoom.xos", pid: 7, ownPid: 42))
     }
 
+    @Test func denWithoutABundleIsExcludedByItsExecutable() {
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "den"))
+        #expect(SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "Den"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42, executable: "dentist"))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "", pid: 7, ownPid: 42))
+        #expect(!SourceCatalog.isExcludedApplication(bundleId: "com.example.den", pid: 7, ownPid: 42, executable: "den"))
+    }
+
+    @Test func exclusionsAreRefreshedOnLaunchWithAPollingBackstop() {
+        #expect((5_000_000_000...10_000_000_000).contains(MeetingRecorder.exclusionInterval))
+        #expect(MeetingRecorder.launchRetryDelay == 300_000_000)
+    }
+
     @Test func thumbnailsAreTakenAFewAtATime() async {
         let gauge = Gauge()
         #expect((4...8).contains(SourceCatalog.thumbnailConcurrency))
