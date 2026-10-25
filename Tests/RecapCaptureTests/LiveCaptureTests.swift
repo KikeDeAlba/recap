@@ -24,21 +24,33 @@ private func encoded<T: Encodable>(_ value: T) throws -> String {
 private let since = Date(timeIntervalSince1970: 1_792_929_600)
 
 private final class FakeCaptureHandler: CaptureControlHandler {
-    var calls: [String] = []
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    private var hang: TimeInterval = 0
     var failure: RecapError?
     var video: CaptureVideo?
     var sourcesDelay: UInt64 = 0
-    var sourcesHang: TimeInterval = 0
+
+    var calls: [String] { lock.withLock { recorded } }
+
+    var sourcesHang: TimeInterval {
+        get { lock.withLock { hang } }
+        set { lock.withLock { hang = newValue } }
+    }
+
+    private func record(_ call: String) {
+        lock.withLock { recorded.append(call) }
+    }
 
     func setTarget(_ target: CaptureTargetRef) async throws -> CaptureStatus {
-        calls.append("set \(target.kind.rawValue) \(target.id)")
+        record("set \(target.kind.rawValue) \(target.id)")
         if let failure { throw failure }
         video = CaptureVideo(kind: target.kind, id: target.id, title: "Zoom Meeting", app: target.kind == .window ? "zoom.us" : nil, since: since)
         return CaptureStatus(mic: true, video: video)
     }
 
     func clearTarget() async throws -> CaptureStatus {
-        calls.append("clear")
+        record("clear")
         if let failure { throw failure }
         video = nil
         return CaptureStatus(mic: true, video: nil)
@@ -46,8 +58,9 @@ private final class FakeCaptureHandler: CaptureControlHandler {
 
     func sources(thumbnails: Bool) async throws -> CaptureSources {
         if sourcesDelay > 0 { try await Task.sleep(nanoseconds: sourcesDelay) }
-        if sourcesHang > 0 { await uncancellableWait(sourcesHang) }
-        calls.append("sources \(thumbnails)")
+        let wait = sourcesHang
+        if wait > 0 { await uncancellableWait(wait) }
+        record("sources \(thumbnails)")
         if let failure { throw failure }
         return CaptureSources(displays: [DisplaySource(id: 1, name: "Built-in Retina Display", width: 1512, height: 982, main: true)],
                               windows: [])
